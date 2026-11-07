@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="sf_background_dark">#FF0A0C0F</color>
+    <color name="sf_icon_background">#FF0A0C0F</color>
+    <color name="sf_icon_accent">#FF41D2B3</color>
+</resources>
