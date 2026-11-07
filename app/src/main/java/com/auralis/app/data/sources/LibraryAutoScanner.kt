@@ -67,6 +67,9 @@ class LibraryAutoScanner(
                 if (shouldRun != enabled) {
                     enabled = shouldRun
                     Log.i(TAG, "auto-scan ${if (shouldRun) "enabled" else "disabled"}")
+                    // Catch up on anything added while scanning was paused, instead of waiting for the
+                    // next MediaStore change or app resume.
+                    if (shouldRun) scanNow("auto-scan-enabled")
                 }
                 if (shouldRun) registerObserver() else unregisterObserver()
             }
