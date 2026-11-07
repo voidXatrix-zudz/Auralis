@@ -629,6 +629,13 @@ private fun LyricsSection(settings: AppSettings, onUpdate: ((AppSettings) -> App
         checked = settings.autoScanEnabled,
         onCheckedChange = { on -> onUpdate { it.copy(autoScanEnabled = on) } },
     )
+    ToggleRow(
+        icon = Icons.Rounded.FolderOpen,
+        title = "Include subfolders",
+        description = "Scan nested folders inside each chosen folder",
+        checked = settings.includeSubfolders,
+        onCheckedChange = { on -> onUpdate { it.copy(includeSubfolders = on) } },
+    )
     SliderRow(
         icon = Icons.Rounded.Speed,
         title = "Lyrics offset",

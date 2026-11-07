@@ -323,6 +323,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             onQueueAlbum = viewModel::enqueueAll,
                                             onQueuePlaylist = viewModel::enqueuePlaylist,
                                             scanning = scanning,
+                                            onOpenSettings = { viewModel.push(Destination.Settings) },
                                         )
                                         Tab.EQUALIZER -> EqualizerScreen(settings, viewModel::updateSettings)
                                         Tab.SETTINGS -> SettingsScreen(

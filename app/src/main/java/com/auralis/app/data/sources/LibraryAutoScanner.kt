@@ -84,6 +84,7 @@ class LibraryAutoScanner(
     fun scanNow(reason: String) {
         if (!enabled) return
         scope.launch {
+            if (!scanner.hasChosenFolders()) return@launch
             scanMutex.withLock {
                 val startedAt = System.currentTimeMillis()
                 runCatching { scanner.scanIncremental() }

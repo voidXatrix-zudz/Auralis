@@ -24,7 +24,7 @@ class AppContainer(context: Context) {
     val settings: SettingsRepository by lazy { SettingsRepository(appContext) }
     val playbackSnapshot: PlaybackSnapshotRepository by lazy { PlaybackSnapshotRepository(appContext) }
     val sources: SourceRepository by lazy { SourceRepository(appContext, database.sourceDao()) }
-    val scanner: MusicScanner by lazy { MusicScanner(appContext, database.sourceDao(), database.trackDao()) }
+    val scanner: MusicScanner by lazy { MusicScanner(appContext, database.sourceDao(), database.trackDao(), settings) }
     /** Automatic new-song detection: ContentObserver + on-resume/periodic incremental diffs. */
     val autoScanner: LibraryAutoScanner by lazy { LibraryAutoScanner(appContext, scanner, settings) }
     val playback: PlaybackController by lazy { PlaybackController(appContext) }

@@ -46,4 +46,6 @@ data class AppSettings(
     val glassOutlines: Boolean = true,
     /** Watch MediaStore/folders for new, changed and removed songs and update the library automatically. */
     val autoScanEnabled: Boolean = true,
+    /** Include songs from subfolders of each chosen music folder. */
+    val includeSubfolders: Boolean = true,
 )

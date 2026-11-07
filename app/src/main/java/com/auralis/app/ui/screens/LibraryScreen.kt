@@ -35,9 +35,10 @@ fun LibraryScreen(
     onAddMusic: () -> Unit, onScan: () -> Unit, onPlay: (Track) -> Unit, onFavorite: (Track) -> Unit,
     onCreatePlaylist: (String) -> Unit, onAddToPlaylist: (Long, Track) -> Unit, modifier: Modifier = Modifier,
     onQueue: (Track) -> Unit = {}, onPlayAlbum: (List<Track>) -> Unit = {}, onQueueAlbum: (List<Track>) -> Unit = {}, onQueuePlaylist: (Long) -> Unit = {}, scanning: Boolean = false, onPlayNext: (Track) -> Unit = onQueue,
+    onOpenSettings: () -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassLibraryScreen(tracks, favorites, sources, playlists, currentId, onAddMusic, onScan, onPlay, onFavorite, onCreatePlaylist, onAddToPlaylist, modifier, onQueue, onPlayAlbum, onQueueAlbum, onQueuePlaylist, scanning, onPlayNext)
+        GlassLibraryScreen(tracks, favorites, sources, playlists, currentId, onAddMusic, onScan, onPlay, onFavorite, onCreatePlaylist, onAddToPlaylist, modifier, onQueue, onPlayAlbum, onQueueAlbum, onQueuePlaylist, scanning, onPlayNext, onOpenSettings)
         return
     }
     var selected by remember { mutableIntStateOf(0) }
@@ -48,7 +49,7 @@ fun LibraryScreen(
             items(LibraryTabs.size) { i -> FilterChip(selected == i, { selected = i }, { Text(LibraryTabs[i]) }, shape = CircleShape) }
         }
         when (selected) {
-            0 -> if (tracks.isEmpty()) EmptyLibraryHero(onAddMusic, onScan, Modifier.weight(1f), scanning) else TrackRows(tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+            0 -> if (tracks.isEmpty()) EmptyLibraryHero(onAddMusic, onScan, Modifier.weight(1f), scanning, onOpenSettings, sources.isEmpty()) else TrackRows(tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
             1 -> {
                 val albums = remember(tracks) {
                     tracks.groupBy { it.album.ifBlank { "Unknown album" } }

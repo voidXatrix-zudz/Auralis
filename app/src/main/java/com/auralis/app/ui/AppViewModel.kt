@@ -171,7 +171,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     } }
     fun removeSource(source: MusicSource) { viewModelScope.launch {
         runCatching { container.sources.removeSource(source) }
-            .onSuccess { _messages.trySend("Removed “${source.name}” from your library") }
+            .onSuccess { _messages.trySend("Removed “${source.name}” from your library"); scanLibrary() }
             .onFailure { report("Couldn't remove ${source.name}", it) }
     } }
     fun scanLibrary() {

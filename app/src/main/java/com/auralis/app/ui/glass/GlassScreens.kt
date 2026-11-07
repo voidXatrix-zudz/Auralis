@@ -101,7 +101,14 @@ fun GlassHomeScreen(
             )
         }
         if (tracks.isEmpty()) {
-            GlassEmptyState("Your music, offline", "Scan songs on this device or add a folder.", Modifier.weight(1f)) {
+            if (sources.isEmpty()) {
+                GlassEmptyState("Choose a music folder to start", "AURALIS only scans the folders you choose.", Modifier.weight(1f)) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        GlassPrimaryButton("Choose a music folder", onOpenSettings, icon = Icons.Rounded.FolderOpen)
+                        GlassGhostButton("Add folder", onAddMusic, icon = Icons.Rounded.FolderOpen, enabled = !scanning)
+                    }
+                }
+            } else GlassEmptyState("Your music, offline", "Scan songs on this device or add a folder.", Modifier.weight(1f)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     GlassPrimaryButton(if (scanning) "Scanning..." else "Scan device", onScan, enabled = !scanning)
                     GlassGhostButton("Add folder", onAddMusic, icon = Icons.Rounded.FolderOpen, enabled = !scanning)
@@ -340,6 +347,7 @@ fun GlassLibraryScreen(
     onCreatePlaylist: (String) -> Unit, onAddToPlaylist: (Long, Track) -> Unit, modifier: Modifier,
     onQueue: (Track) -> Unit, onPlayAlbum: (List<Track>) -> Unit, onQueueAlbum: (List<Track>) -> Unit,
     onQueuePlaylist: (Long) -> Unit, scanning: Boolean, onPlayNext: (Track) -> Unit,
+    onOpenSettings: () -> Unit = {},
 ) {
     var selected by remember { mutableIntStateOf(0) }
     var creating by remember { mutableStateOf(false) }
@@ -352,7 +360,14 @@ fun GlassLibraryScreen(
         Spacer(Modifier.height(8.dp))
         when (selected) {
             0 -> if (tracks.isEmpty()) {
-                GlassEmptyState("Your music, offline", "Scan songs on this device or add a folder.", Modifier.weight(1f)) {
+                if (sources.isEmpty()) {
+                    GlassEmptyState("Choose a music folder to start", "AURALIS only scans the folders you choose.", Modifier.weight(1f)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            GlassPrimaryButton("Choose a music folder", onOpenSettings, icon = Icons.Rounded.FolderOpen)
+                            GlassGhostButton("Add folder", onAddMusic, icon = Icons.Rounded.FolderOpen, enabled = !scanning)
+                        }
+                    }
+                } else GlassEmptyState("Your music, offline", "Scan songs on this device or add a folder.", Modifier.weight(1f)) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         GlassPrimaryButton(if (scanning) "Scanning..." else "Scan device", onScan, enabled = !scanning)
                         GlassGhostButton("Add folder", onAddMusic, icon = Icons.Rounded.FolderOpen, enabled = !scanning)

@@ -45,7 +45,7 @@ fun HomeScreen(
             }
         }
         if (sources.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 100.dp).padding(horizontal = 16.dp)) { items(sources) { FolderRow(it.name) } }
-        if (tracks.isEmpty()) EmptyLibraryHero(onAddMusic, onScan, Modifier.weight(1f), scanning)
+        if (tracks.isEmpty()) EmptyLibraryHero(onAddMusic, onScan, Modifier.weight(1f), scanning, onOpenSettings, sources.isEmpty())
         else {
             Text("Songs · ${tracks.size}", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.titleMedium)
             TrackRows(tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
@@ -54,14 +54,18 @@ fun HomeScreen(
 }
 
 @Composable
-fun EmptyLibraryHero(onAddMusic: () -> Unit, onScan: () -> Unit, modifier: Modifier = Modifier, scanning: Boolean = false) {
+fun EmptyLibraryHero(onAddMusic: () -> Unit, onScan: () -> Unit, modifier: Modifier = Modifier, scanning: Boolean = false, onOpenSettings: () -> Unit = {}, noFolder: Boolean = false) {
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterVertically)) {
         Icon(Icons.Rounded.LibraryMusic, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
-        Text("Your music, offline", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
-        Text("Scan songs on this device or add a folder.", textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Button(onClick = onScan, enabled = !scanning, shape = CircleShape) {
-            if (scanning) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-            Text(if (scanning) "Scanning..." else "Scan device", Modifier.padding(start = if (scanning) 8.dp else 0.dp))
+        Text(if (noFolder) "Choose a music folder to start" else "Your music, offline", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
+        Text(if (noFolder) "AURALIS only scans the folders you choose." else "Scan songs on this device or add a folder.", textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (noFolder) {
+            Button(onClick = onOpenSettings, shape = CircleShape) { Icon(Icons.Rounded.FolderOpen, null); Text("Choose a music folder", Modifier.padding(start = 8.dp)) }
+        } else {
+            Button(onClick = onScan, enabled = !scanning, shape = CircleShape) {
+                if (scanning) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text(if (scanning) "Scanning..." else "Scan device", Modifier.padding(start = if (scanning) 8.dp else 0.dp))
+            }
         }
         OutlinedButton(onClick = onAddMusic, enabled = !scanning, shape = CircleShape) { Icon(Icons.Rounded.FolderOpen, null); Text("Add folder", Modifier.padding(start = 8.dp)) }
     }

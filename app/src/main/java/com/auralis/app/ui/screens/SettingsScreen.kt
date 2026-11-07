@@ -241,6 +241,22 @@ fun SettingsScreen(
                 )
             }
         }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Include subfolders", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Scan nested folders inside each chosen folder",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = settings.includeSubfolders,
+                    onCheckedChange = { on -> onUpdate { it.copy(includeSubfolders = on) } },
+                )
+            }
+        }
         if (sources.isEmpty()) {
             item {
                 Text(

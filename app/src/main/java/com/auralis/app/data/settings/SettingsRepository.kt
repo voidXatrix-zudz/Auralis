@@ -60,6 +60,7 @@ private object Keys {
     val glassClarity = intPreferencesKey("glass_clarity")
     val glassOutlines = booleanPreferencesKey("glass_outlines")
     val autoScan = booleanPreferencesKey("auto_scan_enabled")
+    val includeSubfolders = booleanPreferencesKey("include_subfolders")
 }
 
 /** Persists [AppSettings] in Preferences DataStore. Unknown or corrupt values fall back to defaults. */
@@ -111,6 +112,7 @@ class SettingsRepository(private val context: Context) {
             glassClarity = (this[Keys.glassClarity] ?: d.glassClarity).coerceIn(0, 100),
             glassOutlines = this[Keys.glassOutlines] ?: d.glassOutlines,
             autoScanEnabled = this[Keys.autoScan] ?: d.autoScanEnabled,
+            includeSubfolders = this[Keys.includeSubfolders] ?: d.includeSubfolders,
         )
     }
 
@@ -149,6 +151,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.glassClarity] = s.glassClarity
         this[Keys.glassOutlines] = s.glassOutlines
         this[Keys.autoScan] = s.autoScanEnabled
+        this[Keys.includeSubfolders] = s.includeSubfolders
     }
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
