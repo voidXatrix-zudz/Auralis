@@ -49,11 +49,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.theme.GlassTokens
+import java.time.LocalTime
+import java.time.ZoneId
 
 private val GlassLibraryTabs = listOf("Songs", "Albums", "Artists", "Genres", "Favorites", "Playlists")
 
@@ -69,6 +73,11 @@ fun GlassHomeScreen(
     modifier: Modifier, onQueue: (Track) -> Unit, scanning: Boolean, onPlayNext: (Track) -> Unit,
     onOpenSettings: () -> Unit = {},
 ) {
+    // Recomputed from the device's local clock on every resume so it never goes stale.
+    var greeting by remember { mutableStateOf(greetingFor(LocalTime.now(ZoneId.systemDefault()))) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        greeting = greetingFor(LocalTime.now(ZoneId.systemDefault()))
+    }
     Column(modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -76,7 +85,7 @@ fun GlassHomeScreen(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (tracks.isEmpty()) "Welcome" else "Good evening",
+                    if (tracks.isEmpty()) "Welcome" else greeting,
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Bold,
                     color = GlassTokens.Silver,
@@ -435,4 +444,11 @@ fun GlassLibraryScreen(
         confirmButton = { TextButton(onClick = { onCreatePlaylist(name); name = ""; creating = false }) { Text("Create") } },
         dismissButton = { TextButton(onClick = { creating = false }) { Text("Cancel") } },
     )
+}
+
+private fun greetingFor(time: LocalTime): String = when (time.hour) {
+    in 5..11 -> "Good morning"
+    in 12..16 -> "Good afternoon"
+    in 17..20 -> "Good evening"
+    else -> "Good night"
 }

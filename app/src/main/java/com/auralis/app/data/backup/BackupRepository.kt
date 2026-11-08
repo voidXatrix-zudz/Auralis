@@ -18,6 +18,7 @@ import com.auralis.app.data.db.PlayEventDao
 import com.auralis.app.data.settings.SettingsRepository
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.PerformanceMode
+import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.domain.model.ReplayGainMode
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.domain.model.ThemeStyle
@@ -139,6 +140,8 @@ class BackupRepository(
                     themeStyle = imported.themeStyle,
                     dockGlassTransparency = imported.dockGlassTransparency, dockGlassBlur = imported.dockGlassBlur,
                     autoScanEnabled = imported.autoScanEnabled,
+                    includeSubfolders = imported.includeSubfolders,
+                    playerBackground = imported.playerBackground,
                 ) }
             }.onFailure { Log.w(TAG, "Backup settings were incomplete", it) }
         }
@@ -284,6 +287,8 @@ class BackupRepository(
         put("dockGlassTransparency", settings.dockGlassTransparency)
         put("dockGlassBlur", settings.dockGlassBlur)
         put("autoScanEnabled", settings.autoScanEnabled)
+        put("includeSubfolders", settings.includeSubfolders)
+        put("playerBackground", settings.playerBackground.name)
     }
 
     private fun settingsFromJson(json: JSONObject): AppSettings {
@@ -328,6 +333,10 @@ class BackupRepository(
             dockGlassTransparency = json.optInt("dockGlassTransparency", defaults.dockGlassTransparency).coerceIn(0, 100),
             dockGlassBlur = json.optInt("dockGlassBlur", defaults.dockGlassBlur).coerceIn(0, 100),
             autoScanEnabled = json.optBoolean("autoScanEnabled", defaults.autoScanEnabled),
+            includeSubfolders = json.optBoolean("includeSubfolders", defaults.includeSubfolders),
+            playerBackground = json.optString("playerBackground").let { name ->
+                PlayerBackground.entries.firstOrNull { it.name == name } ?: defaults.playerBackground
+            },
         )
     }
 

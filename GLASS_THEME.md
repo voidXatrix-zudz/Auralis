@@ -10,7 +10,7 @@
 
 ## Glass screens (new, native Compose; design from the Lovable prototype tokens)
 Home (artwork carousels, folder chips, song list), Library (tabs, albums, artists, genres, favorites, playlists), Search (field, empty/no-results states), Now Playing (large artwork, ambience, quality badge, waveform seek bar, controls, tools, up next), Queue (drag/long-press reorder, move, remove, clear), Settings, top bar, floating nav bar, mini-player. Dialogs, menus, sheets and switches pick up the glass colours and shapes from the theme.
-Lyrics (LiquidLyricsScreen), Equalizer, Visualizer, Wrapped, Metadata editor, Backup and About are restyled by the glass theme tokens and backdrop only; they were not given bespoke glass layouts.
+Lyrics (LiquidLyricsScreen), Equalizer, Wrapped, Metadata editor, Backup and About are restyled by the glass theme tokens and backdrop only; they were not given bespoke glass layouts.
 
 ## Files
 New: `domain/model/ThemeStyle.kt`, `ui/theme/GlassTheme.kt`, `ui/components/GlassBackdrop.kt`, `ui/components/ThemeStyleSelector.kt`, `ui/glass/{GlassKit,GlassLists,GlassScreens,GlassNowPlaying,GlassChrome,GlassSettings}.kt`.

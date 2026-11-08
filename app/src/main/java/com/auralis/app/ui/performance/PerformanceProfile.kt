@@ -42,9 +42,6 @@ data class PerformanceProfile(
     val artworkCrossfade: Boolean,
     /** Upper bound for decoded artwork, in pixels (longest side). */
     val artworkMaxPx: Int,
-    // --- Visualizer ---------------------------------------------------------
-    /** 0 = uncapped/full refresh, otherwise frames per second. */
-    val visualizerFps: Int,
     // --- Lists --------------------------------------------------------------
     /** Emit stable content types on lazy lists. */
     val listContentTypes: Boolean,
@@ -74,7 +71,6 @@ object PerformanceProfiles {
         backgroundBlurEnabled = true,
         artworkCrossfade = true,
         artworkMaxPx = 2048,
-        visualizerFps = 0,
         listContentTypes = true,
     )
 
@@ -92,7 +88,6 @@ object PerformanceProfiles {
         backgroundBlurEnabled = false,
         artworkCrossfade = true,
         artworkMaxPx = 1280,
-        visualizerFps = 60,
         listContentTypes = true,
     )
 
@@ -110,7 +105,6 @@ object PerformanceProfiles {
         backgroundBlurEnabled = false,
         artworkCrossfade = false,
         artworkMaxPx = 640,
-        visualizerFps = 30,
         listContentTypes = true,
     )
 

@@ -19,7 +19,7 @@ Date: 2026-11-01 (Stage 4 UI integration)
 
 ## Not tested on device
 
-- Audible playback, EQ/BassBoost/Virtualizer, visualizer capture (needs mic permission + audio).
+- Audible playback, EQ/BassBoost/Virtualizer.
 - MP3/FLAC tag write and MediaStore write-consent round-trip.
 - Backup export/restore round-trip.
 - Wrapped data accuracy with real listening history.

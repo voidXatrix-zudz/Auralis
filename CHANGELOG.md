@@ -2,11 +2,10 @@
 
 ## Stage 4 UI integration
 
-- Added Equalizer, Visualizer, AURALIS Wrapped, Metadata Editor and Backup/Restore screens.
+- Added Equalizer, AURALIS Wrapped, Metadata Editor and Backup/Restore screens.
 - Wired all screens into Compose navigation and a Settings "Tools" section.
 - Now Playing: lyrics panel with active-line highlight, auto-scroll and SAF import; tool row for
-  equalizer, visualizer, Wrapped, backup and tag editing; double-tap seek gesture.
-- Declared `RECORD_AUDIO` for the platform Visualizer.
+  equalizer, Wrapped, backup and tag editing; double-tap seek gesture.
 
 ## Stage 4 partial (backend foundation)
 
@@ -14,8 +13,7 @@
 - Added real platform Equalizer/BassBoost/Virtualizer attached to the ExoPlayer audio session.
 - Added artwork dominant-colour extraction and MP3/FLAC tag read/write with backup and verification.
 - Added play-event logging (Room v2 migration) and monthly/yearly listening aggregation.
-- Added hardware Visualizer capture, volume crossfade and
-  output-device reconnect handling.
+- Added volume crossfade and output-device reconnect handling.
 - Added versioned SAF JSON backup/restore for settings, playlists, favorites, history, lyrics and events.
 - Migrated playback service to MediaLibraryService (Android Auto UI/manifest still pending).
 - UI screens for these backends, gestures, Wrapped sharing and Auto remain unfinished; see

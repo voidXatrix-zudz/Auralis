@@ -17,6 +17,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
@@ -24,9 +25,11 @@ import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.auralis.app.AuralisApp
+import com.auralis.app.R
 import com.auralis.app.data.db.toDomain
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Track
+import com.auralis.app.logging.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -78,7 +81,10 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onCreate() {
         super.onCreate()
-        VisualizerEngine.setContext(this)
+        // Replace Media3's generic play glyph with the monochrome AURALIS waveform mark.
+        val notificationProvider = DefaultMediaNotificationProvider(this)
+        notificationProvider.setSmallIcon(R.drawable.ic_stat_auralis)
+        setMediaNotificationProvider(notificationProvider)
         val ownedPlayer = ExoPlayer.Builder(this).build().apply {
             setAudioAttributes(AudioAttributes.DEFAULT, true)
             setHandleAudioBecomingNoisy(true)
@@ -90,7 +96,6 @@ class PlaybackService : MediaLibraryService() {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 Log.i(TAG, "audio session changed to $audioSessionId")
                 AudioEffectsEngine.attach(audioSessionId, settings)
-                VisualizerEngine.setSession(audioSessionId)
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -111,7 +116,6 @@ class PlaybackService : MediaLibraryService() {
             }
         })
         AudioEffectsEngine.attach(ownedPlayer.audioSessionId, settings)
-        VisualizerEngine.setSession(ownedPlayer.audioSessionId)
 
         val sessionActivity = packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
             PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -121,6 +125,7 @@ class PlaybackService : MediaLibraryService() {
         try {
             session = builder.build()
         } catch (error: Throwable) {
+            AppLog.e("Playback", "Could not create the media session", error)
             ownedPlayer.release()
             player = null
             throw error
@@ -129,7 +134,7 @@ class PlaybackService : MediaLibraryService() {
         val audioManager = getSystemService(AUDIO_SERVICE) as? AudioManager
         runCatching { audioManager?.registerAudioDeviceCallback(deviceCallback, handler) }
             .onSuccess { outputCallbackRegistered = true }
-            .onFailure { Log.w(TAG, "Audio device callback unavailable", it) }
+            .onFailure { Log.w(TAG, "Audio device callback unavailable", it); AppLog.w("Playback", "Audio device callback unavailable", it) }
 
         scope.launch {
             (application as AuralisApp).container.settings.settings.collectLatest { newSettings ->
@@ -185,7 +190,6 @@ class PlaybackService : MediaLibraryService() {
         cancelSleepTimer()
         stopTicker()
         scope.cancel()
-        VisualizerEngine.stop()
         AudioEffectsEngine.release()
         if (outputCallbackRegistered) {
             runCatching { (getSystemService(AUDIO_SERVICE) as? AudioManager)?.unregisterAudioDeviceCallback(deviceCallback) }

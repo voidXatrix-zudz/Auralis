@@ -21,6 +21,7 @@ import com.auralis.app.domain.model.Track
 import com.auralis.app.domain.stats.ListeningStats
 import com.auralis.app.domain.stats.PlayEvent
 import com.auralis.app.domain.stats.WrappedStats
+import com.auralis.app.logging.AppLog
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.nav.NavState
 import com.auralis.app.ui.nav.Tab
@@ -172,7 +173,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun removeSource(source: MusicSource) { viewModelScope.launch {
         runCatching { container.sources.removeSource(source) }
             .onSuccess { _messages.trySend("Removed “${source.name}” from your library"); scanLibrary() }
-            .onFailure { report("Couldn't remove ${source.name}", it) }
+            .onFailure { report("Couldn't remove the folder", it) }
     } }
     fun scanLibrary() {
         if (_scanning.value) return
@@ -364,6 +365,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private fun report(label: String, error: Throwable) {
         if (error is CancellationException) throw error
         android.util.Log.e(TAG, label, error)
+        AppLog.e("ViewModel", label, error)
         _messages.trySend("$label: ${error.localizedMessage ?: "unknown error"}")
     }
     class Factory(private val container: AppContainer) : ViewModelProvider.Factory {

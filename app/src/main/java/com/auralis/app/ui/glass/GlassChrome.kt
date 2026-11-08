@@ -1,5 +1,6 @@
 package com.auralis.app.ui.glass
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
@@ -41,10 +42,13 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.auralis.app.R
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.nav.Tab
@@ -60,16 +64,13 @@ fun GlassTopBar(showBack: Boolean, onBack: () -> Unit, collapseProgress: Float =
         if (showBack) {
             GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
         } else {
-            Text(
-                "AURALIS",
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = androidx.compose.ui.unit.lerp(18.sp, 16.sp, collapseProgress),
-                    letterSpacing = androidx.compose.ui.unit.lerp(6.sp, 3.sp, collapseProgress),
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                ),
-                color = GlassTokens.Silver,
+            Image(
+                painter = painterResource(R.drawable.ic_logo_header),
+                contentDescription = "AURALIS",
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .padding(start = 6.dp)
+                    .height(androidx.compose.ui.unit.lerp(38.dp, 30.dp, collapseProgress))
                     .graphicsLayer {
                         val scale = 1f - 0.15f * collapseProgress
                         scaleX = scale

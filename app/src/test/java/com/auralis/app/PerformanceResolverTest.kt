@@ -105,9 +105,5 @@ class PerformanceResolverTest {
         assertTrue(low.shadowScale < medium.shadowScale)
         assertTrue(low.artworkMaxPx < medium.artworkMaxPx)
         assertTrue(medium.artworkMaxPx < high.artworkMaxPx)
-
-        assertEquals(0, high.visualizerFps)
-        assertEquals(60, medium.visualizerFps)
-        assertEquals(30, low.visualizerFps)
     }
 }

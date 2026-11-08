@@ -26,9 +26,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Article
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Backup
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Delete
@@ -36,8 +36,8 @@ import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
@@ -81,9 +81,9 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.PerformanceMode
 import com.auralis.app.domain.model.ReplayGainMode
-import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.components.LocalDockBottomInset
+import com.auralis.app.ui.components.PlayerBackgroundSelector
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
 import com.auralis.app.ui.performance.VisualPerformanceTier
@@ -105,9 +105,9 @@ fun GlassSettingsScreen(
     onRemoveSource: (MusicSource) -> Unit,
     onOpenAbout: () -> Unit,
     onOpenEqualizer: () -> Unit,
-    onOpenVisualizer: () -> Unit,
     onOpenWrapped: () -> Unit,
     onOpenBackup: () -> Unit,
+    onOpenLogs: () -> Unit,
     modifier: Modifier,
     onBack: () -> Unit = {},
 ) {
@@ -207,11 +207,10 @@ fun GlassSettingsScreen(
                     }
                 }
             }
-            if (matches("Extensions", "equalizer", "visualizer", "wrapped")) {
+            if (matches("Extensions", "equalizer", "wrapped")) {
                 item {
                     SettingsGroup("Extensions", Icons.Rounded.Extension) {
                         RowItem(Icons.Rounded.Equalizer, "Equalizer", "Presets, bands, bass boost and virtualizer", onOpenEqualizer)
-                        RowItem(Icons.Rounded.GraphicEq, "Visualizer", "Waveform, bars and circular spectrum", onOpenVisualizer)
                         RowItem(Icons.Rounded.Insights, "AURALIS Wrapped", "Your listening recap and top tracks", onOpenWrapped, showDivider = false)
                     }
                 }
@@ -233,9 +232,10 @@ fun GlassSettingsScreen(
                     }
                 }
             }
-            if (matches("Logs", "diagnostics", "privacy")) {
+            if (matches("Logs", "diagnostics", "privacy", "support")) {
                 item {
-                    SettingsGroup("Logs", Icons.Rounded.Article) {
+                    SettingsGroup("Logs", Icons.Rounded.BugReport) {
+                        RowItem(Icons.Rounded.BugReport, "Logs & diagnostics", "Device checks, app logs and export", onOpenLogs)
                         InfoNote("Diagnostics stay on this device. AURALIS does not upload listening history or crash logs.")
                     }
                 }
@@ -347,15 +347,18 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         )
     }
     Divider()
-    SegmentedRow(
-        icon = Icons.Rounded.AutoAwesome,
-        title = "Theme mode",
-        description = "Glassmorphism always uses the obsidian scheme",
-    ) {
-        Segmented(
-            options = listOf(ThemeMode.DARK to "Dark", ThemeMode.LIGHT to "Light"),
-            selected = settings.theme,
-            onSelect = { mode -> onUpdate { it.copy(theme = mode) } },
+    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TintedIcon(Icons.Rounded.Image)
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text("Player background", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                Text("Full-screen photo behind the player", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        PlayerBackgroundSelector(
+            selected = settings.playerBackground,
+            onSelect = { option -> onUpdate { it.copy(playerBackground = option) } },
+            modifier = Modifier.padding(top = 12.dp),
         )
     }
     Divider()

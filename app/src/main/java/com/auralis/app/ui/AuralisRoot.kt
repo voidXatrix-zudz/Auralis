@@ -27,6 +27,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
@@ -64,14 +65,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.auralis.app.R
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.nav.Tab
@@ -83,16 +87,18 @@ import com.auralis.app.ui.screens.NowPlayingScreen
 import com.auralis.app.ui.screens.SearchScreen
 import com.auralis.app.ui.screens.SettingsScreen
 import com.auralis.app.ui.screens.EqualizerScreen
-import com.auralis.app.ui.screens.VisualizerScreen
 import com.auralis.app.ui.screens.WrappedScreen
 import com.auralis.app.ui.screens.BackupScreen
 import com.auralis.app.ui.screens.MetadataEditorScreen
+import com.auralis.app.ui.screens.AudioAnalysisScreen
+import com.auralis.app.ui.screens.LogsDiagnosticsScreen
 import com.auralis.app.ui.theme.AuralisAppTheme
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.ui.performance.LocalPerformanceMode
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
 import com.auralis.app.ui.components.glassSurface
+import com.auralis.app.logging.AppLog
 import dev.chrisbanes.haze.rememberHazeState
 import dev.chrisbanes.haze.hazeSource
 import coil3.compose.AsyncImage
@@ -128,7 +134,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val currentTrack = remember(trackById, playbackTrackId) { playbackTrackId?.let(trackById::get) }
     val queuedTracks = remember(queueIds, trackById) { queueIds.mapNotNull(trackById::get) }
     val upNextTracks = remember(upNextIds, trackById) { upNextIds.mapNotNull(trackById::get) }
-    val dark = settings.theme == ThemeMode.DARK
+    // Glassmorphism is always dark; a saved Light preference only applies to the Normal theme.
+    val dark = settings.themeStyle == ThemeStyle.GLASSMORPHIC || settings.theme == ThemeMode.DARK
     var folderPickerPending by rememberSaveable { mutableStateOf(false) }
     var permissionRequestPending by rememberSaveable { mutableStateOf(false) }
 
@@ -179,6 +186,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
         val scanPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             permissionRequestPending = false
             if (granted) { viewModel.onLibraryPermissionGranted(); viewModel.scanLibrary() }
+            else AppLog.w("Permissions", "Audio library permission denied")
         }
         val scan = remember(viewModel, context, permission, scanPermission) {
             {
@@ -209,6 +217,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     availableTracks = tracks,
                     favorites = favorites,
                     playback = playbackState,
+                    settings = settings,
                     lyrics = viewModel.lyrics.collectAsStateWithLifecycle().value,
                     lyricsLoading = viewModel.lyricsLoading.collectAsStateWithLifecycle().value,
                     lyricsAutoScroll = settings.lyricsAutoScroll,
@@ -236,10 +245,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onStartSleepTimer = viewModel::startSleepTimer,
                     onCancelSleepTimer = viewModel::cancelSleepTimer,
                     onOpenEqualizer = { nowPlayingOpen = false; viewModel.push(Destination.Equalizer) },
-                    onOpenVisualizer = { nowPlayingOpen = false; viewModel.push(Destination.Visualizer) },
                     onOpenWrapped = { nowPlayingOpen = false; viewModel.push(Destination.Wrapped) },
                     onOpenBackup = { nowPlayingOpen = false; viewModel.push(Destination.Backup) },
                     onEditMetadata = { nowPlayingOpen = false; viewModel.push(Destination.MetadataEditor(currentTrack.id)) },
+                    onOpenAudioAnalysis = { id -> nowPlayingOpen = false; viewModel.push(Destination.AudioAnalysis(id)) },
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -286,19 +295,19 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                         onRemoveSource = viewModel::removeSource,
                                         onOpenAbout = { viewModel.push(Destination.About) },
                                         onOpenEqualizer = { viewModel.push(Destination.Equalizer) },
-                                        onOpenVisualizer = { viewModel.push(Destination.Visualizer) },
                                         onOpenWrapped = { viewModel.push(Destination.Wrapped) },
                                         onOpenBackup = { viewModel.push(Destination.Backup) },
+                                        onOpenLogs = { viewModel.push(Destination.Logs) },
                                         onBack = viewModel::back,
                                     )
                                     Destination.About -> AboutScreen()
                                     Destination.Equalizer -> EqualizerScreen(settings, viewModel::updateSettings)
-                                    Destination.Visualizer -> VisualizerScreen()
                                     Destination.Wrapped -> {
                                         val events by viewModel.playEvents.collectAsStateWithLifecycle()
                                         WrappedScreen(events, viewModel::wrappedStats)
                                     }
                                     Destination.Backup -> BackupScreen(viewModel::exportBackup, viewModel::restoreBackup)
+                                    Destination.Logs -> LogsDiagnosticsScreen(settings, sources, currentTrack)
                                     is Destination.MetadataEditor -> {
                                         val destination = state.top as Destination.MetadataEditor
                                         val track = tracks.firstOrNull { it.id == destination.trackId }
@@ -310,6 +319,13 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             writeTags = viewModel::writeTags,
                                             onSaved = { viewModel.back() },
                                         )
+                                    }
+                                    is Destination.AudioAnalysis -> {
+                                        val destination = state.top as Destination.AudioAnalysis
+                                        val track = tracks.firstOrNull { it.id == destination.trackId }
+                                        if (track == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            Text("This song is not in the library anymore.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        } else AudioAnalysisScreen(track)
                                     }
                                     null -> when (state.tab) {
                                         Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = favorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = viewModel::toggleFavorite, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) })
@@ -334,9 +350,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             onRemoveSource = viewModel::removeSource,
                                             onOpenAbout = { viewModel.push(Destination.About) },
                                             onOpenEqualizer = { viewModel.push(Destination.Equalizer) },
-                                            onOpenVisualizer = { viewModel.push(Destination.Visualizer) },
                                             onOpenWrapped = { viewModel.push(Destination.Wrapped) },
                                             onOpenBackup = { viewModel.push(Destination.Backup) },
+                                            onOpenLogs = { viewModel.push(Destination.Logs) },
                                             onBack = viewModel::back,
                                         )
                                     }
@@ -418,16 +434,13 @@ private fun TopBar(showBack: Boolean, onBack: () -> Unit, collapseProgress: () -
                 )
             }
         } else {
-            Text(
-                text = "AURALIS",
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontSize = lerp(24.sp, 16.sp, progress),
-                    letterSpacing = lerp(4.sp, 2.sp, progress),
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                ),
-                color = MaterialTheme.colorScheme.primary,
+            Image(
+                painter = painterResource(R.drawable.ic_logo_header),
+                contentDescription = "AURALIS",
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .padding(start = 8.dp)
+                    .height(lerp(38.dp, 30.dp, progress))
                     .graphicsLayer {
                         val scale = 1f - 0.10f * progress
                         scaleX = scale

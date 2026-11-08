@@ -23,12 +23,12 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Equalizer
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Subject
@@ -73,8 +73,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.auralis.app.domain.model.Track
+import com.auralis.app.domain.model.AppSettings
+import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.components.ArtworkImage
+import com.auralis.app.ui.components.AudioInfoSheet
+import com.auralis.app.ui.components.PlayerBackgroundImage
+import com.auralis.app.ui.components.QualityBadgeContent
+import com.auralis.app.ui.components.qualityBadgeContent
+import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
 
 @Composable
 fun NowPlayingScreen(
@@ -84,6 +91,7 @@ fun NowPlayingScreen(
     availableTracks: List<Track>,
     favorites: Set<String>,
     playback: PlaybackController.State,
+    settings: AppSettings = AppSettings(),
     lyrics: Lyrics? = null,
     lyricsLoading: Boolean = false,
     lyricsAutoScroll: Boolean = true,
@@ -96,10 +104,10 @@ fun NowPlayingScreen(
     doubleTapSeekSeconds: Int = 10,
     gesturesEnabled: Boolean = true,
     onOpenEqualizer: () -> Unit = {},
-    onOpenVisualizer: () -> Unit = {},
     onOpenWrapped: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
     onEditMetadata: () -> Unit = {},
+    onOpenAudioAnalysis: (String) -> Unit = {},
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onPrevious: () -> Unit,
@@ -120,12 +128,14 @@ fun NowPlayingScreen(
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
         GlassNowPlayingScreen(
             track = track, queue = queue, upNext = upNext, availableTracks = availableTracks, favorites = favorites, playback = playback,
+            settings = settings,
             lyrics = lyrics, lyricsLoading = lyricsLoading, lyricsAutoScroll = lyricsAutoScroll, lyricSizeSp = lyricSizeSp,
             lyricsOffsetMs = lyricsOffsetMs,
             onLoadLyrics = onLoadLyrics, onImportLyrics = onImportLyrics, onSaveLyrics = onSaveLyrics, onSeekBy = onSeekBy,
             doubleTapSeekSeconds = doubleTapSeekSeconds, gesturesEnabled = gesturesEnabled,
-            onOpenEqualizer = onOpenEqualizer, onOpenVisualizer = onOpenVisualizer, onOpenWrapped = onOpenWrapped,
-            onOpenBackup = onOpenBackup, onEditMetadata = onEditMetadata, onBack = onBack, onPlayPause = onPlayPause, onPrevious = onPrevious,
+            onOpenEqualizer = onOpenEqualizer, onOpenWrapped = onOpenWrapped,
+            onOpenBackup = onOpenBackup, onEditMetadata = onEditMetadata, onOpenAudioAnalysis = onOpenAudioAnalysis,
+            onBack = onBack, onPlayPause = onPlayPause, onPrevious = onPrevious,
             onNext = onNext, onSeek = onSeek, onShuffle = onShuffle, onRepeat = onRepeat, onFavorite = onFavorite, onAddToQueue = onAddToQueue,
             onRemoveFromQueue = onRemoveFromQueue, onMoveQueueItem = onMoveQueueItem, onPlayQueueItem = onPlayQueueItem, onClearQueue = onClearQueue,
             onStartSleepTimer = onStartSleepTimer, onCancelSleepTimer = onCancelSleepTimer, modifier = modifier,
@@ -139,11 +149,13 @@ fun NowPlayingScreen(
     var dragging by remember(track.id) { mutableStateOf<Float?>(null) }
     var draggingQueueId by remember { mutableStateOf<String?>(null) }
     var lyricsOpen by rememberSaveable { mutableStateOf(false) }
+    var audioInfoOpen by remember(track.id) { mutableStateOf(false) }
     val lyricImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportLyrics(track, uri)
     }
     LaunchedEffect(track.id) { onLoadLyrics(track) }
     val colors = MaterialTheme.colorScheme
+    val bluetoothOutputName = rememberBluetoothAudioOutputName()
     val duration = playback.durationMs.takeIf { it > 0 } ?: track.durationMs
     val progress = dragging ?: playback.positionMs.toFloat()
     BackHandler(enabled = queueOpen) { queueOpen = false }
@@ -227,8 +239,17 @@ fun NowPlayingScreen(
             onSaveText = { text -> onSaveLyrics(track, text) },
         )
       } else {
+        val photoBackground = settings.playerBackground
+        val photoActive = photoBackground != PlayerBackground.NONE
+        // Over a photo the theme colours are forced light so text, controls and the waveform stay readable.
+        val colors = if (photoActive) colors.copy(
+            onSurface = Color.White,
+            onSurfaceVariant = Color.White.copy(alpha = 0.78f),
+            onBackground = Color.White,
+        ) else colors
         Box(Modifier.fillMaxSize()) {
-        NowPlayingBackdrop(track)
+        if (photoActive) PlayerBackgroundImage(photoBackground) else NowPlayingBackdrop(track)
+        CompositionLocalProvider(LocalContentColor provides colors.onSurface) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
             Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Close now playing") }
@@ -267,6 +288,13 @@ fun NowPlayingScreen(
                     Icon(if (track.id in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (track.id in favorites) "Remove favorite" else "Add favorite", tint = if (track.id in favorites) colors.primary else colors.onSurfaceVariant, modifier = Modifier.size(28.dp))
                 }
             }
+            val qualityBadge = track.qualityBadgeContent()
+            if (qualityBadge != null || bluetoothOutputName != null) {
+                Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    qualityBadge?.let { NormalQualityBadge(it, onClick = { audioInfoOpen = true }) }
+                    bluetoothOutputName?.let { NormalBluetoothBadge(it) }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             Box(Modifier.fillMaxWidth().height(28.dp), contentAlignment = Alignment.Center) {
                 if (dragging != null) {
@@ -301,7 +329,6 @@ fun NowPlayingScreen(
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 PlayerTool(Icons.Rounded.Equalizer, "Equalizer", onOpenEqualizer)
-                PlayerTool(Icons.Rounded.GraphicEq, "Visualizer", onOpenVisualizer)
                 PlayerTool(Icons.Rounded.Insights, "Wrapped", onOpenWrapped)
                 PlayerTool(Icons.Rounded.CloudUpload, "Backup", onOpenBackup)
                 PlayerTool(Icons.Rounded.Edit, "Edit tags", onEditMetadata)
@@ -333,7 +360,20 @@ fun NowPlayingScreen(
             Spacer(Modifier.height(28.dp))
         }
         }
+        }
       }
+    }
+
+    if (audioInfoOpen) {
+        AudioInfoSheet(
+            track = track,
+            settings = settings,
+            onDismiss = { audioInfoOpen = false },
+            onOpenAnalysis = {
+                audioInfoOpen = false
+                onOpenAudioAnalysis(track.id)
+            },
+        )
     }
 
     if (addSongsOpen) AlertDialog(
@@ -450,5 +490,48 @@ private fun PlayerTool(icon: ImageVector, label: String, onClick: () -> Unit) {
     ) {
         Icon(icon, contentDescription = label, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+@Composable
+private fun NormalQualityBadge(content: QualityBadgeContent, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick),
+        color = colors.primary.copy(alpha = 0.16f),
+        shape = CircleShape,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f)),
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (content.tag != null) Text(content.tag, style = MaterialTheme.typography.labelSmall, color = colors.primary, modifier = Modifier.padding(end = 8.dp))
+            if (content.details.isNotEmpty()) Text(content.details, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun NormalBluetoothBadge(name: String, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        color = colors.primary.copy(alpha = 0.16f),
+        shape = CircleShape,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f)),
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Rounded.Bluetooth,
+                contentDescription = null,
+                tint = colors.primary,
+                modifier = Modifier.padding(end = 6.dp).size(14.dp),
+            )
+            Text(
+                name,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }

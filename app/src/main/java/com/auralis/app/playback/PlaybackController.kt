@@ -11,6 +11,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import com.auralis.app.domain.model.Track
+import com.auralis.app.logging.AppLog
 import com.auralis.app.playback.PlaybackService.Companion.ACTION_CANCEL_SLEEP_TIMER
 import com.auralis.app.playback.PlaybackService.Companion.ACTION_START_SLEEP_TIMER
 import com.auralis.app.playback.PlaybackService.Companion.EXTRA_SLEEP_TIMER_MS
@@ -46,7 +47,8 @@ class PlaybackController(private val context: Context) {
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) = publish()
         override fun onEvents(player: Player, events: Player.Events) = publish()
         override fun onPlayerError(error: PlaybackException) {
-            Log.e(TAG, "Playback failed for ${player?.currentMediaItem?.localConfiguration?.uri}", error)
+            Log.e(TAG, "Playback failed", error)
+            AppLog.e("Playback", "Playback failed", error)
             _state.value = _state.value.copy(error = error.localizedMessage ?: "Unable to play this file")
             publish()
         }
@@ -89,6 +91,7 @@ class PlaybackController(private val context: Context) {
             start(tracks, index, positionMs.coerceAtLeast(0L), wasPlaying)
         } catch (error: Exception) {
             Log.e(TAG, "Could not restore playback", error)
+            AppLog.e("Playback", "Could not restore playback", error)
             setError(error.localizedMessage ?: "Couldn't restore playback")
         }
     }
@@ -107,6 +110,7 @@ class PlaybackController(private val context: Context) {
             if (playWhenReady) p.play() else p.pause()
         } catch (error: Exception) {
             Log.e(TAG, "Could not start playback", error)
+            AppLog.e("Playback", "Could not start playback", error)
             setError(error.localizedMessage ?: "Unable to start playback")
         }
     }
@@ -266,7 +270,7 @@ class PlaybackController(private val context: Context) {
     private inline fun safely(action: (Player) -> Unit) {
         val p = player ?: return
         try { action(p); _state.value = _state.value.copy(error = null); publish() }
-        catch (error: Exception) { Log.w(TAG, "Playback control failed", error); setError(error.localizedMessage ?: "Playback control failed") }
+        catch (error: Exception) { Log.w(TAG, "Playback control failed", error); AppLog.w("Playback", "Playback control failed", error); setError(error.localizedMessage ?: "Playback control failed") }
     }
 
     private fun setError(message: String) { _state.value = _state.value.copy(error = message) }

@@ -7,10 +7,11 @@ sealed interface Destination {
     data object Settings : Destination
     data object About : Destination
     data object Equalizer : Destination
-    data object Visualizer : Destination
     data object Wrapped : Destination
     data object Backup : Destination
     data class MetadataEditor(val trackId: String) : Destination
+    data class AudioAnalysis(val trackId: String) : Destination
+    data object Logs : Destination
 }
 
 /** Tab plus a back stack, same model as the web reference. Pure so it can be unit tested. */

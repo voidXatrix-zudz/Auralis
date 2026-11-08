@@ -48,4 +48,6 @@ data class AppSettings(
     val autoScanEnabled: Boolean = true,
     /** Include songs from subfolders of each chosen music folder. */
     val includeSubfolders: Boolean = true,
+    /** Full-screen photo behind the Now Playing player. */
+    val playerBackground: PlayerBackground = PlayerBackground.NONE,
 )

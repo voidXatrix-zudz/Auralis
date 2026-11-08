@@ -1,10 +1,8 @@
 package com.auralis.app.ui.screens
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.IntentSender
-import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
@@ -12,7 +10,6 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -31,14 +28,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.auralis.app.data.db.PlayEventEntity
 import com.auralis.app.data.metadata.TagData
@@ -47,11 +41,9 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Track
 import com.auralis.app.domain.stats.WrappedStats
 import com.auralis.app.playback.AudioEffectsEngine
-import com.auralis.app.playback.VisualizerEngine
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.components.ScreenPadding
 import com.auralis.app.ui.components.SectionTitle
-import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.theme.Auralis
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -320,84 +312,6 @@ private fun formatBandFrequency(hz: Int): String =
     if (hz >= 1_000) "${(hz / 100f).roundToInt() / 10f} kHz" else "$hz Hz"
 
 private fun formatDb(db: Float): String = String.format(java.util.Locale.US, "%+.1f dB", db)
-
-@Composable
-fun VisualizerScreen(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
-    var mode by rememberSaveable { mutableStateOf(0) }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
-    val profile = LocalPerformanceProfile.current
-    LaunchedEffect(granted, profile.visualizerFps) {
-        VisualizerEngine.setFrameRateCap(profile.visualizerFps)
-        if (granted) VisualizerEngine.start(context)
-        else VisualizerEngine.stop()
-    }
-    DisposableEffect(Unit) { onDispose { VisualizerEngine.setFrameRateCap(0); VisualizerEngine.stop() } }
-    Column(modifier.fillMaxSize().padding(16.dp)) {
-        Text("Visualizer", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("Waveform", "Bars", "Circle").forEachIndexed { index, label -> FilterChip(selected = mode == index, onClick = { mode = index }, label = { Text(label) }, shape = CircleShape) }
-        }
-        Spacer(Modifier.height(16.dp))
-        if (!granted) {
-            Text("Microphone permission is required by Android's Visualizer API to read the current audio session.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = { permission.launch(Manifest.permission.RECORD_AUDIO) }, modifier = Modifier.padding(top = 12.dp)) { Text("Allow visualizer") }
-        } else {
-            // The visualizer frame updates many times per second; keep that recomposition inside
-            // the canvas instead of re-running the whole screen.
-            VisualizerCanvas(mode, Modifier.fillMaxWidth().weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun VisualizerCanvas(mode: Int, modifier: Modifier = Modifier) {
-    val frame by VisualizerEngine.frame.collectAsStateWithLifecycle()
-    val primary = MaterialTheme.colorScheme.primary
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Canvas(modifier.background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp)).padding(16.dp)) {
-        val w = size.width; val h = size.height
-        val spectrum = frame.spectrum
-        val wave = frame.waveform
-        if (mode == 0) {
-            if (wave.isEmpty()) return@Canvas
-            val step = (wave.size / 256).coerceAtLeast(1)
-            var prevX = 0f
-            var prevY = h / 2
-            for (i in 0 until wave.size step step) {
-                val x = i.toFloat() / (wave.size - 1).coerceAtLeast(1) * w
-                val y = h / 2 - wave[i].coerceIn(-1f, 1f) * h * 0.42f
-                if (i > 0) drawLine(primary, Offset(prevX, prevY), Offset(x, y), strokeWidth = 3f)
-                prevX = x; prevY = y
-            }
-        } else if (mode == 1) {
-            if (spectrum.isEmpty()) return@Canvas
-            val count = 48
-            val barWidth = w / count
-            for (i in 0 until count) {
-                val index = (i.toFloat() / count * spectrum.size).toInt().coerceIn(0, spectrum.lastIndex)
-                val value = spectrum[index].coerceIn(0f, 1f)
-                drawRoundRect(primary.copy(alpha = 0.85f), Offset(i * barWidth + 1f, h - value * h), androidx.compose.ui.geometry.Size(barWidth - 2f, value * h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f))
-            }
-        } else {
-            if (spectrum.isEmpty()) return@Canvas
-            val center = Offset(w / 2, h / 2); val radius = minOf(w, h) * 0.22f
-            val count = 72
-            for (i in 0 until count) {
-                val value = spectrum[(i.toFloat() / count * spectrum.size).toInt().coerceIn(0, spectrum.lastIndex)].coerceIn(0f, 1f)
-                val angle = Math.toRadians((i.toFloat() / count * 360.0) - 90.0)
-                val start = Offset(center.x + (radius * kotlin.math.cos(angle)).toFloat(), center.y + (radius * kotlin.math.sin(angle)).toFloat())
-                val end = Offset(center.x + ((radius + 8f + value * minOf(w, h) * 0.28f) * kotlin.math.cos(angle)).toFloat(), center.y + ((radius + 8f + value * minOf(w, h) * 0.28f) * kotlin.math.sin(angle)).toFloat())
-                drawLine(primary.copy(alpha = 0.3f + value * 0.7f), start, end, strokeWidth = 4f)
-            }
-            drawCircle(primary.copy(alpha = 0.35f), radius * 0.55f, center, style = Stroke(width = 3f))
-        }
-    }
-    frame.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
-    if (frame.waveform.isEmpty() && frame.error == null) Text("Waiting for audio… start a song, then return here.", color = muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-}
 
 @Composable
 fun WrappedScreen(events: List<PlayEventEntity>, statsFor: (Int, Int?) -> WrappedStats, modifier: Modifier = Modifier) {

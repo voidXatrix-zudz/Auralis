@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.DragHandle
@@ -46,7 +47,6 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Pause
@@ -90,11 +90,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.auralis.app.domain.audio.isHiRes
-import com.auralis.app.domain.audio.isLossless
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.Track
+import com.auralis.app.domain.model.AppSettings
+import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.playback.PlaybackController
+import com.auralis.app.ui.components.AudioInfoSheet
+import com.auralis.app.ui.components.PlayerBackgroundImage
+import com.auralis.app.ui.components.QualityBadgeContent
+import com.auralis.app.ui.components.qualityBadgeContent
+import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
 import com.auralis.app.ui.screens.LiquidLyricsScreen
 import com.auralis.app.ui.theme.ArtworkPalette
 import com.auralis.app.ui.theme.GlassTokens
@@ -111,6 +116,7 @@ fun GlassNowPlayingScreen(
     availableTracks: List<Track>,
     favorites: Set<String>,
     playback: PlaybackController.State,
+    settings: AppSettings = AppSettings(),
     lyrics: Lyrics?,
     lyricsLoading: Boolean,
     lyricsAutoScroll: Boolean,
@@ -123,10 +129,10 @@ fun GlassNowPlayingScreen(
     doubleTapSeekSeconds: Int,
     gesturesEnabled: Boolean,
     onOpenEqualizer: () -> Unit,
-    onOpenVisualizer: () -> Unit,
     onOpenWrapped: () -> Unit,
     onOpenBackup: () -> Unit,
     onEditMetadata: () -> Unit,
+    onOpenAudioAnalysis: (String) -> Unit = {},
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onPrevious: () -> Unit,
@@ -151,11 +157,13 @@ fun GlassNowPlayingScreen(
     var dragging by remember(track.id) { mutableStateOf<Float?>(null) }
     var draggingQueueId by remember { mutableStateOf<String?>(null) }
     var lyricsOpen by rememberSaveable { mutableStateOf(false) }
+    var audioInfoOpen by remember(track.id) { mutableStateOf(false) }
     val lyricImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportLyrics(track, uri)
     }
     LaunchedEffect(track.id) { onLoadLyrics(track) }
     val colors = MaterialTheme.colorScheme
+    val bluetoothOutputName = rememberBluetoothAudioOutputName()
     val duration = playback.durationMs.takeIf { it > 0 } ?: track.durationMs
     val position = dragging ?: playback.positionMs.toFloat()
     BackHandler(enabled = queueOpen) { queueOpen = false }
@@ -260,6 +268,7 @@ fun GlassNowPlayingScreen(
                 )
             }
             else -> {
+                if (settings.playerBackground != PlayerBackground.NONE) PlayerBackgroundImage(settings.playerBackground)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.30f), Color.Transparent, Color.Transparent))))
                 Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
                     Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -309,7 +318,13 @@ fun GlassNowPlayingScreen(
                             tint = if (track.id in favorites) GlassTokens.Violet else colors.onSurface,
                         )
                     }
-                    GlassQualityBadge(track, Modifier.padding(top = 12.dp))
+                    val qualityBadge = track.qualityBadgeContent()
+                    if (qualityBadge != null || bluetoothOutputName != null) {
+                        Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            qualityBadge?.let { GlassQualityBadge(it, onClick = { audioInfoOpen = true }) }
+                            bluetoothOutputName?.let { GlassBluetoothBadge(it) }
+                        }
+                    }
                     Spacer(Modifier.height(14.dp))
                     Box(Modifier.fillMaxWidth().height(26.dp), contentAlignment = Alignment.Center) {
                         if (dragging != null) Text("Seek to ${time((dragging ?: 0f).toLong())}", style = MaterialTheme.typography.labelMedium, color = GlassTokens.Violet)
@@ -372,7 +387,6 @@ fun GlassNowPlayingScreen(
                     GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusLg)) {
                         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                             GlassTool(Icons.Rounded.Equalizer, "Equalizer", onOpenEqualizer)
-                            GlassTool(Icons.Rounded.GraphicEq, "Visualizer", onOpenVisualizer)
                             GlassTool(Icons.Rounded.Insights, "Wrapped", onOpenWrapped)
                             GlassTool(Icons.Rounded.CloudUpload, "Backup", onOpenBackup)
                             GlassTool(Icons.Rounded.Edit, "Edit tags", onEditMetadata)
@@ -408,6 +422,18 @@ fun GlassNowPlayingScreen(
                 }
             }
         }
+    }
+
+    if (audioInfoOpen) {
+        AudioInfoSheet(
+            track = track,
+            settings = settings,
+            onDismiss = { audioInfoOpen = false },
+            onOpenAnalysis = {
+                audioInfoOpen = false
+                onOpenAudioAnalysis(track.id)
+            },
+        )
     }
 
     if (addSongsOpen) AlertDialog(
@@ -468,24 +494,35 @@ fun GlassNowPlayingScreen(
     )
 }
 
-/** Audio-quality indicator built only from the file's own properties (same rules as the Normal badge logic). */
+/** Audio-quality indicator built only from the file's own properties. */
 @Composable
-private fun GlassQualityBadge(track: Track, modifier: Modifier = Modifier) {
-    val parts = listOfNotNull(
-        track.codec?.takeIf { it.isNotBlank() }?.uppercase(),
-        track.bitDepth?.takeIf { it > 0 }?.let { "$it-bit" },
-        track.sampleRateHz?.takeIf { it > 0 }?.let { "%.1f kHz".format(it / 1000f) },
-    )
-    val tag = when {
-        track.isHiRes -> "HI-RES"
-        track.isLossless -> "LOSSLESS"
-        else -> null
+private fun GlassQualityBadge(content: QualityBadgeContent, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    GlassPanel(modifier.clickable(role = Role.Button, onClick = onClick), CircleShape) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (content.tag != null) Text(content.tag, style = MaterialTheme.typography.labelSmall, color = GlassTokens.Ice, modifier = Modifier.padding(end = 8.dp))
+            if (content.details.isNotEmpty()) Text(content.details, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
-    if (tag == null && parts.isEmpty()) return
+}
+
+/** Connected Bluetooth output, using the same capsule geometry as the quality badge. */
+@Composable
+private fun GlassBluetoothBadge(name: String, modifier: Modifier = Modifier) {
     GlassPanel(modifier, CircleShape) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (tag != null) Text(tag, style = MaterialTheme.typography.labelSmall, color = GlassTokens.Ice, modifier = Modifier.padding(end = 8.dp))
-            if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                Icons.Rounded.Bluetooth,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 6.dp).size(14.dp),
+            )
+            Text(
+                name,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

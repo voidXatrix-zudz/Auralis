@@ -7,6 +7,9 @@ enum class RepeatMode { OFF, ALL, ONE }
 
 enum class ThemeMode { DARK, LIGHT }
 
+/** Full-screen photo drawn behind the Now Playing player. NONE keeps the existing look. */
+enum class PlayerBackground { NONE, PHOTO_1, PHOTO_2 }
+
 enum class ReplayGainMode { OFF, TRACK, ALBUM }
 
 enum class LyricsSource { EMBEDDED, LRC, USER }

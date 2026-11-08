@@ -24,7 +24,7 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk` (the deb
 
 ## Stage 4 status
 
-Compose screens for lyrics, equalizer, visualizer, Wrapped, metadata editing and
+Compose screens for lyrics, equalizer, Wrapped, metadata editing and
 backup/restore are integrated and reachable from Settings → Tools and the Now Playing tool row.
 Car Mode/Android Auto, Wrapped share cards, dynamic artwork themes and full drag gestures remain
 deferred. See `IMPLEMENTATION_STATUS.md`, `CONTINUATION.md` and `TEST_REPORT.md`. Latest APK:

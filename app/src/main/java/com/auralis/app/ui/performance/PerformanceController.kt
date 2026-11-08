@@ -78,7 +78,7 @@ class PerformanceController(
                 "AuralisPerf",
                 "mode=$mode tier=$tier reason=$reason blur=${resolved.blurEnabled}/${resolved.blurScale} " +
                     "refraction=${resolved.refractionEnabled} shadow=${resolved.shadowScale} " +
-                    "art=${resolved.artworkMaxPx}px visualizer=${resolved.visualizerFps}fps",
+                    "art=${resolved.artworkMaxPx}px",
             )
         }
     }

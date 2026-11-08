@@ -3,6 +3,7 @@ package com.auralis.app.ui.screens
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassSettingsScreen
+import com.auralis.app.ui.components.PlayerBackgroundSelector
 import com.auralis.app.ui.components.ThemeStyleSelector
 
 import androidx.compose.foundation.BorderStroke
@@ -23,11 +24,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
@@ -75,14 +76,14 @@ fun SettingsScreen(
     onRemoveSource: (MusicSource) -> Unit,
     onOpenAbout: () -> Unit,
     onOpenEqualizer: () -> Unit = {},
-    onOpenVisualizer: () -> Unit = {},
     onOpenWrapped: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
+    onOpenLogs: () -> Unit = {},
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassSettingsScreen(settings, sources, onUpdate, onAddFolder, onRemoveSource, onOpenAbout, onOpenEqualizer, onOpenVisualizer, onOpenWrapped, onOpenBackup, modifier, onBack)
+        GlassSettingsScreen(settings, sources, onUpdate, onAddFolder, onRemoveSource, onOpenAbout, onOpenEqualizer, onOpenWrapped, onOpenBackup, onOpenLogs, modifier, onBack)
         return
     }
     var pendingRemoval by remember { mutableStateOf<MusicSource?>(null) }
@@ -133,6 +134,14 @@ fun SettingsScreen(
                     )
                 }
             }
+        }
+
+        item { SectionTitle("Player background") }
+        item {
+            PlayerBackgroundSelector(
+                selected = settings.playerBackground,
+                onSelect = { option -> onUpdate { it.copy(playerBackground = option) } },
+            )
         }
 
         item { SectionTitle("Lyrics") }
@@ -290,9 +299,9 @@ fun SettingsScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ToolRow("Equalizer", "Presets, bands, bass boost and virtualizer", Icons.Rounded.Equalizer, onOpenEqualizer)
-                ToolRow("Visualizer", "Waveform, bars and circular spectrum", Icons.Rounded.GraphicEq, onOpenVisualizer)
                 ToolRow("AURALIS Wrapped", "Your listening recap and top tracks", Icons.Rounded.Insights, onOpenWrapped)
                 ToolRow("Backup & restore", "Versioned JSON export and restore", Icons.Rounded.CloudUpload, onOpenBackup)
+                ToolRow("Logs & diagnostics", "Device checks, app logs and export", Icons.Rounded.BugReport, onOpenLogs)
             }
         }
 
