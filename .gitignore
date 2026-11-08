@@ -14,3 +14,9 @@
 keystore.properties
 *.jks
 *.keystore
+
+# Kotlin caches
+.kotlin/
+
+# All module build directories
+**/build/
