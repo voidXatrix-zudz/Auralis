@@ -27,7 +27,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +46,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -78,9 +82,7 @@ fun GlassPanel(
 ) {
     val extras = Auralis.extras
     val glass = LocalDockGlassStyle.current
-    // Cards track the same transparency control as the dock, but stay denser so body text keeps
-    // its contrast. Clarity only nudges the result.
-    val cardAlpha = (0.48f + 0.42f * glass.tintAlpha).coerceIn(0.50f, 0.84f)
+    // Cards share the dock material pipeline at Medium strength.
     val elevation = 10.dp * glass.shadowScale
     Box(
         modifier
@@ -94,9 +96,13 @@ fun GlassPanel(
                 ) else Modifier,
             )
             .clip(shape)
-            .background(extras.glass.copy(alpha = cardAlpha))
-            .then(if (glass.shadowScale > 0.5f) Modifier.background(GlassTokens.SurfaceSheen) else Modifier)
-            .then(if (glass.outlines) Modifier.border(1.dp, GlassTokens.BorderBrush, shape) else Modifier)
+            .glass(
+                hazeState = null,
+                shape = shape,
+                level = GlassLevel.MEDIUM,
+                style = glass,
+                fallbackSurface = extras.glass,
+            )
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
         content = content,
     )
@@ -117,11 +123,20 @@ fun GlassDialog(
 ) {
     val glass = LocalDockGlassStyle.current
     val shape = RoundedCornerShape(GlassTokens.RadiusCard)
+    val enter = remember { Animatable(0.92f) }
+    LaunchedEffect(Unit) {
+        enter.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 320f))
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxWidth().padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .graphicsLayer {
+                        scaleX = enter.value
+                        scaleY = enter.value
+                        alpha = ((enter.value - 0.92f) / 0.08f).coerceIn(0f, 1f)
+                    }
                     .shadow(
                         elevation = 24.dp * glass.shadowScale,
                         shape = shape,
@@ -130,9 +145,13 @@ fun GlassDialog(
                         spotColor = Color.Black.copy(alpha = 0.65f),
                     )
                     .clip(shape)
-                    .background(GlassTokens.Surface.copy(alpha = (glass.tintAlpha + 0.42f).coerceIn(0.55f, 0.94f)))
-                    .then(if (glass.shadowScale > 0.5f) Modifier.background(GlassTokens.SurfaceSheen) else Modifier)
-                    .then(if (glass.outlines) Modifier.border(1.dp, GlassTokens.BorderBrush, shape) else Modifier)
+                    .glass(
+                        hazeState = null,
+                        shape = shape,
+                        level = GlassLevel.STRONG,
+                        style = glass,
+                        fallbackSurface = GlassTokens.Surface,
+                    )
                     .padding(24.dp),
             ) {
                 Text(title, style = MaterialTheme.typography.headlineSmall, color = GlassTokens.Silver)

@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.auralis.app.ui.theme.GlassTokens
+import com.auralis.app.ui.theme.LocalGlassOptics
 import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
@@ -96,9 +97,53 @@ fun Modifier.liquidGlass(
     return modifier
 }
 
+/** One material, three intensities. All glass in the app routes through [glass]. */
+enum class GlassLevel { STRONG, MEDIUM, LIGHT }
+
+/**
+ * Reusable glass surface. Clamps the user's dock/blur preferences into safe, readable bands and
+ * feeds the single [liquidGlass] shader/fallback. Pass [style] when the caller has an already
+ * resolved/clamped DockGlassStyle (the dock); otherwise the ambient one is used.
+ */
+@Composable
+fun Modifier.glass(
+    hazeState: HazeState?,
+    shape: Shape,
+    level: GlassLevel = GlassLevel.MEDIUM,
+    refraction: Boolean = false,
+    style: com.auralis.app.ui.glass.DockGlassStyle? = null,
+    fallbackSurface: Color = GlassTokens.Surface,
+): Modifier {
+    val g = style ?: LocalDockGlassStyle.current
+    val optics = LocalGlassOptics.current
+    val tint = when (level) {
+        GlassLevel.STRONG -> g.tintAlpha.coerceIn(0.40f, 0.55f)
+        GlassLevel.MEDIUM -> (g.tintAlpha * 0.92f).coerceIn(0.34f, 0.62f)
+        GlassLevel.LIGHT -> (0.14f + 0.12f * g.tintAlpha).coerceIn(0.16f, 0.30f)
+    }
+    val blur = if (g.blurEnabled) when (level) {
+        GlassLevel.STRONG -> g.blurDp.coerceIn(20f, 30f)
+        GlassLevel.MEDIUM -> g.blurDp.coerceIn(16f, 26f)
+        GlassLevel.LIGHT -> g.blurDp.coerceIn(10f, 18f)
+    } else g.blurDp
+    return liquidGlass(
+        hazeState = hazeState,
+        shape = shape,
+        cornerRadius = GlassTokens.RadiusXl,
+        tintAlpha = tint,
+        blurDp = blur,
+        saturation = optics.saturation,
+        outlines = g.outlines,
+        refraction = refraction && g.refractionEnabled,
+        blurEnabled = g.blurEnabled,
+        downsample = g.downsample,
+        sheen = g.shadowScale > 0.5f,
+        fallbackSurface = fallbackSurface,
+    )
+}
+
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-private object LensShader {
-    fun create(): RuntimeShader? = runCatching { RuntimeShader(AGSL_LENS) }.getOrNull()
+private object LensShader {    fun create(): RuntimeShader? = runCatching { RuntimeShader(AGSL_LENS) }.getOrNull()
 
     fun effect(shader: RuntimeShader): androidx.compose.ui.graphics.RenderEffect? = runCatching {
         android.graphics.RenderEffect

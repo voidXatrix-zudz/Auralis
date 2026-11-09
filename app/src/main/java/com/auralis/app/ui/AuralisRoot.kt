@@ -27,6 +27,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
@@ -81,6 +82,8 @@ import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.nav.Tab
 import com.auralis.app.ui.screens.AboutScreen
 import com.auralis.app.domain.model.Track
+import com.auralis.app.domain.model.PlayerBackground
+import com.auralis.app.ui.components.PlayerBackgroundImage
 import com.auralis.app.ui.screens.HomeScreen
 import com.auralis.app.ui.screens.LibraryScreen
 import com.auralis.app.ui.screens.NowPlayingScreen
@@ -260,6 +263,19 @@ fun AuralisRoot(viewModel: AppViewModel) {
                             .fillMaxSize()
                             .then(if (dockStyle == DockStyle.GLASS && dockGlass.blurEnabled) Modifier.hazeSource(hazeState) else Modifier),
                     ) {
+                        // App-wide chosen player background (Glass theme only): drawn once behind
+                        // every pushed screen and tab, fixed while content scrolls, and included in
+                        // the Haze capture so the dock/cards blur it.
+                        if (settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
+                            settings.playerBackground != PlayerBackground.NONE
+                        ) {
+                            Crossfade(
+                                targetState = settings.playerBackground,
+                                animationSpec = tween(360),
+                                modifier = Modifier.fillMaxSize(),
+                                label = "appBackground",
+                            ) { background -> PlayerBackgroundImage(background) }
+                        }
                         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                             // Glass Settings owns its own collapsing header + back chevron.
                             val glassSettings = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC &&
