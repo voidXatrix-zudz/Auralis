@@ -5,8 +5,10 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -16,6 +18,7 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -78,6 +81,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -87,8 +91,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -127,6 +133,8 @@ import com.auralis.app.ui.theme.ArtworkPalette
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LyricsTypography
 import kotlin.math.abs
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -450,6 +458,7 @@ fun GlassNowPlayingScreen(
                             trackId = track.id,
                             lyrics = lyrics,
                             loading = lyricsLoading,
+                            playing = playback.playing,
                             positionMs = playback.positionMs,
                             lyricsOffsetMs = lyricsOffsetMs,
                             lyricSizeSp = lyricSizeSp,
@@ -651,6 +660,15 @@ fun GlassNowPlayingScreen(
     )
 }
 
+private const val LYRIC_LEAD_MS = 180L
+private const val LYRIC_STAGGER_STEP = 0.04f
+private const val LYRIC_MANUAL_SCROLL_PAUSE_MS = 2_000L
+
+private data class LyricsView(val trackId: String, val lyrics: Lyrics?)
+
+private fun quantizeLyricBlur(radius: Float): Float =
+    if (radius < 1f) 0f else ((radius / 2f).toInt() * 2).toFloat()
+
 /**
  * The lyrics layer that fades in inside the hero. It is layered over the normal art/title block,
  * starts below the shrunken art row, and masks its own top/bottom edges. The only per-frame work
@@ -661,6 +679,7 @@ private fun InlineLyricsOverlay(
     trackId: String,
     lyrics: Lyrics?,
     loading: Boolean,
+    playing: Boolean,
     positionMs: Long,
     lyricsOffsetMs: Int,
     lyricSizeSp: Int,
@@ -671,33 +690,13 @@ private fun InlineLyricsOverlay(
     topInset: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
 ) {
-    val lines = lyrics?.synced.orEmpty()
-    val plainLines = remember(lyrics?.plain) {
-        lyrics?.plain?.split('\n')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-    }
-    val effectivePosition = (positionMs + lyricsOffsetMs).coerceAtLeast(0L)
-    val active = remember(lines, effectivePosition) { LrcParser.activeLine(lines, effectivePosition) }
-    val listState = rememberLazyListState()
-    val blurAvailable = Build.VERSION.SDK_INT >= 31
-    val hasLyrics = lines.isNotEmpty() || plainLines.isNotEmpty()
-
-    // A brand-new track starts its own lyrics at the top, even if the previous list was scrolled.
-    LaunchedEffect(trackId) { listState.scrollToItem(0) }
-
-    LaunchedEffect(trackId, active, autoScroll, lines.size) {
-        if (!interactive || !autoScroll || active < 0 || lines.isEmpty()) return@LaunchedEffect
-        val viewport = listState.layoutInfo.viewportSize.height
-        if (viewport <= 0) return@LaunchedEffect
-        val target = viewport * 0.26f
-        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == active }
-        if (info != null) {
-            listState.animateScrollBy(
-                value = info.offset - target,
-                animationSpec = spring(dampingRatio = 0.85f, stiffness = 300f),
-            )
-        } else {
-            listState.animateScrollToItem(active, -target.toInt())
-        }
+    // Hold the previous lyrics while the next track loads, then crossfade old -> new in 250 ms
+    // instead of hard-swapping the list.
+    val target = remember(trackId, lyrics) { LyricsView(trackId, lyrics) }
+    var shown by remember { mutableStateOf(target) }
+    LaunchedEffect(target, loading) {
+        val has = target.lyrics?.let { !it.synced.isNullOrEmpty() || !it.plain.isNullOrBlank() } == true
+        if (has || !loading) shown = target
     }
 
     Box(
@@ -722,51 +721,209 @@ private fun InlineLyricsOverlay(
                 )
             },
     ) {
-        when {
-            loading && !hasLyrics -> CenteredLyricMessage("Finding lyrics…", lyricSizeSp)
-            lines.isNotEmpty() -> LazyColumn(
-                state = listState,
-                userScrollEnabled = interactive,
-                modifier = Modifier.fillMaxSize().padding(horizontal = 2.dp),
-                contentPadding = PaddingValues(top = 44.dp, bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                itemsIndexed(lines) { index, line ->
-                    val distance = if (active >= 0) abs(index - active) else index.coerceAtMost(4)
-                    InlineLyricLine(
-                        text = line.text,
-                        active = index == active,
-                        distance = distance,
-                        sizeSp = lyricSizeSp,
-                        blurAvailable = blurAvailable,
-                        onClick = if (interactive && (line.timeMs > 0 || line.words.isNotEmpty())) {
-                            { onSeek((line.timeMs - lyricsOffsetMs).coerceAtLeast(0L)) }
-                        } else null,
-                    )
-                }
-            }
-            plainLines.isNotEmpty() -> LazyColumn(
-                state = listState,
-                userScrollEnabled = interactive,
-                modifier = Modifier.fillMaxSize().padding(horizontal = 2.dp),
-                contentPadding = PaddingValues(top = 44.dp, bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                itemsIndexed(plainLines) { _, line ->
-                    InlineLyricLine(
-                        text = line,
-                        active = false,
-                        distance = 4,
-                        sizeSp = lyricSizeSp,
-                        blurAvailable = blurAvailable,
-                        onClick = null,
-                    )
-                }
-            }
-            else -> CenteredLyricMessage("No lyrics found", lyricSizeSp)
+        Crossfade(
+            targetState = shown,
+            animationSpec = tween(250),
+            label = "lyricsCrossfade",
+        ) { view ->
+            InlineLyricsBody(
+                trackId = view.trackId,
+                lyrics = view.lyrics,
+                loading = loading,
+                playing = playing,
+                positionMs = positionMs,
+                lyricsOffsetMs = lyricsOffsetMs,
+                lyricSizeSp = lyricSizeSp,
+                autoScroll = autoScroll,
+                interactive = interactive,
+                onSeek = onSeek,
+                modeProgress = progress,
+                blurAvailable = Build.VERSION.SDK_INT >= 31,
+            )
         }
     }
 }
+
+@Composable
+private fun InlineLyricsBody(
+    trackId: String,
+    lyrics: Lyrics?,
+    loading: Boolean,
+    playing: Boolean,
+    positionMs: Long,
+    lyricsOffsetMs: Int,
+    lyricSizeSp: Int,
+    autoScroll: Boolean,
+    interactive: Boolean,
+    onSeek: (Long) -> Unit,
+    modeProgress: () -> Float,
+    blurAvailable: Boolean,
+) {
+    val lines = lyrics?.synced.orEmpty()
+    val plainLines = remember(lyrics?.plain) {
+        lyrics?.plain?.split('\n')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+    }
+    when {
+        loading && lines.isEmpty() && plainLines.isEmpty() -> CenteredLyricMessage("Finding lyrics…", lyricSizeSp)
+        lines.isNotEmpty() -> SyncedLyricList(
+            trackId = trackId,
+            lines = lines,
+            positionMs = positionMs,
+            playing = playing,
+            lyricsOffsetMs = lyricsOffsetMs,
+            sizeSp = lyricSizeSp,
+            autoScroll = autoScroll,
+            interactive = interactive,
+            onSeek = onSeek,
+            modeProgress = modeProgress,
+            blurAvailable = blurAvailable,
+        )
+        plainLines.isNotEmpty() -> PlainLyricList(
+            lines = plainLines,
+            sizeSp = lyricSizeSp,
+            interactive = interactive,
+            modeProgress = modeProgress,
+            blurAvailable = blurAvailable,
+        )
+        else -> CenteredLyricMessage("No lyrics found", lyricSizeSp)
+    }
+}
+
+@Composable
+private fun SyncedLyricList(
+    trackId: String,
+    lines: List<LrcLine>,
+    positionMs: Long,
+    playing: Boolean,
+    lyricsOffsetMs: Int,
+    sizeSp: Int,
+    autoScroll: Boolean,
+    interactive: Boolean,
+    onSeek: (Long) -> Unit,
+    modeProgress: () -> Float,
+    blurAvailable: Boolean,
+) {
+    val listState = rememberLazyListState()
+    var active by remember(trackId) { mutableIntStateOf(-1) }
+    val lastBase = remember(trackId) { longArrayOf(-1L) }
+
+    // Active line comes from the player position sampled every frame while playing. The last
+    // published snapshot (player.currentPosition) is re-based whenever it arrives, and the line
+    // only changes state when a timestamp is actually crossed, so there is no per-frame
+    // recomposition and no flicker. A small constant lead makes the highlight land just before
+    // the sung line.
+    LaunchedEffect(trackId, lines, positionMs, playing, lyricsOffsetMs, interactive) {
+        val base = (positionMs + lyricsOffsetMs).coerceAtLeast(0L)
+        val previous = lastBase[0]
+        val seeked = previous >= 0 && (base < previous - 250L || base > previous + 1_500L)
+        lastBase[0] = base
+        val raw = LrcParser.activeLine(lines, base + LYRIC_LEAD_MS)
+        if (previous < 0 || !playing || seeked) {
+            if (raw != active) active = raw
+        } else if (raw > active) {
+            active = raw
+        }
+        if (!playing) return@LaunchedEffect
+        var current = active
+        var frameBase = -1L
+        while (isActive) {
+            withFrameNanos { now ->
+                if (frameBase < 0L) frameBase = now
+                val estimated = base + (now - frameBase) / 1_000_000L
+                var index = LrcParser.activeLine(lines, estimated + LYRIC_LEAD_MS)
+                // Normal playback never moves the highlight backwards; only a seek may.
+                if (index < current) index = current
+                if (index != current) {
+                    current = index
+                    active = index
+                }
+            }
+        }
+    }
+
+    // Manual scrolling pauses auto-follow; it resumes smoothly after ~2 s.
+    val dragged by listState.interactionSource.collectIsDraggedAsState()
+    var manualPause by remember { mutableStateOf(false) }
+    LaunchedEffect(dragged) {
+        if (dragged) {
+            manualPause = true
+        } else if (manualPause) {
+            delay(LYRIC_MANUAL_SCROLL_PAUSE_MS)
+            manualPause = false
+        }
+    }
+
+    LaunchedEffect(active, autoScroll, interactive, manualPause, lines) {
+        if (!interactive || !autoScroll || manualPause || active < 0) return@LaunchedEffect
+        val viewport = listState.layoutInfo.viewportSize.height
+        if (viewport <= 0) return@LaunchedEffect
+        val target = viewport * 0.30f
+        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == active }
+        if (info != null) {
+            listState.animateScrollBy(
+                value = info.offset - target,
+                animationSpec = spring(dampingRatio = 0.85f, stiffness = 300f),
+            )
+        } else {
+            listState.animateScrollToItem(active, -target.toInt())
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        userScrollEnabled = interactive,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = 44.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        itemsIndexed(lines) { index, line ->
+            val distance = if (active >= 0) abs(index - active) else index.coerceAtMost(4)
+            InlineLyricLine(
+                text = line.text,
+                active = index == active,
+                distance = distance,
+                staggerIndex = index,
+                sizeSp = sizeSp,
+                blurAvailable = blurAvailable,
+                modeProgress = modeProgress,
+                onClick = if (interactive && (line.timeMs > 0 || line.words.isNotEmpty())) {
+                    { onSeek((line.timeMs - lyricsOffsetMs).coerceAtLeast(0L)) }
+                } else null,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlainLyricList(
+    lines: List<String>,
+    sizeSp: Int,
+    interactive: Boolean,
+    modeProgress: () -> Float,
+    blurAvailable: Boolean,
+) {
+    LazyColumn(
+        state = rememberLazyListState(),
+        userScrollEnabled = interactive,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = 44.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        itemsIndexed(lines) { index, line ->
+            InlineLyricLine(
+                text = line,
+                active = false,
+                distance = 4,
+                staggerIndex = index,
+                sizeSp = sizeSp,
+                blurAvailable = blurAvailable,
+                modeProgress = modeProgress,
+                onClick = null,
+            )
+        }
+    }
+}
+
 
 @Composable
 private fun CenteredLyricMessage(text: String, sizeSp: Int) {
@@ -787,21 +944,55 @@ private fun InlineLyricLine(
     text: String,
     active: Boolean,
     distance: Int,
+    staggerIndex: Int,
     sizeSp: Int,
     blurAvailable: Boolean,
+    modeProgress: () -> Float,
     onClick: (() -> Unit)?,
 ) {
     val family = remember(text) { LyricsTypography.familyFor(text) }
-    val blurDp = when {
+    val alphaState = animateFloatAsState(
+        targetValue = if (active) 1f else 0.45f,
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 350f),
+        label = "lyricLineAlpha",
+    )
+    val scaleState = animateFloatAsState(
+        targetValue = if (active) 1f else 0.96f,
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 350f),
+        label = "lyricLineScale",
+    )
+    val targetBlur = when {
         active || !blurAvailable -> 0f
         distance <= 1 -> 2f
         distance == 2 -> 4f
         distance == 3 -> 6f
         else -> 8f
     }
+    val blurState = animateFloatAsState(
+        targetValue = targetBlur,
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 350f),
+        label = "lyricLineBlur",
+    )
+    val baseBlur by remember { derivedStateOf { quantizeLyricBlur(blurState.value) } }
+    // Staggered blur-in on open (and blur-out on close), quantized so this only recomposes a
+    // handful of times per transition instead of on every animation frame.
+    val latestProgress by rememberUpdatedState(modeProgress)
+    val enterBlur by remember {
+        derivedStateOf {
+            val pr = latestProgress()
+            if (pr <= 0f) {
+                0f
+            } else {
+                val delayFraction = staggerIndex.coerceAtMost(8) * LYRIC_STAGGER_STEP
+                val appear = ((pr - delayFraction) / (1f - delayFraction)).coerceIn(0f, 1f)
+                quantizeLyricBlur((1f - appear) * 8f)
+            }
+        }
+    }
+    val blurRadius = maxOf(baseBlur, enterBlur)
     Text(
         text = text.ifBlank { "♪" },
-        color = if (active) Color.White else Color.White.copy(alpha = 0.45f),
+        color = Color.White,
         fontFamily = family,
         fontSize = sizeSp.sp,
         fontWeight = FontWeight.Bold,
@@ -810,9 +1001,27 @@ private fun InlineLyricLine(
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (blurDp > 0f) Modifier.blur(blurDp.dp) else Modifier)
+            .then(
+                if (blurAvailable && blurRadius > 0f) {
+                    Modifier.blur(blurRadius.dp, BlurredEdgeTreatment.Unbounded)
+                } else {
+                    Modifier
+                },
+            )
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(vertical = 5.dp),
+            // Inner padding is at least 2x the largest blur radius so the glow is never cut by
+            // the line's layer bounds on the left or right.
+            .padding(horizontal = 20.dp, vertical = 5.dp)
+            .graphicsLayer {
+                val pr = latestProgress()
+                val delayFraction = staggerIndex.coerceAtMost(8) * LYRIC_STAGGER_STEP
+                val appear = if (pr <= 0f) 0f else ((pr - delayFraction) / (1f - delayFraction)).coerceIn(0f, 1f)
+                alpha = alphaState.value * appear
+                translationY = (1f - appear) * 16.dp.toPx()
+                scaleX = scaleState.value
+                scaleY = scaleState.value
+                transformOrigin = TransformOrigin(0f, 0.5f)
+            },
     )
 }
 

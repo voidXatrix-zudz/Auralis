@@ -13,15 +13,25 @@ import com.auralis.app.domain.model.LyricsSource
 object LrcParser {
     private val tagRegex = Regex("\\[(\\d{1,3}):(\\d{1,2})(?:[.:](\\d{1,3}))?]")
     private val wordTagRegex = Regex("<(\\d{1,3}):(\\d{1,2})(?:[.:](\\d{1,3}))?>")
-    private val offsetRegex = Regex("\\[offset:([+-]?\\d+)]", RegexOption.IGNORE_CASE)
+    private val offsetRegex = Regex("\\[offset:\\s*([+-]?\\d+)\\s*]", RegexOption.IGNORE_CASE)
     private val metadataRegex = Regex("^\\[[a-zA-Z]+:.*]$")
+    // Karaoke/speaker labels such as "v1:" / "V2:" that must never reach the display text.
+    private val speakerTagRegex = Regex("^\\s*[vV]\\d+:\\s*")
+    // Bracketed form of the same label ("[v1: Don't cry]") is a real lyric, not file metadata.
+    private val speakerBracketRegex = Regex("^\\s*\\[[vV]\\d+:\\s*")
 
     fun parse(raw: String): Lyrics {
         val text = raw.removePrefix("\uFEFF").replace("\r\n", "\n").replace('\r', '\n')
         val offsetMs = offsetRegex.find(text)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val lines = mutableListOf<LrcLine>()
         val plain = StringBuilder()
-        for (sourceLine in text.lineSequence()) {
+        for (rawLine in text.lineSequence()) {
+            val speakerBracket = speakerBracketRegex.find(rawLine)
+            val sourceLine = if (speakerBracket == null) {
+                rawLine
+            } else {
+                rawLine.replaceRange(speakerBracket.range, "").trim().removeSuffix("]").trim()
+            }
             val matches = tagRegex.findAll(sourceLine).toList()
             val withoutLineTags = sourceLine.replace(tagRegex, "")
             val (content, words) = parseWords(withoutLineTags, offsetMs)
@@ -34,7 +44,11 @@ object LrcParser {
                 continue
             }
             plain.appendLine(content)
-            if (content.isEmpty() && words.isEmpty()) continue
+            if (content.isEmpty() && words.isEmpty()) {
+                // A line that only held a speaker tag ("[00:12.00]v1:") stays as a blank
+                // instrumental line with its timestamp instead of being dropped.
+                if (withoutLineTags.isBlank()) continue
+            }
             val times = matches.mapNotNull { tagTimeMs(it, offsetMs) }
             // A line with word tags but no leading line tag is timed by its first word.
             val lineTimes = times.ifEmpty { listOfNotNull(words.firstOrNull()?.timeMs) }
@@ -60,18 +74,22 @@ object LrcParser {
     /** Extracts display text and timed words from a line whose line tags were already stripped. */
     private fun parseWords(text: String, offsetMs: Long): Pair<String, List<LrcWord>> {
         val matches = wordTagRegex.findAll(text).toList()
-        if (matches.isEmpty()) return text.trim() to emptyList()
+        if (matches.isEmpty()) return text.replace(speakerTagRegex, "").trim() to emptyList()
         val words = mutableListOf<LrcWord>()
         matches.forEachIndexed { index, match ->
             val start = match.range.last + 1
             val end = if (index + 1 < matches.size) matches[index + 1].range.first else text.length
             if (start > end || start > text.length) return@forEachIndexed
-            val segment = text.substring(start, end.coerceAtMost(text.length)).trim()
+            val segment = text.substring(start, end.coerceAtMost(text.length))
+                // A speaker label can sit right after a word tag ("<00:12.00>v1:Don't") or lead
+                // the segment after the line tag was stripped; strip it and any leading space.
+                .replace(speakerTagRegex, "")
+                .trim()
             if (segment.isNotEmpty()) {
                 tagTimeMs(match, offsetMs)?.let { words += LrcWord(it, segment) }
             }
         }
-        val display = text.replace(wordTagRegex, "").trim()
+        val display = text.replace(wordTagRegex, "").replace(speakerTagRegex, "").trim()
         return display to words
     }
 

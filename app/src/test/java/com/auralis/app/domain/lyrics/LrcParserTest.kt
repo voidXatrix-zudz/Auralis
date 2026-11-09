@@ -119,4 +119,38 @@ class LrcParserTest {
         assertTrue(plain.contains("Broken tag"))
         assertTrue(plain.contains("Bad fraction"))
     }
+
+    @Test
+    fun `speaker tags are stripped on every path`() {
+        // "v1:" right after the line timestamp, "V2:" right after a word tag.
+        val parsed = LrcParser.parse(
+            """
+            [00:12.00]v1:Don't cry
+            [00:20.00]<00:20.00>V2:Don't <00:20.60>speak
+            [v1: hidden bracket line]
+            [00:30.00]Plain line
+            """.trimIndent(),
+        )
+        val lines = parsed.synced!!
+        assertEquals("Don't cry", lines[0].text)
+        assertEquals("Don't speak", lines[1].text)
+        assertEquals(listOf("Don't", "speak"), lines[1].words.map { it.text })
+        // A real lyric that starts with a bracketed speaker label is never swallowed as metadata.
+        assertEquals("Plain line", lines[2].text)
+        assertTrue(parsed.plain.orEmpty().contains("hidden bracket line"))
+    }
+
+    @Test
+    fun `offset tag with surrounding spaces still applies`() {
+        val parsed = LrcParser.parse("[offset: +300 ]\n[00:10.00]Shifted")
+        assertEquals(10_300L, parsed.synced!!.single().timeMs)
+    }
+
+    @Test
+    fun `line that empties after speaker tag strip keeps its timestamp`() {
+        val parsed = LrcParser.parse("[00:40.00]v1:")
+        val line = parsed.synced!!.single()
+        assertEquals(40_000L, line.timeMs)
+        assertEquals("", line.text)
+    }
 }
