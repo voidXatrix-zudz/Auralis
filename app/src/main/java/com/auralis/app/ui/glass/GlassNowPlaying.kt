@@ -398,12 +398,14 @@ fun GlassNowPlayingScreen(
                                             translationX = (smallArt + 14.dp).toPx() * lyricsProgress.value
                                         },
                                 ) {
-                                    Text(track.title.ifBlank { track.displayName }, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(track.title.ifBlank { track.displayName }, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(track.album.ifBlank { "Unknown album" }, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
+                                // Compact action row: small buttons, right-aligned, tight spacing
+                                // so the metadata section never expands or pushes controls down.
                                 Row(
-                                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                                    Modifier.fillMaxWidth().padding(top = 2.dp),
                                     horizontalArrangement = Arrangement.End,
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
@@ -412,15 +414,17 @@ fun GlassNowPlayingScreen(
                                         if (track.id in favorites) "Remove favorite" else "Add favorite",
                                         { onFavorite(track) },
                                         tint = if (track.id in favorites) GlassTokens.Violet else colors.onSurface,
+                                        size = 36.dp,
                                     )
                                     // The "..." options travel up with the header when lyrics open.
                                     if (lyricsOpen) {
-                                        Box(Modifier.padding(start = 10.dp)) {
+                                        Box(Modifier.padding(start = 8.dp)) {
                                             GlassIconButton(
                                                 Icons.Rounded.MoreHoriz,
                                                 "Lyrics options",
                                                 { lyricsMenuOpen = true },
                                                 tint = Color.White.copy(alpha = 0.82f),
+                                                size = 36.dp,
                                             )
                                             DropdownMenu(expanded = lyricsMenuOpen, onDismissRequest = { lyricsMenuOpen = false }) {
                                                 DropdownMenuItem(
