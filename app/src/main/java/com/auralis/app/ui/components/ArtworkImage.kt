@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -34,7 +35,7 @@ private val ArtworkKeyPattern = Regex("[a-zA-Z0-9_-]{1,80}")
  * full-screen backdrop does not decode a 4000px image at 44dp, and Low mode keeps bitmaps small.
  */
 @Composable
-fun ArtworkImage(track: Track, modifier: Modifier = Modifier) {
+fun ArtworkImage(track: Track, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(12.dp)) {
     val context = LocalContext.current
     val profile = LocalPerformanceProfile.current
     val image = remember(track.artKey) {
@@ -42,7 +43,7 @@ fun ArtworkImage(track: Track, modifier: Modifier = Modifier) {
             ?.let { key -> File(context.filesDir, "artwork/$key.jpg").takeIf(File::isFile) }
     }
     BoxWithConstraints(
-        modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHigh),
         contentAlignment = Alignment.Center,
     ) {
         val density = LocalDensity.current

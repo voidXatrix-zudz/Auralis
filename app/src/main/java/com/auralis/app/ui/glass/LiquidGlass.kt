@@ -22,6 +22,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
+import kotlin.math.roundToInt
 
 /**
  * The one liquid-glass material used by the dock, mini-player, cards and dialogs.
@@ -101,9 +102,9 @@ fun Modifier.liquidGlass(
 enum class GlassLevel { STRONG, MEDIUM, LIGHT }
 
 /**
- * Reusable glass surface. Clamps the user's dock/blur preferences into safe, readable bands and
- * feeds the single [liquidGlass] shader/fallback. Pass [style] when the caller has an already
- * resolved/clamped DockGlassStyle (the dock); otherwise the ambient one is used.
+ * Reusable glass surface. Maps the one resolved [DockGlassStyle] onto safe, readable bands per
+ * level and feeds the single [liquidGlass] shader/fallback. Pass [style] when the caller has the
+ * exact resolved style (the dock); otherwise the ambient one is used.
  */
 @Composable
 fun Modifier.glass(
@@ -116,26 +117,30 @@ fun Modifier.glass(
 ): Modifier {
     val g = style ?: LocalDockGlassStyle.current
     val optics = LocalGlassOptics.current
+    // Wide bands so the transparency/clarity sliders visibly move the whole range, while keeping
+    // a readability floor. Strong glass can never go fully clear.
     val tint = when (level) {
-        GlassLevel.STRONG -> g.tintAlpha.coerceIn(0.40f, 0.55f)
-        GlassLevel.MEDIUM -> (g.tintAlpha * 0.92f).coerceIn(0.34f, 0.62f)
-        GlassLevel.LIGHT -> (0.14f + 0.12f * g.tintAlpha).coerceIn(0.16f, 0.30f)
+        GlassLevel.STRONG -> g.tintAlpha.coerceIn(0.18f, 0.80f)
+        GlassLevel.MEDIUM -> (g.tintAlpha * 0.92f).coerceIn(0.16f, 0.72f)
+        GlassLevel.LIGHT -> (0.10f + 0.16f * g.tintAlpha).coerceIn(0.10f, 0.34f)
     }
+    // Quantize the radius so the Haze/RenderEffect is only rebuilt per whole dp, not per frame.
     val blur = if (g.blurEnabled) when (level) {
-        GlassLevel.STRONG -> g.blurDp.coerceIn(20f, 30f)
-        GlassLevel.MEDIUM -> g.blurDp.coerceIn(16f, 26f)
-        GlassLevel.LIGHT -> g.blurDp.coerceIn(10f, 18f)
-    } else g.blurDp
+        GlassLevel.STRONG -> g.blurDp.coerceIn(0f, 32f)
+        GlassLevel.MEDIUM -> g.blurDp.coerceIn(0f, 28f)
+        GlassLevel.LIGHT -> g.blurDp.coerceIn(0f, 20f)
+    } else 0f
+    val blurQ = blur.roundToInt().toFloat()
     return liquidGlass(
         hazeState = hazeState,
         shape = shape,
         cornerRadius = GlassTokens.RadiusXl,
         tintAlpha = tint,
-        blurDp = blur,
+        blurDp = blurQ,
         saturation = optics.saturation,
         outlines = g.outlines,
         refraction = refraction && g.refractionEnabled,
-        blurEnabled = g.blurEnabled,
+        blurEnabled = g.blurEnabled && blurQ > 0.5f,
         downsample = g.downsample,
         sheen = g.shadowScale > 0.5f,
         fallbackSurface = fallbackSurface,

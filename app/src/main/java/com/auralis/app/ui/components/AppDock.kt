@@ -102,13 +102,24 @@ object DockMetrics {
     /** Glass-only floating geometry: ~12dp edge padding like the reference dock. */
     val GlassSideMargin: Dp = 14.dp
     val GlassBottomMargin: Dp = 8.dp
-    val ExpandedHeight: Dp = 114.dp      // 48dp mini pill + 8dp gap + 58dp nav pill
+    val ExpandedHeight: Dp = 114.dp      // 48dp mini pill + 8dp gap + 58dp nav pill (Normal)
     val ExpandedNavOnlyHeight: Dp = 58.dp // no track: the nav pill alone
     val CollapsedHeight: Dp = 56.dp
+    /** Glass-only geometry: thicker 54dp tile matching the reference video. */
+    val GlassExpandedHeight: Dp = 116.dp  // 54dp mini pill + 8dp gap + 54dp nav pill
+    val GlassExpandedNavOnlyHeight: Dp = 54.dp
+    val GlassCollapsedHeight: Dp = 54.dp
 
     /** Visible dock height for the current morph progress. */
     fun height(hasTrack: Boolean, progress: Float): Dp =
         dpLerp(if (hasTrack) ExpandedHeight else ExpandedNavOnlyHeight, CollapsedHeight, progress.coerceIn(0f, 1f))
+
+    fun glassHeight(hasTrack: Boolean, progress: Float): Dp =
+        dpLerp(
+            if (hasTrack) GlassExpandedHeight else GlassExpandedNavOnlyHeight,
+            GlassCollapsedHeight,
+            progress.coerceIn(0f, 1f),
+        )
 }
 
 /**
@@ -118,8 +129,8 @@ object DockMetrics {
  */
 val LocalDockBottomInset = compositionLocalOf { 0.dp }
 
-// Shared dock spring: dampingRatio ~0.85, medium-low stiffness for the ~300-350ms morph.
-private val DockSpring = spring<Float>(dampingRatio = 0.85f, stiffness = 320f)
+// Shared dock spring: dampingRatio ~0.83, medium-low stiffness for the ~300-350ms morph.
+private val DockSpring = spring<Float>(dampingRatio = 0.83f, stiffness = 300f)
 
 // Thin specular rim: bright top-left catch, faint middle, soft bottom light.
 private val DockBorderBrush = Brush.linearGradient(
@@ -133,6 +144,10 @@ private val MiniHeightCollapsed = 56.dp
 private val NavHeight = 58.dp
 private val RowHeight = 56.dp
 private val CircleSize = 56.dp
+// Glass dock: the mini tile and nav pill share one thicker height (54dp ~ 12-13% of a phone width).
+private val GlassMiniHeight = 54.dp
+private val GlassNavHeight = 54.dp
+private val GlassCircleSize = 54.dp
 private val EdgeGap = 8.dp
 
 private fun lerpF(start: Float, stop: Float, fraction: Float) = start + (stop - start) * fraction
@@ -141,8 +156,8 @@ private fun lerpF(start: Float, stop: Float, fraction: Float) = start + (stop - 
  * Scroll-driven dock morph. Attach the state itself to an ancestor of every scrolling screen
  * via Modifier.nestedScroll. ONE continuous progress value [progress] (0f expanded -> 1f
  * collapsed) is driven by a single spring Animatable; the dock never state-swaps or jumps.
- * Triggers: collapse after ~40dp of downward scroll; expand after ~6dp of upward scroll
- * (hysteresis prevents flicker).
+ * Triggers: collapse after ~12dp of downward scroll; expand on the first ~10dp of upward
+ * scroll (hysteresis prevents flicker).
  *
  * @param animationScope MUST be a composition-bound scope (rememberCoroutineScope) so
  * `animateTo` runs on the composition's MonotonicFrameClock.
@@ -186,7 +201,7 @@ class DockScrollState(density: Density, animationScope: CoroutineScope, private 
             upAccumulator = 0f
             if (canCollapse && morph.targetValue < 0.5f) {
                 downAccumulator += -dy
-                if (downAccumulator >= 14.dp.toPx()) {
+                if (downAccumulator >= 12.dp.toPx()) {
                     downAccumulator = 0f
                     setTarget(1f)
                 }
@@ -197,7 +212,7 @@ class DockScrollState(density: Density, animationScope: CoroutineScope, private 
             downAccumulator = 0f
             if (morph.targetValue > 0.5f) {
                 upAccumulator += dy
-                if (upAccumulator >= 2.dp.toPx()) {
+                if (upAccumulator >= 10.dp.toPx()) {
                     upAccumulator = 0f
                     setTarget(0f)
                 }
@@ -716,9 +731,8 @@ private fun DockMiniPill(
         ) {
             ArtworkImage(
                 track = track,
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp)),
+                modifier = Modifier.size(if (style == DockStyle.GLASS) 42.dp else 44.dp),
+                shape = if (style == DockStyle.GLASS) CircleShape else RoundedCornerShape(12.dp),
             )
             Column(
                 Modifier
@@ -976,7 +990,7 @@ private fun Tab.dockIcon(): ImageVector = when (this) {
 private fun pressScale(interaction: MutableInteractionSource): Float {
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.94f else 1f,
+        targetValue = if (pressed) 0.95f else 1f,
         animationSpec = spring(dampingRatio = 0.80f, stiffness = 480f),
         label = "dockPress",
     )
@@ -1001,12 +1015,10 @@ private fun GlassDock(
     glass: DockGlassStyle,
 ) {
     val p = progress().coerceIn(0f, 1f)
-    val dockHeight = DockMetrics.height(hasTrack, p)
-    // The dock look is fixed to the reference: smoky 40-55% tint and a 20-30dp blur.
-    val surfaceGlass = glass.copy(
-        tintAlpha = glass.tintAlpha.coerceIn(0.40f, 0.55f),
-        blurDp = if (glass.blurEnabled) glass.blurDp.coerceIn(20f, 30f) else glass.blurDp,
-    )
+    val dockHeight = DockMetrics.glassHeight(hasTrack, p)
+    // Every glass part shares the one resolved style; the settings slider values pass straight
+    // through so transparency/clarity/blur stay live instead of being clamped away.
+    val surfaceGlass = glass
     val navAlpha = (1f - p / 0.55f).coerceIn(0f, 1f)
     val navScale = 1f - 0.08f * (1f - navAlpha)
     val circleIn = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
@@ -1081,11 +1093,11 @@ private fun GlassDock(
     ) { measurables, constraints ->
         val fullWidth = constraints.maxWidth
         val height = constraints.maxHeight.takeIf { it != Constraints.Infinity }
-            ?: DockMetrics.ExpandedHeight.roundToPx()
-        val circlePx = CircleSize.roundToPx()
+            ?: DockMetrics.GlassExpandedHeight.roundToPx()
+        val circlePx = GlassCircleSize.roundToPx()
         val gapPx = EdgeGap.roundToPx()
-        val miniExpanded = MiniHeightExpanded.toPx()
-        val miniCollapsed = MiniHeightCollapsed.toPx()
+        val miniExpanded = GlassMiniHeight.toPx()
+        val miniCollapsed = GlassMiniHeight.toPx()
 
         val miniWidth = if (showsMini) {
             lerpF(fullWidth.toFloat(), (fullWidth - 2 * (circlePx + gapPx)).toFloat(), p).roundToInt().coerceIn(0, fullWidth)
@@ -1097,7 +1109,7 @@ private fun GlassDock(
         val miniY = 0
 
         val navWidth = lerpF((fullWidth - 2 * (circlePx + gapPx)).toFloat(), circlePx.toFloat(), p).roundToInt().coerceAtLeast(0)
-        val navHeight = lerpF(NavHeight.toPx(), RowHeight.toPx(), p).roundToInt().coerceAtLeast(0)
+        val navHeight = GlassNavHeight.roundToPx()
         val navY = height - navHeight
         val circleY = navY + (navHeight - circlePx) / 2
         val searchX = fullWidth - circlePx
@@ -1270,7 +1282,7 @@ private fun GlassCircleButton(
     val interactive = enabled && alpha > 0.01f
     Box(
         Modifier
-            .size(CircleSize)
+            .size(GlassCircleSize)
             .graphicsLayer {
                 this.alpha = alpha
                 scaleX = press

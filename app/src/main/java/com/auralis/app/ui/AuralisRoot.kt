@@ -209,7 +209,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             LocalPerformanceMode provides performanceMode,
             LocalPerformanceReason provides performanceReason,
             // Glass content draws edge-to-edge under the dock and reserves this inside its lists.
-            LocalDockBottomInset provides if (dockStyle == DockStyle.GLASS) DockMetrics.ExpandedHeight + DockMetrics.GlassBottomMargin else 0.dp,
+            LocalDockBottomInset provides if (dockStyle == DockStyle.GLASS) DockMetrics.GlassExpandedHeight + DockMetrics.GlassBottomMargin else 0.dp,
         ) {
         AuralisBackdrop(themeStyle = settings.themeStyle, artColor = currentTrack?.artColor, tier = profile.tier) {
             if (nowPlayingOpen && currentTrack != null) {
@@ -384,7 +384,13 @@ fun AuralisRoot(viewModel: AppViewModel) {
                             .navigationBarsPadding()
                             // Read the dock spring in the layout phase: no recomposition per frame.
                             .offset {
-                                val space = DockMetrics.height(currentTrack != null, dockScroll.progress) + DockMetrics.BottomMargin + 8.dp
+                                val dockSpace = if (dockStyle == DockStyle.GLASS) {
+                                    DockMetrics.glassHeight(currentTrack != null, dockScroll.progress)
+                                } else {
+                                    DockMetrics.height(currentTrack != null, dockScroll.progress)
+                                }
+                                val margin = if (dockStyle == DockStyle.GLASS) DockMetrics.GlassBottomMargin else DockMetrics.BottomMargin
+                                val space = dockSpace + margin + 8.dp
                                 IntOffset(0, -space.roundToPx())
                             },
                     )

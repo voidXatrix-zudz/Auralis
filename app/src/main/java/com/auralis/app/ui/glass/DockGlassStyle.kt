@@ -52,15 +52,16 @@ fun resolveDockGlass(
     val blurPercent = settings.dockGlassBlur.coerceIn(0, 100) / 100f
 
     val baseTint = 0.05f + 0.77f * transparency
-    // Clarity nudges the tint a little; transparency stays the dominant control.
-    val clarityScale = 1.12f - 0.24f * clarity
+    // Clarity is frost strength: higher clarity = denser tint, lower clarity = clearer glass.
+    val clarityScale = 0.88f + 0.30f * clarity
     var tint = (baseTint * clarityScale).coerceIn(0.04f, 0.86f)
     if (!profile.blurEnabled) {
         // No live blur: keep a little more tint so icons stay readable over moving artwork.
         tint = (tint + 0.06f).coerceIn(0.04f, 0.90f)
     }
 
-    val userBlur = 40f * blurPercent * (1f - 0.25f * clarity)
+    // Blur comes only from the Live blur slider; clarity never fights it.
+    val userBlur = 40f * blurPercent
     val effectiveBlur = (userBlur * profile.blurScale).coerceIn(0f, 40f)
     val apiSupportsBlur = sdkInt >= 31
     val blurEnabled = apiSupportsBlur && profile.blurEnabled && effectiveBlur > 0.5f
