@@ -1,10 +1,13 @@
 package com.auralis.app.ui.glass
 
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,8 +15,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,6 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,13 +48,16 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.FileOpen
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.QueueMusic
@@ -59,6 +68,8 @@ import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -72,24 +83,35 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.auralis.app.domain.lyrics.LrcParser
+import com.auralis.app.domain.model.LrcLine
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.Track
 import com.auralis.app.domain.model.AppSettings
@@ -103,6 +125,9 @@ import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
 import com.auralis.app.ui.screens.LiquidLyricsScreen
 import com.auralis.app.ui.theme.ArtworkPalette
 import com.auralis.app.ui.theme.GlassTokens
+import com.auralis.app.ui.theme.LyricsTypography
+import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 /**
  * Glassmorphic Now Playing + queue. Same inputs and callbacks as the Normal screen: all playback,
@@ -158,6 +183,24 @@ fun GlassNowPlayingScreen(
     var draggingQueueId by remember { mutableStateOf<String?>(null) }
     var lyricsOpen by rememberSaveable { mutableStateOf(false) }
     var audioInfoOpen by remember(track.id) { mutableStateOf(false) }
+    // ONE shared 0..1 progress drives the in-place lyrics morph. It is an Animatable so a second
+    // tap mid-flight simply retargets from the current value/velocity.
+    val lyricsProgress = remember { Animatable(if (lyricsOpen) 1f else 0f) }
+    val morphScope = rememberCoroutineScope()
+    var lyricsMenuOpen by remember { mutableStateOf(false) }
+    var fullLyricsOpen by rememberSaveable { mutableStateOf(false) }
+    var pasteOpen by rememberSaveable(track.id) { mutableStateOf(false) }
+    var pasteText by rememberSaveable(track.id) { mutableStateOf("") }
+    val applyLyricsMode: (Boolean) -> Unit = { open ->
+        lyricsOpen = open
+        if (!open) lyricsMenuOpen = false
+        morphScope.launch {
+            lyricsProgress.animateTo(
+                targetValue = if (open) 1f else 0f,
+                animationSpec = spring(dampingRatio = 0.85f, stiffness = 300f),
+            )
+        }
+    }
     val lyricImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportLyrics(track, uri)
     }
@@ -167,6 +210,7 @@ fun GlassNowPlayingScreen(
     val duration = playback.durationMs.takeIf { it > 0 } ?: track.durationMs
     val position = dragging ?: playback.positionMs.toFloat()
     BackHandler(enabled = queueOpen) { queueOpen = false }
+    BackHandler(enabled = lyricsOpen && !queueOpen && !fullLyricsOpen) { applyLyricsMode(false) }
 
     val accentTarget = track.artColor?.let { Color(ArtworkPalette.readableAccent(it, true)) } ?: GlassTokens.Violet
     val accent by animateColorAsState(accentTarget, tween(850), label = "glassNowPlayingAccent")
@@ -249,7 +293,7 @@ fun GlassNowPlayingScreen(
                     }
                 }
             }
-            lyricsOpen -> Surface(Modifier.fillMaxSize(), color = colors.background, contentColor = colors.onBackground) {
+            fullLyricsOpen -> Surface(Modifier.fillMaxSize(), color = colors.background, contentColor = colors.onBackground) {
                 LiquidLyricsScreen(
                     track = track,
                     lyrics = lyrics,
@@ -262,7 +306,7 @@ fun GlassNowPlayingScreen(
                     isFavorite = favorites.contains(track.id),
                     onToggleFavorite = { onFavorite(track) },
                     onSeek = { p -> onSeek(p) },
-                    onClose = { lyricsOpen = false },
+                    onClose = { fullLyricsOpen = false },
                     onImport = { lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*")) },
                     onSaveText = { text -> onSaveLyrics(track, text) },
                 )
@@ -274,56 +318,148 @@ fun GlassNowPlayingScreen(
                     Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Close now playing", onBack)
                         Text("NOW PLAYING", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, textAlign = TextAlign.Center)
-                        GlassIconButton(Icons.Rounded.Lyrics, "Open liquid lyrics", { lyricsOpen = true })
+                        GlassIconButton(
+                            Icons.Rounded.Lyrics,
+                            if (lyricsOpen) "Hide lyrics" else "Show lyrics",
+                            { applyLyricsMode(!lyricsOpen) },
+                            tint = if (lyricsOpen) GlassTokens.Violet else colors.onSurface,
+                        )
                         GlassIconButton(Icons.Rounded.Timer, "Sleep timer", { sleepTimerOpen = true }, tint = if (playback.sleepTimerRemainingMs > 0) GlassTokens.Violet else colors.onSurface)
                         GlassIconButton(Icons.Rounded.QueueMusic, "Open queue", { queueOpen = true })
                     }
                     Spacer(Modifier.height(18.dp))
                     var artworkDrag by remember(track.id) { mutableFloatStateOf(0f) }
                     val openThreshold = with(LocalDensity.current) { 72.dp.toPx() }
-                    GlassArtwork(
-                        track,
-                        Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .shadow(28.dp, RoundedCornerShape(34.dp), clip = false, ambientColor = accent, spotColor = accent)
-                            .then(
-                                if (gesturesEnabled) Modifier.pointerInput(track.id, doubleTapSeekSeconds) {
-                                    detectTapGestures(onDoubleTap = { offset ->
-                                        if (offset.x < size.width / 2f) onSeekBy(-doubleTapSeekSeconds * 1000L)
-                                        else onSeekBy(doubleTapSeekSeconds * 1000L)
-                                    })
-                                } else Modifier,
+                    // The hero owns both the normal art/title block and the lyrics overlay. Its
+                    // layout size never changes between modes, so everything below (seek bar,
+                    // transport, tools) stays exactly where it is.
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val heroWidth = maxWidth
+                        val smallArt = heroWidth * 0.18f
+                        var titleRowHeightPx by remember { mutableIntStateOf(0) }
+                        val titleRowHeight = with(LocalDensity.current) { titleRowHeightPx.toDp() }
+                        val lyricsTop = (if (titleRowHeight > smallArt) titleRowHeight else smallArt) + 10.dp
+                        Column(Modifier.fillMaxWidth()) {
+                            GlassArtwork(
+                                track,
+                                Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .graphicsLayer {
+                                        val pr = lyricsProgress.value
+                                        val s = 1f - 0.82f * pr
+                                        scaleX = s
+                                        scaleY = s
+                                        transformOrigin = TransformOrigin(0f, 0f)
+                                        translationY = -8.dp.toPx() * pr
+                                    }
+                                    .shadow(28.dp, RoundedCornerShape(34.dp), clip = false, ambientColor = accent, spotColor = accent)
+                                    .then(
+                                        if (gesturesEnabled) Modifier.pointerInput(track.id, doubleTapSeekSeconds) {
+                                            detectTapGestures(onDoubleTap = { offset ->
+                                                if (offset.x < size.width / 2f) onSeekBy(-doubleTapSeekSeconds * 1000L)
+                                                else onSeekBy(doubleTapSeekSeconds * 1000L)
+                                            })
+                                        } else Modifier,
+                                    )
+                                    .pointerInput(track.id) {
+                                        detectHorizontalDragGestures(
+                                            onDragStart = { artworkDrag = 0f },
+                                            onDragEnd = { if (artworkDrag < -openThreshold) applyLyricsMode(true); artworkDrag = 0f },
+                                            onDragCancel = { artworkDrag = 0f },
+                                        ) { change, amount -> change.consume(); artworkDrag += amount }
+                                    },
+                                radius = 34.dp,
                             )
-                            .pointerInput(track.id) {
-                                detectHorizontalDragGestures(
-                                    onDragStart = { artworkDrag = 0f },
-                                    onDragEnd = { if (artworkDrag < -openThreshold) lyricsOpen = true; artworkDrag = 0f },
-                                    onDragCancel = { artworkDrag = 0f },
-                                ) { change, amount -> change.consume(); artworkDrag += amount }
-                            },
-                        radius = 34.dp,
-                    )
-                    Spacer(Modifier.height(26.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(track.title.ifBlank { track.displayName }, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(track.album.ifBlank { "Unknown album" }, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(26.dp))
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .onGloballyPositioned { titleRowHeightPx = it.size.height }
+                                    .graphicsLayer {
+                                        translationY = -(heroWidth + 26.dp).toPx() * lyricsProgress.value
+                                    },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(
+                                    Modifier
+                                        .weight(1f)
+                                        .graphicsLayer {
+                                            translationX = (smallArt + 14.dp).toPx() * lyricsProgress.value
+                                        },
+                                ) {
+                                    Text(track.title.ifBlank { track.displayName }, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(track.album.ifBlank { "Unknown album" }, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                GlassIconButton(
+                                    if (track.id in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                    if (track.id in favorites) "Remove favorite" else "Add favorite",
+                                    { onFavorite(track) },
+                                    tint = if (track.id in favorites) GlassTokens.Violet else colors.onSurface,
+                                )
+                                // The "..." options live in the same row as the title/star, so they
+                                // travel up with the rest of the header when lyrics open.
+                                if (lyricsOpen) {
+                                    Box {
+                                        GlassIconButton(
+                                            Icons.Rounded.MoreHoriz,
+                                            "Lyrics options",
+                                            { lyricsMenuOpen = true },
+                                            tint = Color.White.copy(alpha = 0.82f),
+                                        )
+                                        DropdownMenu(expanded = lyricsMenuOpen, onDismissRequest = { lyricsMenuOpen = false }) {
+                                            DropdownMenuItem(
+                                                text = { Text("Paste lyrics") },
+                                                leadingIcon = { Icon(Icons.Rounded.ContentPaste, null) },
+                                                onClick = {
+                                                    lyricsMenuOpen = false
+                                                    pasteText = lyrics?.plain.orEmpty()
+                                                    pasteOpen = true
+                                                },
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Import LRC file") },
+                                                leadingIcon = { Icon(Icons.Rounded.FileOpen, null) },
+                                                onClick = {
+                                                    lyricsMenuOpen = false
+                                                    lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"))
+                                                },
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Full lyrics view") },
+                                                leadingIcon = { Icon(Icons.Rounded.Lyrics, null) },
+                                                onClick = { lyricsMenuOpen = false; fullLyricsOpen = true },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            val qualityBadge = track.qualityBadgeContent()
+                            if (qualityBadge != null || bluetoothOutputName != null) {
+                                Column(
+                                    Modifier.padding(top = 12.dp).graphicsLayer { alpha = 1f - lyricsProgress.value },
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    qualityBadge?.let { GlassQualityBadge(it, onClick = { audioInfoOpen = true }) }
+                                    bluetoothOutputName?.let { GlassBluetoothBadge(it) }
+                                }
+                            }
                         }
-                        GlassIconButton(
-                            if (track.id in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                            if (track.id in favorites) "Remove favorite" else "Add favorite",
-                            { onFavorite(track) },
-                            tint = if (track.id in favorites) GlassTokens.Violet else colors.onSurface,
+                        InlineLyricsOverlay(
+                            trackId = track.id,
+                            lyrics = lyrics,
+                            loading = lyricsLoading,
+                            positionMs = playback.positionMs,
+                            lyricsOffsetMs = lyricsOffsetMs,
+                            lyricSizeSp = lyricSizeSp,
+                            autoScroll = lyricsAutoScroll,
+                            interactive = lyricsOpen,
+                            onSeek = onSeek,
+                            progress = { lyricsProgress.value },
+                            topInset = lyricsTop,
+                            modifier = Modifier.matchParentSize(),
                         )
-                    }
-                    val qualityBadge = track.qualityBadgeContent()
-                    if (qualityBadge != null || bluetoothOutputName != null) {
-                        Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            qualityBadge?.let { GlassQualityBadge(it, onClick = { audioInfoOpen = true }) }
-                            bluetoothOutputName?.let { GlassBluetoothBadge(it) }
-                        }
                     }
                     Spacer(Modifier.height(14.dp))
                     Box(Modifier.fillMaxWidth().height(26.dp), contentAlignment = Alignment.Center) {
@@ -491,6 +627,192 @@ fun GlassNowPlayingScreen(
                 ) { Text("Start") }
             }
         },
+    )
+
+    if (pasteOpen) AlertDialog(
+        onDismissRequest = { pasteOpen = false },
+        title = { Text("Paste lyrics") },
+        text = {
+            OutlinedTextField(
+                value = pasteText,
+                onValueChange = { pasteText = it },
+                label = { Text("LRC or plain lyrics") },
+                minLines = 6,
+                maxLines = 12,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onSaveLyrics(track, pasteText); pasteOpen = false }, enabled = pasteText.isNotBlank()) {
+                Text("Save")
+            }
+        },
+        dismissButton = { TextButton(onClick = { pasteOpen = false }) { Text("Cancel") } },
+    )
+}
+
+/**
+ * The lyrics layer that fades in inside the hero. It is layered over the normal art/title block,
+ * starts below the shrunken art row, and masks its own top/bottom edges. The only per-frame work
+ * happens inside graphicsLayer/drawWithContent.
+ */
+@Composable
+private fun InlineLyricsOverlay(
+    trackId: String,
+    lyrics: Lyrics?,
+    loading: Boolean,
+    positionMs: Long,
+    lyricsOffsetMs: Int,
+    lyricSizeSp: Int,
+    autoScroll: Boolean,
+    interactive: Boolean,
+    onSeek: (Long) -> Unit,
+    progress: () -> Float,
+    topInset: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
+    val lines = lyrics?.synced.orEmpty()
+    val plainLines = remember(lyrics?.plain) {
+        lyrics?.plain?.split('\n')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+    }
+    val effectivePosition = (positionMs + lyricsOffsetMs).coerceAtLeast(0L)
+    val active = remember(lines, effectivePosition) { LrcParser.activeLine(lines, effectivePosition) }
+    val listState = rememberLazyListState()
+    val blurAvailable = Build.VERSION.SDK_INT >= 31
+    val hasLyrics = lines.isNotEmpty() || plainLines.isNotEmpty()
+
+    // A brand-new track starts its own lyrics at the top, even if the previous list was scrolled.
+    LaunchedEffect(trackId) { listState.scrollToItem(0) }
+
+    LaunchedEffect(trackId, active, autoScroll, lines.size) {
+        if (!interactive || !autoScroll || active < 0 || lines.isEmpty()) return@LaunchedEffect
+        val viewport = listState.layoutInfo.viewportSize.height
+        if (viewport <= 0) return@LaunchedEffect
+        val target = viewport * 0.26f
+        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == active }
+        if (info != null) {
+            listState.animateScrollBy(
+                value = info.offset - target,
+                animationSpec = spring(dampingRatio = 0.85f, stiffness = 300f),
+            )
+        } else {
+            listState.animateScrollToItem(active, -target.toInt())
+        }
+    }
+
+    Box(
+        modifier
+            .padding(top = topInset)
+            .graphicsLayer {
+                val pr = progress()
+                alpha = ((pr - 0.1f) / 0.9f).coerceIn(0f, 1f)
+                translationY = (1f - pr) * 20.dp.toPx()
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .drawWithContent {
+                drawContent()
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.10f to Color.White,
+                        0.88f to Color.White,
+                        1f to Color.Transparent,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            },
+    ) {
+        when {
+            loading && !hasLyrics -> CenteredLyricMessage("Finding lyrics…", lyricSizeSp)
+            lines.isNotEmpty() -> LazyColumn(
+                state = listState,
+                userScrollEnabled = interactive,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 2.dp),
+                contentPadding = PaddingValues(top = 44.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                itemsIndexed(lines) { index, line ->
+                    val distance = if (active >= 0) abs(index - active) else index.coerceAtMost(4)
+                    InlineLyricLine(
+                        text = line.text,
+                        active = index == active,
+                        distance = distance,
+                        sizeSp = lyricSizeSp,
+                        blurAvailable = blurAvailable,
+                        onClick = if (interactive && (line.timeMs > 0 || line.words.isNotEmpty())) {
+                            { onSeek((line.timeMs - lyricsOffsetMs).coerceAtLeast(0L)) }
+                        } else null,
+                    )
+                }
+            }
+            plainLines.isNotEmpty() -> LazyColumn(
+                state = listState,
+                userScrollEnabled = interactive,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 2.dp),
+                contentPadding = PaddingValues(top = 44.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                itemsIndexed(plainLines) { _, line ->
+                    InlineLyricLine(
+                        text = line,
+                        active = false,
+                        distance = 4,
+                        sizeSp = lyricSizeSp,
+                        blurAvailable = blurAvailable,
+                        onClick = null,
+                    )
+                }
+            }
+            else -> CenteredLyricMessage("No lyrics found", lyricSizeSp)
+        }
+    }
+}
+
+@Composable
+private fun CenteredLyricMessage(text: String, sizeSp: Int) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = text,
+            color = Color.White,
+            fontFamily = LyricsTypography.familyFor(text),
+            fontSize = sizeSp.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun InlineLyricLine(
+    text: String,
+    active: Boolean,
+    distance: Int,
+    sizeSp: Int,
+    blurAvailable: Boolean,
+    onClick: (() -> Unit)?,
+) {
+    val family = remember(text) { LyricsTypography.familyFor(text) }
+    val blurDp = when {
+        active || !blurAvailable -> 0f
+        distance <= 1 -> 2f
+        distance == 2 -> 4f
+        distance == 3 -> 6f
+        else -> 8f
+    }
+    Text(
+        text = text.ifBlank { "♪" },
+        color = if (active) Color.White else Color.White.copy(alpha = 0.45f),
+        fontFamily = family,
+        fontSize = sizeSp.sp,
+        fontWeight = FontWeight.Bold,
+        lineHeight = (sizeSp + 4).sp,
+        maxLines = 4,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (blurDp > 0f) Modifier.blur(blurDp.dp) else Modifier)
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(vertical = 5.dp),
     )
 }
 
