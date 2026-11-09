@@ -380,18 +380,20 @@ fun GlassNowPlayingScreen(
                                 radius = 34.dp,
                             )
                             Spacer(Modifier.height(26.dp))
-                            Row(
+                            Column(
                                 Modifier
                                     .fillMaxWidth()
                                     .onGloballyPositioned { titleRowHeightPx = it.size.height }
                                     .graphicsLayer {
                                         translationY = -(heroWidth + 26.dp).toPx() * lyricsProgress.value
                                     },
-                                verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                // Song info keeps its exact layout and truncation; the action
+                                // buttons moved to their own row below so they never overlap
+                                // the shifted title in lyrics mode.
                                 Column(
                                     Modifier
-                                        .weight(1f)
+                                        .fillMaxWidth()
                                         .graphicsLayer {
                                             translationX = (smallArt + 14.dp).toPx() * lyricsProgress.value
                                         },
@@ -400,45 +402,50 @@ fun GlassNowPlayingScreen(
                                     Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(track.album.ifBlank { "Unknown album" }, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                GlassIconButton(
-                                    if (track.id in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                    if (track.id in favorites) "Remove favorite" else "Add favorite",
-                                    { onFavorite(track) },
-                                    tint = if (track.id in favorites) GlassTokens.Violet else colors.onSurface,
-                                )
-                                // The "..." options live in the same row as the title/star, so they
-                                // travel up with the rest of the header when lyrics open.
-                                if (lyricsOpen) {
-                                    Box {
-                                        GlassIconButton(
-                                            Icons.Rounded.MoreHoriz,
-                                            "Lyrics options",
-                                            { lyricsMenuOpen = true },
-                                            tint = Color.White.copy(alpha = 0.82f),
-                                        )
-                                        DropdownMenu(expanded = lyricsMenuOpen, onDismissRequest = { lyricsMenuOpen = false }) {
-                                            DropdownMenuItem(
-                                                text = { Text("Paste lyrics") },
-                                                leadingIcon = { Icon(Icons.Rounded.ContentPaste, null) },
-                                                onClick = {
-                                                    lyricsMenuOpen = false
-                                                    pasteText = lyrics?.plain.orEmpty()
-                                                    pasteOpen = true
-                                                },
+                                Row(
+                                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    GlassIconButton(
+                                        if (track.id in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                        if (track.id in favorites) "Remove favorite" else "Add favorite",
+                                        { onFavorite(track) },
+                                        tint = if (track.id in favorites) GlassTokens.Violet else colors.onSurface,
+                                    )
+                                    // The "..." options travel up with the header when lyrics open.
+                                    if (lyricsOpen) {
+                                        Box(Modifier.padding(start = 10.dp)) {
+                                            GlassIconButton(
+                                                Icons.Rounded.MoreHoriz,
+                                                "Lyrics options",
+                                                { lyricsMenuOpen = true },
+                                                tint = Color.White.copy(alpha = 0.82f),
                                             )
-                                            DropdownMenuItem(
-                                                text = { Text("Import LRC file") },
-                                                leadingIcon = { Icon(Icons.Rounded.FileOpen, null) },
-                                                onClick = {
-                                                    lyricsMenuOpen = false
-                                                    lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"))
-                                                },
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Full lyrics view") },
-                                                leadingIcon = { Icon(Icons.Rounded.Lyrics, null) },
-                                                onClick = { lyricsMenuOpen = false; fullLyricsOpen = true },
-                                            )
+                                            DropdownMenu(expanded = lyricsMenuOpen, onDismissRequest = { lyricsMenuOpen = false }) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Paste lyrics") },
+                                                    leadingIcon = { Icon(Icons.Rounded.ContentPaste, null) },
+                                                    onClick = {
+                                                        lyricsMenuOpen = false
+                                                        pasteText = lyrics?.plain.orEmpty()
+                                                        pasteOpen = true
+                                                    },
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Import LRC file") },
+                                                    leadingIcon = { Icon(Icons.Rounded.FileOpen, null) },
+                                                    onClick = {
+                                                        lyricsMenuOpen = false
+                                                        lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"))
+                                                    },
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Full lyrics view") },
+                                                    leadingIcon = { Icon(Icons.Rounded.Lyrics, null) },
+                                                    onClick = { lyricsMenuOpen = false; fullLyricsOpen = true },
+                                                )
+                                            }
                                         }
                                     }
                                 }
