@@ -23,15 +23,16 @@ import java.io.File
  * 1. lyrics the user pasted or imported (never overwritten automatically),
  * 2. lyrics embedded in the audio file,
  * 3. a local sidecar `.lrc` file,
- * 4. none.
+ * 4. cached LRCLIB lyrics, then a live LRCLIB lookup (metadata only, any song).
  *
  * Everything is cached in Room keyed by (trackId, source), so adding embedded lyrics cannot delete
- * a manual version. Discovery failures are non-fatal and never block playback.
+ * a manual version. Discovery and network failures are non-fatal and never block playback.
  */
 class LyricsRepository(
     private val context: Context,
     private val lyricsDao: LyricsDao,
     private val sourceDao: SourceDao,
+    private val lrclib: LrclibClient = LrclibClient(),
 ) {
     /** Parsed lyrics kept in memory (current track + prefetched queue neighbours). */
     private val parsedCache = LruCache<String, Lyrics>(24)
@@ -44,7 +45,11 @@ class LyricsRepository(
         runCatching { load(track) }
     }
 
-    suspend fun load(track: Track, allowDiscovery: Boolean = true): Lyrics? = withContext(Dispatchers.IO) {
+    suspend fun load(
+        track: Track,
+        allowDiscovery: Boolean = true,
+        allowNetwork: Boolean = true,
+    ): Lyrics? = withContext(Dispatchers.IO) {
         parsedCache.get(track.id)?.let { return@withContext it }
         val stored = runCatching { lyricsDao.forTrack(track.id) }.getOrDefault(emptyList())
 
@@ -76,7 +81,32 @@ class LyricsRepository(
             cache(track, LyricsSource.LRC, discovered.first)
             return@withContext parseRaw(track.id, discovered.first, LyricsSource.LRC)
         }
-        null
+
+        // 4. LRCLIB: a cached row wins (a blank row means "checked, nothing found"), so the API is
+        //    only contacted when this song has no lyrics anywhere yet.
+        stored.firstOrNull { it.source == LyricsSource.LRCLIB.name }?.let { cached ->
+            if (cached.raw.isBlank()) return@withContext null
+            return@withContext parseAndCache(track.id, cached)
+        }
+        if (!allowNetwork) return@withContext null
+        when (val online = runCatching { lrclib.lookup(track) }.getOrNull()) {
+            // Request failed (offline, rate limit): retry on a later visit, do not cache a miss.
+            null -> null
+            LrclibResult.NotFound -> {
+                cache(track, LyricsSource.LRCLIB, "")
+                null
+            }
+            is LrclibResult.Found -> {
+                val raw = online.synced ?: online.plain.orEmpty()
+                if (raw.isBlank()) {
+                    cache(track, LyricsSource.LRCLIB, "")
+                    null
+                } else {
+                    cache(track, LyricsSource.LRCLIB, raw)
+                    parseRaw(track.id, raw, LyricsSource.LRCLIB)
+                }
+            }
+        }
     }
 
     suspend fun import(track: Track, uri: Uri): Lyrics = withContext(Dispatchers.IO) {
@@ -100,10 +130,11 @@ class LyricsRepository(
         true
     }
 
-    /** Drops cached automatic lyrics so the next load re-reads the file / folder. */
+    /** Drops cached automatic lyrics so the next load re-reads the file / folder / LRCLIB. */
     suspend fun invalidateAutomatic(track: Track) = withContext(Dispatchers.IO) {
         runCatching { lyricsDao.delete(track.id, LyricsSource.EMBEDDED.name) }
         runCatching { lyricsDao.delete(track.id, LyricsSource.LRC.name) }
+        runCatching { lyricsDao.delete(track.id, LyricsSource.LRCLIB.name) }
         parsedCache.remove(track.id)
     }
 

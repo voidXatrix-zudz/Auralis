@@ -173,9 +173,6 @@ fun AuralisRoot(viewModel: AppViewModel) {
         }
         LaunchedEffect(playbackError) { playbackError?.let { snackbarHost.showSnackbar(it) } }
         LaunchedEffect(nowPlayingOpen, currentTrack?.id) { if (nowPlayingOpen && currentTrack == null) nowPlayingOpen = false }
-        // Auto-fetch: whenever the playing track changes, resolve cached/embedded/sidecar lyrics
-        // even if the Now Playing screen has never been opened. loadLyrics() is idempotent per track.
-        LaunchedEffect(currentTrack?.id) { currentTrack?.let(viewModel::loadLyrics) }
 
         val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             folderPickerPending = false

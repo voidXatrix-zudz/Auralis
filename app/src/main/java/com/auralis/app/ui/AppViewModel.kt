@@ -67,6 +67,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private var loadedLyricsTrackId: String? = null
     private var prefetchedLyricsTrackId: String? = null
     private var lyricsPrefetchJob: Job? = null
+    private var lyricsLoadJob: Job? = null
     private var lastRecordedTrackId: String? = null
 
     init {
@@ -136,6 +137,27 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 .map { it.trackId }
                 .distinctUntilChanged()
                 .collect { trackId -> trackId?.let(::recordPlayEvent) }
+        }
+
+        // ONE central hook for the player's current media item. Observing the session state here
+        // means every way a song can change (list tap, next/previous, auto-advance, shuffle or
+        // repeat, notification/Bluetooth controls, restored session) starts the lyrics lookup,
+        // whether or not the lyrics page is open. loadLyrics() cancels a previous in-flight fetch.
+        viewModelScope.launch {
+            var lastTrackId: String? = null
+            combine(
+                container.playback.state
+                    .map { state -> state.takeIf { it.connected }?.trackId }
+                    .distinctUntilChanged(),
+                tracks,
+            ) { trackId, library -> trackId?.let { id -> library.firstOrNull { it.id == id } } }
+                .filterNotNull()
+                .collect { track ->
+                    if (track.id != lastTrackId) {
+                        lastTrackId = track.id
+                        loadLyrics(track)
+                    }
+                }
         }
 
         // Prefetch and parse the next queue item while the current one plays, so opening its
@@ -246,7 +268,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun cancelSleepTimer() = container.playback.cancelSleepTimer()
 
     fun loadLyrics(track: Track) {
-        if (loadedLyricsTrackId == track.id && _lyrics.value != null) return
+        // Already resolved (or still fetching) for this song: nothing to do.
+        if (loadedLyricsTrackId == track.id) return
+        // A new song cancels the previous lookup; slow late responses are also dropped by the
+        // track-id check below, so lyrics can never land on the wrong song.
+        lyricsLoadJob?.cancel()
         // Prefetched or previously visited track: show the fully parsed result in one frame.
         container.lyrics.cached(track.id)?.let { cached ->
             loadedLyricsTrackId = track.id
@@ -257,10 +283,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         loadedLyricsTrackId = track.id
         _lyrics.value = null
         _lyricsLoading.value = true
-        viewModelScope.launch {
-            val result = runCatching { container.lyrics.load(track) }
-                .onFailure { report("Couldn't load lyrics", it) }
-                .getOrNull()
+        lyricsLoadJob = viewModelScope.launch {
+            val result = try {
+                // Cached lyrics first, then embedded/sidecar, then a live LRCLIB lookup.
+                container.lyrics.load(track)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                report("Couldn't load lyrics", error)
+                null
+            }
             if (loadedLyricsTrackId == track.id) {
                 _lyrics.value = result
                 _lyricsLoading.value = false
@@ -272,6 +304,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { container.lyrics.import(track, uri) }
                 .onSuccess { lyrics ->
+                    lyricsLoadJob?.cancel()
                     _lyrics.value = lyrics
                     loadedLyricsTrackId = track.id
                     _messages.trySend(if (lyrics.synced != null) "Synchronized lyrics imported" else "Lyrics imported (no timestamps found)")
@@ -283,7 +316,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun saveLyrics(track: Track, text: String) {
         viewModelScope.launch {
             runCatching { container.lyrics.saveText(track, text, LyricsSource.USER) }
-                .onSuccess { _lyrics.value = it; loadedLyricsTrackId = track.id; _messages.trySend("Lyrics saved") }
+                .onSuccess {
+                    lyricsLoadJob?.cancel()
+                    _lyrics.value = it
+                    loadedLyricsTrackId = track.id
+                    _messages.trySend("Lyrics saved")
+                }
                 .onFailure { report("Couldn't save lyrics", it) }
         }
     }
@@ -293,9 +331,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             runCatching { container.lyrics.remove(track, LyricsSource.USER) }
                 .onSuccess { removed ->
                     if (removed) {
+                        lyricsLoadJob?.cancel()
                         _lyrics.value = null
                         loadedLyricsTrackId = null
                         _messages.trySend("Saved lyrics removed")
+                        // Fall back to embedded/sidecar/LRCLIB lyrics now that the manual copy is gone.
+                        loadLyrics(track)
                     } else {
                         _messages.trySend("No user lyrics to remove")
                     }

@@ -533,6 +533,7 @@ private fun SourceChip(lyrics: Lyrics?) {
         LyricsSource.USER -> "Manual"
         LyricsSource.EMBEDDED -> "Embedded"
         LyricsSource.LRC -> "LRC file"
+        LyricsSource.LRCLIB -> "LRCLIB"
     }
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f),

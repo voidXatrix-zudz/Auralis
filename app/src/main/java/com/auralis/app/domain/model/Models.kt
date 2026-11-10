@@ -12,7 +12,7 @@ enum class PlayerBackground { NONE, PHOTO_1, PHOTO_2 }
 
 enum class ReplayGainMode { OFF, TRACK, ALBUM }
 
-enum class LyricsSource { EMBEDDED, LRC, USER }
+enum class LyricsSource { EMBEDDED, LRC, USER, LRCLIB }
 
 /** One timed word inside an enhanced-LRC line. */
 data class LrcWord(val timeMs: Long, val text: String)
