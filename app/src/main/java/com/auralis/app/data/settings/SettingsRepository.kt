@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.auralis.app.domain.audio.EqGainsCodec
@@ -62,6 +63,8 @@ private object Keys {
     val autoScan = booleanPreferencesKey("auto_scan_enabled")
     val includeSubfolders = booleanPreferencesKey("include_subfolders")
     val playerBackground = stringPreferencesKey("player_background")
+    val lastUpdateCheckAt = longPreferencesKey("last_update_check_at")
+    val skippedUpdateTag = stringPreferencesKey("skipped_update_tag")
 }
 
 /** Persists [AppSettings] in Preferences DataStore. Unknown or corrupt values fall back to defaults. */
@@ -115,6 +118,8 @@ class SettingsRepository(private val context: Context) {
             autoScanEnabled = this[Keys.autoScan] ?: d.autoScanEnabled,
             includeSubfolders = this[Keys.includeSubfolders] ?: d.includeSubfolders,
             playerBackground = enumOr(this[Keys.playerBackground], d.playerBackground),
+            lastUpdateCheckAt = (this[Keys.lastUpdateCheckAt] ?: d.lastUpdateCheckAt).coerceAtLeast(0L),
+            skippedUpdateTag = this[Keys.skippedUpdateTag] ?: d.skippedUpdateTag,
         )
     }
 
@@ -155,6 +160,8 @@ class SettingsRepository(private val context: Context) {
         this[Keys.autoScan] = s.autoScanEnabled
         this[Keys.includeSubfolders] = s.includeSubfolders
         this[Keys.playerBackground] = s.playerBackground.name
+        this[Keys.lastUpdateCheckAt] = s.lastUpdateCheckAt
+        this[Keys.skippedUpdateTag] = s.skippedUpdateTag
     }
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =

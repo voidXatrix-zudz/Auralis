@@ -1,4 +1,13 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
+// Release signing lives in keystore.properties (gitignored). When it is absent the release build
+// stays unsigned; debug builds are unaffected. Keep ONE keystore for every published release.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) keystorePropertiesFile.inputStream().use { load(it) }
+}
+val hasReleaseKeystore = keystorePropertiesFile.exists()
 
 plugins {
     alias(libs.plugins.android.application)
@@ -15,8 +24,21 @@ android {
         applicationId = "com.auralis.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Single source of truth for app versioning. Bump BOTH for every release:
+        // versionCode must always increase; versionName is what the updater compares.
+        versionCode = 2
+        versionName = "1.2.0"
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -28,6 +50,8 @@ android {
             // Minification is enabled in Stage 7 once Room/Media3 keep rules are verified on device.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Signed only when keystore.properties exists; otherwise the output is unsigned.
+            if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
         }
     }
 

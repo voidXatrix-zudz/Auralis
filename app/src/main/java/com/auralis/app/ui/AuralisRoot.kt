@@ -95,6 +95,7 @@ import com.auralis.app.ui.screens.BackupScreen
 import com.auralis.app.ui.screens.MetadataEditorScreen
 import com.auralis.app.ui.screens.AudioAnalysisScreen
 import com.auralis.app.ui.screens.LogsDiagnosticsScreen
+import com.auralis.app.ui.update.UpdateDialog
 import com.auralis.app.ui.theme.AuralisAppTheme
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.ui.performance.LocalPerformanceMode
@@ -131,6 +132,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val profile by viewModel.performanceProfile.collectAsStateWithLifecycle()
     val performanceMode by viewModel.performanceMode.collectAsStateWithLifecycle()
     val performanceReason by viewModel.performanceReason.collectAsStateWithLifecycle()
+    // GitHub release state; drives the global dialog, the Settings row and the dock badge.
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     var nowPlayingOpen by rememberSaveable { mutableStateOf(false) }
     // Build the id lookup once per library change; track lookups are O(1) instead of a scan per frame.
     val trackById = remember(tracks) { tracks.associateBy { it.id } }
@@ -311,6 +314,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                         onOpenWrapped = { viewModel.push(Destination.Wrapped) },
                                         onOpenBackup = { viewModel.push(Destination.Backup) },
                                         onOpenLogs = { viewModel.push(Destination.Logs) },
+                                        onCheckForUpdates = viewModel::checkForUpdates,
+                                        updateChecking = updateState.checking,
+                                        updateStatus = updateState.status,
+                                        updateAvailableVersion = updateState.available?.version,
                                         onBack = viewModel::back,
                                     )
                                     Destination.About -> AboutScreen()
@@ -341,7 +348,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                         } else AudioAnalysisScreen(track)
                                     }
                                     null -> when (state.tab) {
-                                        Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = favorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = viewModel::toggleFavorite, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) })
+                                        Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = favorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = viewModel::toggleFavorite, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, settingsBadge = updateState.available != null)
                                         Tab.SEARCH -> SearchScreen(tracks, favorites, playbackTrackId, { viewModel.play(it, tracks) }, viewModel::toggleFavorite, playlists, viewModel::addToPlaylist, onQueue = viewModel::enqueue, sources = sources, onPlayNext = viewModel::playNext)
                                         Tab.LIBRARY -> LibraryScreen(
                                             tracks, favorites, sources, playlists, playbackTrackId, addMusic, scan,
@@ -366,6 +373,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             onOpenWrapped = { viewModel.push(Destination.Wrapped) },
                                             onOpenBackup = { viewModel.push(Destination.Backup) },
                                             onOpenLogs = { viewModel.push(Destination.Logs) },
+                                            onCheckForUpdates = viewModel::checkForUpdates,
+                                            updateChecking = updateState.checking,
+                                            updateStatus = updateState.status,
+                                            updateAvailableVersion = updateState.available?.version,
                                             onBack = viewModel::back,
                                         )
                                     }
@@ -411,6 +422,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                             .padding(bottom = if (dockStyle == DockStyle.GLASS) DockMetrics.GlassBottomMargin else DockMetrics.BottomMargin),
                         hazeState = hazeState,
                         onExpand = { if (dockStyle == DockStyle.GLASS) dockScroll.expand() },
+                        showSettingsBadge = updateState.available != null,
                     )
                 }
             }
@@ -422,6 +434,21 @@ fun AuralisRoot(viewModel: AppViewModel) {
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
                         .padding(bottom = 20.dp),
+                )
+            }
+
+            // Global update prompt: hosted at the root so it appears over every screen and in
+            // both theme styles, independent of which tab or pushed destination is showing.
+            if (updateState.showDialog) {
+                UpdateDialog(
+                    state = updateState,
+                    glass = settings.themeStyle == ThemeStyle.GLASSMORPHIC,
+                    onUpdate = viewModel::downloadUpdate,
+                    onInstall = viewModel::installUpdate,
+                    onCancelDownload = viewModel::cancelUpdateDownload,
+                    onLater = viewModel::dismissUpdate,
+                    onSkip = viewModel::skipUpdateVersion,
+                    onOpenPage = viewModel::openUpdatePage,
                 )
             }
         }

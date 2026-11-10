@@ -43,6 +43,7 @@ import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
@@ -110,6 +111,10 @@ fun GlassSettingsScreen(
     onOpenLogs: () -> Unit,
     modifier: Modifier,
     onBack: () -> Unit = {},
+    onCheckForUpdates: () -> Unit = {},
+    updateChecking: Boolean = false,
+    updateStatus: String? = null,
+    updateAvailableVersion: String? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var pendingRemoval by remember { mutableStateOf<MusicSource?>(null) }
@@ -215,11 +220,12 @@ fun GlassSettingsScreen(
                     }
                 }
             }
-            if (matches("Files", "Metadata", "App", "version", "folder", "scan")) {
+            if (matches("Files", "Metadata", "App", "version", "folder", "scan", "update")) {
                 item {
                     SettingsGroup("Files, Metadata & App", Icons.Rounded.Folder) {
                         RowItem(Icons.Rounded.FolderOpen, "Music folders", "${sources.size} linked folder${if (sources.size == 1) "" else "s"}", null)
                         RowItem(Icons.Rounded.Tune, "Metadata editor", "Available from Now Playing → Edit tags", null)
+                        RowItem(Icons.Rounded.Refresh, "Check for updates", updateSubtitle(updateChecking, updateStatus, updateAvailableVersion), onCheckForUpdates)
                         RowItem(Icons.Rounded.AutoAwesome, "AURALIS version", BuildConfig.VERSION_NAME, null, showDivider = false)
                         InfoNote("Tag edits are written on-device. Nothing is uploaded.")
                     }
@@ -986,4 +992,11 @@ private fun clarityName(value: Int): String = when {
     value <= 22 -> "Tinted · smoked glass"
     value <= 58 -> "Frosted · balanced"
     else -> "Crystal · almost clear"
+}
+
+private fun updateSubtitle(checking: Boolean, status: String?, version: String?): String = when {
+    checking -> "Checking..."
+    version != null -> "Version $version is available"
+    !status.isNullOrBlank() -> status
+    else -> "Check GitHub for a newer release"
 }

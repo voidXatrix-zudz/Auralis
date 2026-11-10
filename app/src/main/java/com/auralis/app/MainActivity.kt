@@ -42,6 +42,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         (application as AuralisApp).container.autoScanner.onResume()
+        // Finish an update install after the user granted "install unknown apps", if needed.
+        viewModel.onAppResumed()
     }
 
     override fun onStop() {

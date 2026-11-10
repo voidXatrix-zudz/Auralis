@@ -180,6 +180,8 @@ fun GlassIconButton(
     tint: Color = MaterialTheme.colorScheme.onSurface,
     size: Dp = 48.dp,
     enabled: Boolean = true,
+    /** Small accent dot, used by the Settings icon when a release update is available. */
+    badge: Boolean = false,
 ) {
     Box(
         modifier
@@ -192,6 +194,16 @@ fun GlassIconButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = description, tint = if (enabled) tint else tint.copy(alpha = 0.38f), modifier = Modifier.size(size * 0.46f))
+        if (badge) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 9.dp, end = 9.dp)
+                    .size(9.dp)
+                    .clip(CircleShape)
+                    .background(GlassTokens.Violet),
+            )
+        }
     }
 }
 

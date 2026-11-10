@@ -12,6 +12,7 @@ import com.auralis.app.data.db.QueueItemEntity
 import com.auralis.app.data.db.toDomain
 import com.auralis.app.data.metadata.TagData
 import com.auralis.app.data.settings.PlaybackSnapshot
+import com.auralis.app.data.update.UpdateUiState
 import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Lyrics
@@ -64,6 +65,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val lyricsLoading = _lyricsLoading.asStateFlow()
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = _messages.receiveAsFlow()
+    /** In-app updater: GitHub release check, APK download and install state. */
+    val updateState: StateFlow<UpdateUiState> = container.updates.state
     private var loadedLyricsTrackId: String? = null
     private var prefetchedLyricsTrackId: String? = null
     private var lyricsPrefetchJob: Job? = null
@@ -71,6 +74,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private var lastRecordedTrackId: String? = null
 
     init {
+        // The updater runs one throttled check per launch; its user-facing messages reuse the
+        // app snackbar channel so Settings and the dialog share one style.
+        container.updates.start()
+        viewModelScope.launch { container.updates.messages.collect { _messages.trySend(it) } }
+
         viewModelScope.launch {
             val savedQueue = runCatching { container.database.queueDao().getAll() }
                 .onFailure { report("Couldn't read the saved playback queue", it) }
@@ -187,6 +195,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun push(destination: Destination) { _nav.update { it.push(destination) } }
     fun back() { _nav.update { it.pop() } }
     fun updateSettings(transform: (AppSettings) -> AppSettings) { viewModelScope.launch { runCatching { container.settings.update(transform) }.onFailure { report("Couldn't save settings", it) } } }
+
+    fun checkForUpdates() = container.updates.checkNow()
+    fun dismissUpdate() = container.updates.later()
+    fun skipUpdateVersion() = container.updates.skipVersion()
+    fun downloadUpdate() = container.updates.downloadUpdate()
+    fun cancelUpdateDownload() = container.updates.cancelDownload()
+    fun installUpdate() = container.updates.installDownloaded()
+    fun openUpdatePage() = container.updates.openReleasePage()
+    /** Called from MainActivity.onResume to finish an install after the permission screen. */
+    fun onAppResumed() = container.updates.onAppForeground()
 
     fun addFolder(uri: Uri) { viewModelScope.launch {
         container.sources.addTreeSource(uri).onSuccess { _messages.trySend("Added “${it.name}”"); scanLibrary() }

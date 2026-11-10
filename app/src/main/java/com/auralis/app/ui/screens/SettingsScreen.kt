@@ -5,6 +5,7 @@ import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassSettingsScreen
 import com.auralis.app.ui.components.PlayerBackgroundSelector
 import com.auralis.app.ui.components.ThemeStyleSelector
+import com.auralis.app.BuildConfig
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
@@ -79,11 +81,15 @@ fun SettingsScreen(
     onOpenWrapped: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
     onOpenLogs: () -> Unit = {},
+    onCheckForUpdates: () -> Unit = {},
+    updateChecking: Boolean = false,
+    updateStatus: String? = null,
+    updateAvailableVersion: String? = null,
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassSettingsScreen(settings, sources, onUpdate, onAddFolder, onRemoveSource, onOpenAbout, onOpenEqualizer, onOpenWrapped, onOpenBackup, onOpenLogs, modifier, onBack)
+        GlassSettingsScreen(settings, sources, onUpdate, onAddFolder, onRemoveSource, onOpenAbout, onOpenEqualizer, onOpenWrapped, onOpenBackup, onOpenLogs, modifier, onBack, onCheckForUpdates, updateChecking, updateStatus, updateAvailableVersion)
         return
     }
     var pendingRemoval by remember { mutableStateOf<MusicSource?>(null) }
@@ -302,6 +308,7 @@ fun SettingsScreen(
                 ToolRow("AURALIS Wrapped", "Your listening recap and top tracks", Icons.Rounded.Insights, onOpenWrapped)
                 ToolRow("Backup & restore", "Versioned JSON export and restore", Icons.Rounded.CloudUpload, onOpenBackup)
                 ToolRow("Logs & diagnostics", "Device checks, app logs and export", Icons.Rounded.BugReport, onOpenLogs)
+                ToolRow("Check for updates", updateSubtitle(updateChecking, updateStatus, updateAvailableVersion), Icons.Rounded.Refresh, onCheckForUpdates)
             }
         }
 
@@ -310,6 +317,14 @@ fun SettingsScreen(
                 Icon(Icons.Rounded.Info, contentDescription = null, modifier = Modifier.size(18.dp))
                 Text("About & privacy", modifier = Modifier.padding(start = 8.dp))
             }
+        }
+        item {
+            Text(
+                "AURALIS ${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
+            )
         }
     }
     }
@@ -328,6 +343,13 @@ fun SettingsScreen(
             dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Cancel") } },
         )
     }
+}
+
+private fun updateSubtitle(checking: Boolean, status: String?, version: String?): String = when {
+    checking -> "Checking..."
+    version != null -> "Version $version is available"
+    !status.isNullOrBlank() -> status
+    else -> "Check GitHub for a newer release"
 }
 
 @Composable

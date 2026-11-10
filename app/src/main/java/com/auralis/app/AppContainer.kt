@@ -10,6 +10,7 @@ import com.auralis.app.data.settings.PlaybackSnapshotRepository
 import com.auralis.app.data.sources.SourceRepository
 import com.auralis.app.data.sources.MusicScanner
 import com.auralis.app.data.sources.LibraryAutoScanner
+import com.auralis.app.data.update.UpdateManager
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.performance.DevicePerformanceMonitor
 
@@ -30,6 +31,8 @@ class AppContainer(context: Context) {
     val playback: PlaybackController by lazy { PlaybackController(appContext) }
     val lyrics: LyricsRepository by lazy { LyricsRepository(appContext, database.lyricsDao(), database.sourceDao()) }
     val metadata: MetadataEditor by lazy { MetadataEditor(appContext) }
+    /** GitHub release checks, APK download and the package-installer hand-off. */
+    val updates: UpdateManager by lazy { UpdateManager(appContext, settings) }
     /** Battery Saver + thermal source for Automatic performance. App-lifetime, no polling. */
     val performance: DevicePerformanceMonitor by lazy { DevicePerformanceMonitor(appContext) }
     val backup: BackupRepository by lazy {

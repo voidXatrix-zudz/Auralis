@@ -313,6 +313,8 @@ fun AppDock(
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null,
     onExpand: () -> Unit = {},
+    /** Draws a small accent dot on the Settings slot while a release update is available. */
+    showSettingsBadge: Boolean = false,
 ) {
     val glass = LocalDockGlassStyle.current
     if (style == DockStyle.GLASS) {
@@ -378,6 +380,7 @@ fun AppDock(
                 labelAlpha = labelAlpha,
                 clickable = p < 0.5f,
                 onSelectTab = onSelectTab,
+                showSettingsBadge = showSettingsBadge,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
@@ -478,6 +481,7 @@ private fun DockNavPill(
     labelAlpha: Float,
     clickable: Boolean,
     onSelectTab: (Tab) -> Unit,
+    showSettingsBadge: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -552,7 +556,7 @@ private fun DockNavPill(
                                 .clip(CircleShape)
                                 .background(capsuleColor),
                         )
-                        DockSlotContent(item, active, tint, labelAlpha)
+                        DockSlotContent(item, active, tint, labelAlpha, showSettingsBadge && item.tab == Tab.SETTINGS)
                     }
                 }
             }
@@ -627,7 +631,7 @@ private fun DockNavPill(
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
-                            DockSlotContent(item, active, tint, labelAlpha)
+                            DockSlotContent(item, active, tint, labelAlpha, showSettingsBadge && item.tab == Tab.SETTINGS)
                         }
                     }
                 }
@@ -637,20 +641,31 @@ private fun DockNavPill(
 }
 
 @Composable
-private fun DockSlotContent(item: DockNavItem, active: Boolean, tint: Color, labelAlpha: Float) {
+private fun DockSlotContent(item: DockNavItem, active: Boolean, tint: Color, labelAlpha: Float, showBadge: Boolean = false) {
     val isEdgeItem = item.tab == Tab.HOME || item.tab == Tab.SEARCH
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
     ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = if (active) "${item.label} (selected)" else item.label,
-            tint = tint,
-            modifier = Modifier
-                .size(22.dp)
-                .graphicsLayer { alpha = if (isEdgeItem) 1f else labelAlpha },
-        )
+        Box {
+            Icon(
+                imageVector = item.icon,
+                contentDescription = if (active) "${item.label} (selected)" else item.label,
+                tint = tint,
+                modifier = Modifier
+                    .size(22.dp)
+                    .graphicsLayer { alpha = if (isEdgeItem) 1f else labelAlpha },
+            )
+            if (showBadge) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 2.dp, y = (-2).dp)
+                        .size(7.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                )
+            }
+        }
         Text(
             text = item.label,
             color = tint,

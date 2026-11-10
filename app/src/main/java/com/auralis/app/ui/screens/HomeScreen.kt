@@ -30,10 +30,10 @@ fun HomeScreen(
     onAddMusic: () -> Unit, onScan: () -> Unit, onPlay: (Track) -> Unit, onFavorite: (Track) -> Unit,
     playlists: List<com.auralis.app.data.db.PlaylistEntity>, onAddToPlaylist: (Long, Track) -> Unit,
     modifier: Modifier = Modifier, onQueue: (Track) -> Unit = {}, scanning: Boolean = false, onPlayNext: (Track) -> Unit = onQueue,
-    onOpenSettings: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}, settingsBadge: Boolean = false,
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassHomeScreen(sources, tracks, favorites, currentId, onAddMusic, onScan, onPlay, onFavorite, playlists, onAddToPlaylist, modifier, onQueue, scanning, onPlayNext, onOpenSettings)
+        GlassHomeScreen(sources, tracks, favorites, currentId, onAddMusic, onScan, onPlay, onFavorite, playlists, onAddToPlaylist, modifier, onQueue, scanning, onPlayNext, onOpenSettings, settingsBadge)
         return
     }
     Column(modifier.fillMaxSize()) {

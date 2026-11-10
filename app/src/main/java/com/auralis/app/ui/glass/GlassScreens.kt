@@ -71,7 +71,7 @@ fun GlassHomeScreen(
     onAddMusic: () -> Unit, onScan: () -> Unit, onPlay: (Track) -> Unit, onFavorite: (Track) -> Unit,
     playlists: List<PlaylistEntity>, onAddToPlaylist: (Long, Track) -> Unit,
     modifier: Modifier, onQueue: (Track) -> Unit, scanning: Boolean, onPlayNext: (Track) -> Unit,
-    onOpenSettings: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}, settingsBadge: Boolean = false,
 ) {
     // Recomputed from the device's local clock on every resume so it never goes stale.
     var greeting by remember { mutableStateOf(greetingFor(LocalTime.now(ZoneId.systemDefault()))) }
@@ -107,6 +107,7 @@ fun GlassHomeScreen(
                 "Settings",
                 onOpenSettings,
                 modifier = Modifier.padding(start = 8.dp),
+                badge = settingsBadge,
             )
         }
         if (tracks.isEmpty()) {

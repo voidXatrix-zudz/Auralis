@@ -50,4 +50,8 @@ data class AppSettings(
     val includeSubfolders: Boolean = true,
     /** Full-screen photo behind the Now Playing player. */
     val playerBackground: PlayerBackground = PlayerBackground.NONE,
+    /** Epoch millis of the last GitHub release check (throttles the launch check to 12 hours). */
+    val lastUpdateCheckAt: Long = 0L,
+    /** Release tag the user skipped; automatic checks stay silent for that version. */
+    val skippedUpdateTag: String = "",
 )

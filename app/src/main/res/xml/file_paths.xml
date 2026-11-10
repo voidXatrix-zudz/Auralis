@@ -2,4 +2,6 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Diagnostics reports shared from the cache; no music or user documents are exposed. -->
     <cache-path name="shared_logs" path="logs/" />
+    <!-- APK downloaded by the in-app updater (cacheDir/updates), handed to the package installer. -->
+    <cache-path name="apk_updates" path="updates/" />
 </paths>
