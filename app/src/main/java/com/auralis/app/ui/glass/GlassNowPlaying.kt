@@ -408,8 +408,14 @@ fun GlassNowPlayingScreen(
                                             // ellipsize before reaching the heart.
                                             .layout { measurable, constraints ->
                                                 val shift = (textShiftPx * lyricsProgress.value).roundToInt()
+                                                // A weighted child is measured with minWidth == maxWidth,
+                                                // so the inset must shrink both or Constraints.copy throws.
+                                                val width = (constraints.maxWidth - shift).coerceAtLeast(0)
                                                 val placeable = measurable.measure(
-                                                    constraints.copy(maxWidth = (constraints.maxWidth - shift).coerceAtLeast(0)),
+                                                    constraints.copy(
+                                                        minWidth = minOf(constraints.minWidth, width),
+                                                        maxWidth = width,
+                                                    ),
                                                 )
                                                 layout(constraints.maxWidth, placeable.height) {
                                                     placeable.place(shift, 0)
@@ -891,14 +897,15 @@ private fun SyncedLyricList(
         val viewport = listState.layoutInfo.viewportSize.height
         if (viewport <= 0) return@LaunchedEffect
         val target = viewport * 0.30f
-        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == active }
+        val safeActive = active.coerceIn(0, lines.lastIndex)
+        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == safeActive }
         if (info != null) {
             listState.animateScrollBy(
                 value = info.offset - target,
                 animationSpec = spring(dampingRatio = 0.85f, stiffness = 300f),
             )
         } else {
-            listState.animateScrollToItem(active, -target.toInt())
+            listState.animateScrollToItem(safeActive, -target.toInt())
         }
     }
 

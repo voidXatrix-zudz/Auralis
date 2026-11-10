@@ -316,7 +316,12 @@ class LyricsRepository(
 
     /** LRC parsing is CPU work: always run it on Dispatchers.Default, never on the main thread. */
     private suspend fun parseRaw(trackId: String, raw: String, source: LyricsSource): Lyrics {
-        val parsed = withContext(Dispatchers.Default) { LrcParser.parse(raw, source) }
+        val parsed = withContext(Dispatchers.Default) {
+            // Malformed lyrics must degrade to plain text, never crash the screen.
+            runCatching { LrcParser.parse(raw, source) }.getOrElse {
+                Lyrics(source, raw, null, raw.trim().takeIf { text -> text.isNotBlank() })
+            }
+        }
         parsedCache.put(trackId, parsed)
         return parsed
     }
