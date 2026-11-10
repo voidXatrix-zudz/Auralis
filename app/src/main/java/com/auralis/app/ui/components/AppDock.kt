@@ -99,16 +99,16 @@ enum class DockStyle { SOLID, GLASS }
 object DockMetrics {
     val SideMargin: Dp = 12.dp
     val BottomMargin: Dp = 12.dp
-    /** Glass-only floating geometry: ~12dp edge padding like the reference dock. */
-    val GlassSideMargin: Dp = 14.dp
-    val GlassBottomMargin: Dp = 8.dp
+    /** Glass-only floating geometry: 16dp gutters and a 12dp bottom margin like the reference dock. */
+    val GlassSideMargin: Dp = DockDimens.SideMargin
+    val GlassBottomMargin: Dp = DockDimens.BottomMargin
     val ExpandedHeight: Dp = 114.dp      // 48dp mini pill + 8dp gap + 58dp nav pill (Normal)
     val ExpandedNavOnlyHeight: Dp = 58.dp // no track: the nav pill alone
     val CollapsedHeight: Dp = 56.dp
-    /** Glass-only geometry: thicker 54dp tile matching the reference video. */
-    val GlassExpandedHeight: Dp = 116.dp  // 54dp mini pill + 8dp gap + 54dp nav pill
-    val GlassExpandedNavOnlyHeight: Dp = 54.dp
-    val GlassCollapsedHeight: Dp = 54.dp
+    /** Glass-only geometry: 60dp mini pill + 10dp gap + 74dp nav pill/circles. */
+    val GlassExpandedHeight: Dp = DockDimens.MiniHeight + DockDimens.ItemGap + DockDimens.NavHeight
+    val GlassExpandedNavOnlyHeight: Dp = DockDimens.NavHeight
+    val GlassCollapsedHeight: Dp = DockDimens.NavHeight
 
     /** Visible dock height for the current morph progress. */
     fun height(hasTrack: Boolean, progress: Float): Dp =
@@ -120,6 +120,33 @@ object DockMetrics {
             GlassCollapsedHeight,
             progress.coerceIn(0f, 1f),
         )
+}
+
+/**
+ * Every Glass dock dimension in one place so the reference sizes are easy to tweak. The Normal
+ * dock keeps its own constants above and never reads this object.
+ */
+object DockDimens {
+    val NavHeight = 74.dp
+    val CircleSize = 74.dp
+    val MiniHeight = 60.dp
+    /** Sliding selected-tab lens: nav height minus an 8dp inset on all sides. */
+    val LensHeight = 58.dp
+    val LensInset = 8.dp
+    /** Gap between the nav pill, the circles and (vertically) the mini pill. */
+    val ItemGap = 10.dp
+    val SideMargin = 16.dp
+    val BottomMargin = 12.dp
+    /** Glass rim: 1.5dp light-to-transparent gradient border on every pill. */
+    val RimWidth = 1.5.dp
+    val NavIconSize = 28.dp
+    val NavLabelSize = 12.sp
+    val MiniArtSize = 48.dp
+    val MiniPadding = 8.dp
+    val MiniTitleSize = 16.sp
+    val MiniArtistSize = 14.sp
+    val MiniButtonSize = 28.dp
+    val MiniButtonIconSize = 16.dp
 }
 
 /**
@@ -144,10 +171,12 @@ private val MiniHeightCollapsed = 56.dp
 private val NavHeight = 58.dp
 private val RowHeight = 56.dp
 private val CircleSize = 56.dp
-// Glass dock: the mini tile and nav pill share one thicker height (54dp ~ 12-13% of a phone width).
-private val GlassMiniHeight = 54.dp
-private val GlassNavHeight = 54.dp
-private val GlassCircleSize = 54.dp
+// Glass dock: dimensions live in [DockDimens]; the Normal dock above keeps its original values.
+private val GlassMiniHeight = DockDimens.MiniHeight
+private val GlassNavHeight = DockDimens.NavHeight
+private val GlassCircleSize = DockDimens.CircleSize
+private val GlassGap = DockDimens.ItemGap
+// Normal (solid) dock gap; glass uses DockDimens.ItemGap.
 private val EdgeGap = 8.dp
 
 private fun lerpF(start: Float, stop: Float, fraction: Float) = start + (stop - start) * fraction
@@ -702,6 +731,7 @@ private fun DockMiniPill(
 ) {
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(50)
+    val isGlass = style == DockStyle.GLASS
     val nextWidth = dpLerp(40.dp, 0.dp, nextProgress)
 
     Box(
@@ -726,13 +756,13 @@ private fun DockMiniPill(
         Row(
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = 6.dp),
+                .padding(horizontal = if (isGlass) DockDimens.MiniPadding else 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ArtworkImage(
                 track = track,
-                modifier = Modifier.size(if (style == DockStyle.GLASS) 42.dp else 44.dp),
-                shape = if (style == DockStyle.GLASS) CircleShape else RoundedCornerShape(12.dp),
+                modifier = Modifier.size(if (isGlass) DockDimens.MiniArtSize else 44.dp),
+                shape = RoundedCornerShape(12.dp),
             )
             Column(
                 Modifier
@@ -743,16 +773,16 @@ private fun DockMiniPill(
                     text = track.title.ifBlank { track.displayName },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    fontSize = 15.sp,
+                    fontSize = if (isGlass) DockDimens.MiniTitleSize else 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (style == DockStyle.GLASS) Color.White else colors.onSurface,
+                    color = if (isGlass) Color.White else colors.onSurface,
                 )
                 Text(
                     text = track.artist.ifBlank { "Unknown artist" },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    fontSize = 12.sp,
-                    color = if (style == DockStyle.GLASS) DockArtist else colors.onSurfaceVariant,
+                    fontSize = if (isGlass) DockDimens.MiniArtistSize else 12.sp,
+                    color = if (isGlass) DockArtist else colors.onSurfaceVariant,
                 )
             }
             DockPlayButton(
@@ -811,7 +841,7 @@ private fun DockPlayButton(
     ) {
         Box(
             Modifier
-                .size(40.dp)
+                .size(if (style == DockStyle.GLASS) DockDimens.MiniButtonSize else 40.dp)
                 .dockControlCircle(
                     style = style,
                     hazeState = hazeState,
@@ -824,7 +854,7 @@ private fun DockPlayButton(
                 imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 contentDescription = if (playing) "Pause" else "Play",
                 tint = if (style == DockStyle.GLASS) Color.White else MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(if (style == DockStyle.GLASS) DockDimens.MiniButtonIconSize else 20.dp),
             )
         }
     }
@@ -854,7 +884,7 @@ private fun DockNextButton(
     ) {
         Box(
             Modifier
-                .size(40.dp)
+                .size(if (style == DockStyle.GLASS) DockDimens.MiniButtonSize else 40.dp)
                 .dockControlCircle(
                     style = style,
                     hazeState = hazeState,
@@ -867,7 +897,7 @@ private fun DockNextButton(
                 imageVector = Icons.Rounded.SkipNext,
                 contentDescription = "Next",
                 tint = if (style == DockStyle.GLASS) Color.White else MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(if (style == DockStyle.GLASS) DockDimens.MiniButtonIconSize else 20.dp),
             )
         }
     }
@@ -920,6 +950,16 @@ private fun Modifier.dockSurface(
             refraction = refraction && glass.refractionEnabled,
             style = glass,
             fallbackSurface = GlassTokens.Surface,
+        )
+        // 1.5dp light-to-transparent rim shared by the glass nav and mini pills.
+        .border(
+            width = DockDimens.RimWidth,
+            brush = Brush.linearGradient(
+                0f to Color.White.copy(alpha = 0.55f),
+                0.55f to Color.White.copy(alpha = 0.12f),
+                1f to Color.Transparent,
+            ),
+            shape = shape,
         )
 }
 
@@ -1095,7 +1135,7 @@ private fun GlassDock(
         val height = constraints.maxHeight.takeIf { it != Constraints.Infinity }
             ?: DockMetrics.GlassExpandedHeight.roundToPx()
         val circlePx = GlassCircleSize.roundToPx()
-        val gapPx = EdgeGap.roundToPx()
+        val gapPx = GlassGap.roundToPx()
         val miniExpanded = GlassMiniHeight.toPx()
         val miniCollapsed = GlassMiniHeight.toPx()
 
@@ -1106,7 +1146,9 @@ private fun GlassDock(
             lerpF(miniExpanded, miniCollapsed, p).roundToInt().coerceAtLeast(0)
         } else 0
         val miniX = if (showsMini) lerpF(0f, (circlePx + gapPx).toFloat(), p).roundToInt() else 0
-        val miniY = 0
+        // Expanded: top of the dock. Collapsed: centred in the 74dp row so the 60dp pill lines
+        // up with the 74dp circles instead of hugging the top edge.
+        val miniY = if (showsMini) lerpF(0f, ((GlassNavHeight - GlassMiniHeight).toPx() / 2f), p).roundToInt() else 0
 
         val navWidth = lerpF((fullWidth - 2 * (circlePx + gapPx)).toFloat(), circlePx.toFloat(), p).roundToInt().coerceAtLeast(0)
         val navHeight = GlassNavHeight.roundToPx()
@@ -1158,7 +1200,7 @@ private fun GlassNavPill(
                 cornerRadius = 32.dp,
                 refraction = true,
             )
-            .padding(5.dp),
+            .padding(DockDimens.LensInset),
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val slot = maxWidth / GlassDockItems.size
@@ -1177,7 +1219,6 @@ private fun GlassNavPill(
                         .width(slot)
                         .offset(x = slot * slide)
                         .graphicsLayer { scaleX = stretch }
-                        .padding(3.dp)
                         .shadow(
                             elevation = 10.dp,
                             shape = CircleShape,
@@ -1245,17 +1286,17 @@ private fun GlassNavPill(
                                 imageVector = item.icon,
                                 contentDescription = if (active) "${item.label} (selected)" else item.label,
                                 tint = tint,
-                                modifier = Modifier.size(22.dp),
+                                modifier = Modifier.size(DockDimens.NavIconSize),
                             )
                             Text(
                                 text = item.label,
                                 color = tint,
-                                fontSize = 10.sp,
+                                fontSize = DockDimens.NavLabelSize,
                                 maxLines = 1,
                                 softWrap = false,
                                 overflow = TextOverflow.Ellipsis,
                                 fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                                modifier = Modifier.padding(top = 1.dp),
+                                modifier = Modifier.padding(top = 2.dp),
                             )
                         }
                     }

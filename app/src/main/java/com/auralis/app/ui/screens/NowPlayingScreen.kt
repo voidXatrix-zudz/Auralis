@@ -290,14 +290,16 @@ fun NowPlayingScreen(
             }
             val qualityBadge = track.qualityBadgeContent()
             if (qualityBadge != null || bluetoothOutputName != null) {
-                Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     qualityBadge?.let { NormalQualityBadge(it, onClick = { audioInfoOpen = true }) }
                     bluetoothOutputName?.let { NormalBluetoothBadge(it) }
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Box(Modifier.fillMaxWidth().height(28.dp), contentAlignment = Alignment.Center) {
-                if (dragging != null) {
+            // 28dp under the capsules (or the song info when none). The seek label is
+            // transient, so it no longer reserves a fixed-height empty box.
+            Spacer(Modifier.height(28.dp))
+            if (dragging != null) {
+                Box(Modifier.fillMaxWidth().padding(bottom = 6.dp), contentAlignment = Alignment.Center) {
                     Surface(
                         color = colors.primary.copy(alpha = 0.16f),
                         shape = CircleShape,
@@ -317,7 +319,7 @@ fun NowPlayingScreen(
                 Text(time(if (dragging != null) (dragging ?: 0f).toLong() else playback.positionMs), color = if (dragging != null) colors.primary else colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                 Text(time(duration), color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(24.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onShuffle) { Icon(Icons.Rounded.Shuffle, "Shuffle", tint = if (playback.shuffle) colors.primary else colors.onSurfaceVariant) }
                 IconButton(onClick = onPrevious, modifier = Modifier.size(56.dp)) { Icon(Icons.Rounded.SkipPrevious, "Previous", modifier = Modifier.size(34.dp)) }

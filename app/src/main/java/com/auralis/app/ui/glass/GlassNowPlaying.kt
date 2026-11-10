@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -109,6 +110,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -133,6 +135,7 @@ import com.auralis.app.ui.theme.ArtworkPalette
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LyricsTypography
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -388,27 +391,36 @@ fun GlassNowPlayingScreen(
                                         translationY = -(heroWidth + 26.dp).toPx() * lyricsProgress.value
                                     },
                             ) {
-                                // Song info keeps its exact layout and truncation; the action
-                                // buttons moved to their own row below so they never overlap
-                                // the shifted title in lyrics mode.
-                                Column(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer {
-                                            translationX = (smallArt + 14.dp).toPx() * lyricsProgress.value
-                                        },
-                                ) {
-                                    Text(track.title.ifBlank { track.displayName }, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(track.album.ifBlank { "Unknown album" }, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                                // Compact action row: small buttons, right-aligned, tight spacing
-                                // so the metadata section never expands or pushes controls down.
+                                // Title/artist/album stacked on the left, heart vertically centred on
+                                // the right. The text column ellipsizes to one line, so the heart
+                                // is never pushed off and the row adds no extra vertical height.
                                 Row(
-                                    Modifier.fillMaxWidth().padding(top = 2.dp),
-                                    horizontalArrangement = Arrangement.End,
+                                    Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
+                                    val textShiftPx = with(LocalDensity.current) { (smallArt + 14.dp).toPx() }
+                                    Column(
+                                        Modifier
+                                            .weight(1f)
+                                            // Lyrics mode slides the header beside the shrunken art.
+                                            // Shrink the measured width by the same amount (layout
+                                            // phase, no recomposition per frame) so long titles
+                                            // ellipsize before reaching the heart.
+                                            .layout { measurable, constraints ->
+                                                val shift = (textShiftPx * lyricsProgress.value).roundToInt()
+                                                val placeable = measurable.measure(
+                                                    constraints.copy(maxWidth = (constraints.maxWidth - shift).coerceAtLeast(0)),
+                                                )
+                                                layout(constraints.maxWidth, placeable.height) {
+                                                    placeable.place(shift, 0)
+                                                }
+                                            },
+                                    ) {
+                                        Text(track.title.ifBlank { track.displayName }, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(track.album.ifBlank { "Unknown album" }, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Spacer(Modifier.width(8.dp))
                                     GlassIconButton(
                                         if (track.id in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                                         if (track.id in favorites) "Remove favorite" else "Add favorite",
@@ -456,8 +468,10 @@ fun GlassNowPlayingScreen(
                             }
                             val qualityBadge = track.qualityBadgeContent()
                             if (qualityBadge != null || bluetoothOutputName != null) {
+                                // 16dp under the song info; the Bluetooth capsule follows 8dp
+                                // later, and takes zero space when no device is connected.
                                 Column(
-                                    Modifier.padding(top = 12.dp).graphicsLayer { alpha = 1f - lyricsProgress.value },
+                                    Modifier.padding(top = 16.dp).graphicsLayer { alpha = 1f - lyricsProgress.value },
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     qualityBadge?.let { GlassQualityBadge(it, onClick = { audioInfoOpen = true }) }
@@ -481,9 +495,17 @@ fun GlassNowPlayingScreen(
                             modifier = Modifier.matchParentSize(),
                         )
                     }
-                    Spacer(Modifier.height(14.dp))
-                    Box(Modifier.fillMaxWidth().height(26.dp), contentAlignment = Alignment.Center) {
-                        if (dragging != null) Text("Seek to ${time((dragging ?: 0f).toLong())}", style = MaterialTheme.typography.labelMedium, color = GlassTokens.Violet)
+                    // Waveform sits 28dp under the capsules (or under the song info when there
+                    // are none). The seek label is transient, so it reserves no height.
+                    Spacer(Modifier.height(28.dp))
+                    if (dragging != null) {
+                        Text(
+                            "Seek to ${time((dragging ?: 0f).toLong())}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = GlassTokens.Violet,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                            textAlign = TextAlign.Center,
+                        )
                     }
                     val total = duration.coerceAtLeast(1).toFloat()
                     val hasDuration = duration > 0
@@ -496,7 +518,7 @@ fun GlassNowPlayingScreen(
                             dragging = null
                         },
                     )
-                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(
                             time(if (dragging != null) (dragging ?: 0f).toLong() else playback.positionMs),
                             color = Color.White,
@@ -508,7 +530,7 @@ fun GlassNowPlayingScreen(
                             fontSize = 12.sp,
                         )
                     }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(24.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         GlassIconAction(Icons.Rounded.Shuffle, "Shuffle", onShuffle, tint = if (playback.shuffle) GlassTokens.Violet else colors.onSurfaceVariant)
                         GlassIconAction(Icons.Rounded.SkipPrevious, "Previous", onPrevious, tint = colors.onSurface)
