@@ -738,6 +738,9 @@ private fun InlineLyricsOverlay(
         if (has || !loading) shown = target
     }
 
+    // True until the closing fade has fully finished (progress reaches 0).
+    val visible by remember { derivedStateOf { progress() > 0.001f } }
+
     Box(
         modifier
             .padding(top = topInset)
@@ -760,25 +763,44 @@ private fun InlineLyricsOverlay(
                 )
             },
     ) {
-        Crossfade(
-            targetState = shown,
-            animationSpec = tween(250),
-            label = "lyricsCrossfade",
-        ) { view ->
-            InlineLyricsBody(
-                trackId = view.trackId,
-                lyrics = view.lyrics,
-                loading = loading,
-                playing = playing,
-                positionMs = positionMs,
-                lyricsOffsetMs = lyricsOffsetMs,
-                lyricSizeSp = lyricSizeSp,
-                autoScroll = autoScroll,
-                interactive = interactive,
-                onSeek = onSeek,
-                modeProgress = progress,
-                blurAvailable = Build.VERSION.SDK_INT >= 31,
-            )
+        Box(
+            Modifier
+                // Fully closed, report no size and place no children: the lyrics list stays
+                // composed (scroll state survives) but cannot intercept taps meant for the header
+                // underneath, notably the favourite heart. While opening/closing progress > 0 so
+                // the layer keeps its full size and the animations are unchanged.
+                .then(
+                    if (visible || interactive) {
+                        Modifier
+                    } else {
+                        Modifier.layout { measurable, constraints ->
+                            measurable.measure(constraints)
+                            layout(0, 0) {}
+                        }
+                    },
+                )
+                .fillMaxSize(),
+        ) {
+            Crossfade(
+                targetState = shown,
+                animationSpec = tween(250),
+                label = "lyricsCrossfade",
+            ) { view ->
+                InlineLyricsBody(
+                    trackId = view.trackId,
+                    lyrics = view.lyrics,
+                    loading = loading,
+                    playing = playing,
+                    positionMs = positionMs,
+                    lyricsOffsetMs = lyricsOffsetMs,
+                    lyricSizeSp = lyricSizeSp,
+                    autoScroll = autoScroll,
+                    interactive = interactive,
+                    onSeek = onSeek,
+                    modeProgress = progress,
+                    blurAvailable = Build.VERSION.SDK_INT >= 31,
+                )
+            }
         }
     }
 }

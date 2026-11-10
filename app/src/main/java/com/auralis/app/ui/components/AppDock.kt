@@ -127,12 +127,14 @@ object DockMetrics {
  * dock keeps its own constants above and never reads this object.
  */
 object DockDimens {
-    val NavHeight = 74.dp
-    val CircleSize = 74.dp
+    // Bottom row scaled down ~13.5% (74 -> 64) so the glass dock reads lighter; mini pill,
+    // gaps, icons, labels, widths and animations are unchanged.
+    val NavHeight = 64.dp
+    val CircleSize = 64.dp
     val MiniHeight = 60.dp
-    /** Sliding selected-tab lens: nav height minus an 8dp inset on all sides. */
-    val LensHeight = 58.dp
-    val LensInset = 8.dp
+    /** Sliding selected-tab lens: nav height minus an inset on all sides. */
+    val LensHeight = 50.dp
+    val LensInset = 7.dp
     /** Gap between the nav pill, the circles and (vertically) the mini pill. */
     val ItemGap = 10.dp
     val SideMargin = 16.dp
