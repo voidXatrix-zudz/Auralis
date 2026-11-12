@@ -410,7 +410,8 @@ class PlaybackService : MediaLibraryService() {
         val videoId = videoIdFromPlaybackUri(dataSpec.uri.toString())
             ?: return dataSpec
         val startedAt = System.currentTimeMillis()
-        val url = (application as AuralisApp).container.youtube.resolveStreamBlocking(videoId)
+        val quality = com.auralis.app.data.network.NetworkQuality.effective(this, settings)
+        val url = (application as AuralisApp).container.youtube.resolveStreamBlocking(videoId, quality)
         AppLog.i("Timing", "stream URL ready in ${System.currentTimeMillis() - startedAt} ms")
         return dataSpec.withUri(Uri.parse(url))
     }

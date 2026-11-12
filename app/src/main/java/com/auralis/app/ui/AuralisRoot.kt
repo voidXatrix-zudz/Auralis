@@ -88,6 +88,9 @@ import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.nav.Tab
 import com.auralis.app.ui.screens.AboutScreen
+import com.auralis.app.ui.settings.SettingsActions
+import com.auralis.app.ui.settings.SettingsHubScreen
+import com.auralis.app.ui.settings.SettingsSubScreen
 import com.auralis.app.data.youtube.YOUTUBE_TRACK_PREFIX
 import com.auralis.app.domain.model.Track
 import com.auralis.app.domain.model.PlayerBackground
@@ -257,13 +260,45 @@ fun AuralisRoot(viewModel: AppViewModel) {
         }
         val importSpotify = remember(spotifyPicker) { { spotifyPicker.launch(arrayOf("*/*")) } }
 
+        // Shared settings callbacks for the hub and every sub-page (both themes).
+        val settingsActions = SettingsActions(
+            onUpdate = viewModel::updateSettings,
+            onAddFolder = addMusic,
+            onRemoveSource = viewModel::removeSource,
+            onOpenEqualizer = { viewModel.push(Destination.Equalizer) },
+            onOpenWrapped = { viewModel.push(Destination.Wrapped) },
+            onOpenLogs = { viewModel.push(Destination.Logs) },
+            onOpenPrivacyAbout = { viewModel.push(Destination.About) },
+            onCheckForUpdates = viewModel::checkForUpdates,
+            onYouTubeSignIn = { youtubeLoginOpen = true },
+            onYouTubeSignOut = viewModel::signOutYouTube,
+            onClearCache = viewModel::clearCache,
+            onClearLyricsCache = viewModel::clearLyricsMetadataCache,
+            onRemoveAllDownloads = viewModel::removeAllDownloads,
+            onAutoFixTags = viewModel::autoFixTags,
+            onMoveLyricsProvider = viewModel::moveLyricsProvider,
+            onLyricsSettingsChanged = viewModel::onLyricsSettingsChanged,
+            updateChecking = updateState.checking,
+            updateStatus = updateState.status,
+            updateAvailableVersion = updateState.available?.version,
+            youtubeSignedIn = youtubeAuth?.signedIn == true,
+            youtubeName = youtubeAuth?.name.orEmpty(),
+        )
+
         BackHandler(enabled = nowPlayingOpen || nav.stack.isNotEmpty()) { if (nowPlayingOpen) nowPlayingOpen = false else viewModel.back() }
 
+        val effectiveProfile = remember(profile, settings.reduceBlurAndEffects) {
+            if (settings.reduceBlurAndEffects) {
+                profile.copy(blurEnabled = false, ambientMotionEnabled = false)
+            } else {
+                profile
+            }
+        }
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colorScheme.onBackground,
             LocalGlassOptics provides glassOptics,
             LocalDockGlassStyle provides dockGlass,
-            LocalPerformanceProfile provides profile,
+            LocalPerformanceProfile provides effectiveProfile,
             LocalPerformanceMode provides performanceMode,
             LocalPerformanceReason provides performanceReason,
             // Glass content draws edge-to-edge under the dock and reserves this inside its lists.
@@ -375,31 +410,34 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                 label = "screen",
                             ) { state ->
                                 when (state.top) {
-                                    Destination.Settings -> SettingsScreen(
+                                    Destination.Settings -> SettingsHubScreen(
                                         settings = settings,
                                         sources = sources,
-                                        onUpdate = viewModel::updateSettings,
+                                        actions = settingsActions,
+                                        onNavigate = viewModel::push,
+                                        onBack = viewModel::back,
                                         onAddFolder = addMusic,
                                         onRemoveSource = viewModel::removeSource,
-                                        onOpenAbout = { viewModel.push(Destination.About) },
-                                        onOpenEqualizer = { viewModel.push(Destination.Equalizer) },
-                                        onOpenWrapped = { viewModel.push(Destination.Wrapped) },
-                                        onOpenBackup = { viewModel.push(Destination.Backup) },
-                                        onOpenLogs = { viewModel.push(Destination.Logs) },
-                                        onCheckForUpdates = viewModel::checkForUpdates,
-                                        updateChecking = updateState.checking,
-                                        updateStatus = updateState.status,
-                                        updateAvailableVersion = updateState.available?.version,
-                                        onBack = viewModel::back,
-                                        youtubeSignedIn = youtubeAuth?.signedIn == true,
-                                        youtubeName = youtubeAuth?.name.orEmpty(),
-                                        onYouTubeSignIn = { youtubeLoginOpen = true },
-                                        onYouTubeSignOut = viewModel::signOutYouTube,
                                         clerkSignedIn = auth.signedIn,
                                         clerkName = auth.account?.displayName.orEmpty(),
                                         clerkEmail = auth.account?.email.orEmpty(),
                                         accountImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
                                         onClerkSignOut = viewModel::signOutClerk,
+                                    )
+                                    Destination.SettingsPlayback,
+                                    Destination.SettingsMetadataLyrics,
+                                    Destination.SettingsDownloads,
+                                    Destination.SettingsYouTubeMusic,
+                                    Destination.SettingsAppearance,
+                                    Destination.SettingsPerformance,
+                                    Destination.SettingsStorage,
+                                    Destination.SettingsAbout,
+                                    -> SettingsSubScreen(
+                                        destination = state.top!!,
+                                        settings = settings,
+                                        sources = sources,
+                                        actions = settingsActions,
+                                        onBack = viewModel::back,
                                     )
                                     Destination.About -> AboutScreen()
                                     Destination.Equalizer -> EqualizerScreen(settings, viewModel::updateSettings)
@@ -508,26 +546,14 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             onAutoFixTags = viewModel::autoFixTags,
                                         )
                                         Tab.EQUALIZER -> EqualizerScreen(settings, viewModel::updateSettings)
-                                        Tab.SETTINGS -> SettingsScreen(
+                                        Tab.SETTINGS -> SettingsHubScreen(
                                             settings = settings,
                                             sources = sources,
-                                            onUpdate = viewModel::updateSettings,
+                                            actions = settingsActions,
+                                            onNavigate = viewModel::push,
+                                            onBack = viewModel::back,
                                             onAddFolder = addMusic,
                                             onRemoveSource = viewModel::removeSource,
-                                            onOpenAbout = { viewModel.push(Destination.About) },
-                                            onOpenEqualizer = { viewModel.push(Destination.Equalizer) },
-                                            onOpenWrapped = { viewModel.push(Destination.Wrapped) },
-                                            onOpenBackup = { viewModel.push(Destination.Backup) },
-                                            onOpenLogs = { viewModel.push(Destination.Logs) },
-                                            onCheckForUpdates = viewModel::checkForUpdates,
-                                            updateChecking = updateState.checking,
-                                            updateStatus = updateState.status,
-                                            updateAvailableVersion = updateState.available?.version,
-                                            onBack = viewModel::back,
-                                            youtubeSignedIn = youtubeAuth?.signedIn == true,
-                                            youtubeName = youtubeAuth?.name.orEmpty(),
-                                            onYouTubeSignIn = { youtubeLoginOpen = true },
-                                            onYouTubeSignOut = viewModel::signOutYouTube,
                                             clerkSignedIn = auth.signedIn,
                                             clerkName = auth.account?.displayName.orEmpty(),
                                             clerkEmail = auth.account?.email.orEmpty(),

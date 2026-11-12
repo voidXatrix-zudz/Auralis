@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /** YouTube search state. Remote results are session-only; nothing is written to the library. */
 data class YouTubeSearchUiState(
@@ -1304,7 +1305,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val videoId = track.remoteId ?: return
         if (!prefetchedStreamIds.add(trackId)) return
         if (prefetchedStreamIds.size > PREFETCH_MEMORY_LIMIT) prefetchedStreamIds.clear()
-        container.youtube.prefetchStream(videoId)
+        // Data saver stops prefetching on cellular; the stream still resolves just in time.
+        val current = settings.value
+        if (!com.auralis.app.data.network.NetworkQuality.allowPrefetch(container.appContext, current)) return
+        val quality = com.auralis.app.data.network.NetworkQuality.effective(container.appContext, current)
+        container.youtube.prefetchStream(videoId, quality)
     }
 
     fun enqueue(track: Track) = enqueueAll(listOf(track))
@@ -1883,6 +1888,46 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 container.database.providerCacheDao().clearKind("metadata")
             }.onSuccess { _messages.trySend("Lyrics and metadata cache cleared") }
                 .onFailure { report("Couldn't clear the cache", it) }
+        }
+    }
+
+    /** Reorders one lyrics provider by [delta] positions inside the persisted lookup order. */
+    fun moveLyricsProvider(id: String, delta: Int) {
+        val order = settings.value.lyricsProviderOrder.toMutableList()
+        val index = order.indexOf(id)
+        if (index < 0) return
+        val target = (index + delta).coerceIn(0, order.lastIndex)
+        if (target == index) return
+        order.removeAt(index)
+        order.add(target, id)
+        updateSettings { it.copy(lyricsProviderOrder = order) }
+        onLyricsSettingsChanged()
+    }
+
+    /** Storage: deletes the app's cache directory (images, logs, temp) and reports it. */
+    fun clearCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val dir = File(container.appContext.cacheDir, "image_cache"); dir.deleteRecursively()
+                val logs = File(container.appContext.cacheDir, "logs"); logs.deleteRecursively()
+                // Updates are kept so an in-progress install is not disturbed.
+                container.appContext.cacheDir.listFiles()?.forEach { file ->
+                    if (file.name !in setOf("updates")) runCatching { file.deleteRecursively() }
+                }
+            }.onSuccess { _messages.trySend("Cache cleared") }
+                .onFailure { report("Couldn't clear the cache", it) }
+        }
+    }
+
+    /** Storage: removes every downloaded song (file + sidecar + row). */
+    fun removeAllDownloads() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val ids = container.database.downloadDao().allVideoIds()
+                val manager = com.auralis.app.data.download.DownloadManager(container.appContext)
+                ids.forEach { manager.delete(it) }
+            }.onSuccess { _messages.trySend("All downloads removed") }
+                .onFailure { report("Couldn't remove downloads", it) }
         }
     }
 

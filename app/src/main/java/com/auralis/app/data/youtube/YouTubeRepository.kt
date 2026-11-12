@@ -1,6 +1,7 @@
 package com.auralis.app.data.youtube
 
 import android.util.LruCache
+import com.auralis.app.domain.model.StreamQuality
 import com.auralis.app.logging.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -177,11 +178,12 @@ class YouTubeRepository(
     suspend fun resolveBestAudio(videoId: String): ResolvedAudio = resolver.resolveBest(videoId)
 
     /** Blocking bridge for Media3's background data-source resolver (never called on the UI thread). */
-    fun resolveStreamBlocking(videoId: String): String = resolver.resolveBlocking(videoId)
+    fun resolveStreamBlocking(videoId: String, quality: StreamQuality = StreamQuality.BEST): String =
+        resolver.resolveBlocking(videoId, quality)
 
     /** Warm a stream URL ahead of playback so the next transition opens instantly from cache. */
-    fun prefetchStream(videoId: String) {
-        scope.launch { runCatching { resolver.resolve(videoId) } }
+    fun prefetchStream(videoId: String, quality: StreamQuality = StreamQuality.BEST) {
+        scope.launch { runCatching { resolver.resolve(videoId, quality) } }
     }
 
     // ---- Stage 1B: YouTube Music account / home / likes --------------------------------

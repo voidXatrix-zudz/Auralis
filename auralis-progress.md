@@ -10,7 +10,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part F — Download tag embedding
 - [x] Part N — Android 12 NoSuchMethodError crash (desugaring + resolver fallback)
 - [x] Part G — Lyrics + metadata providers
-- [ ] Part H — Settings redesign (both themes)
+- [x] Part H — Settings redesign (both themes)
 - [ ] Part I — Next/previous always plays
 - [ ] Part J — Better artwork + lyrics matching
 - [ ] Part L — Artist photos
@@ -30,3 +30,10 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - `LyricsProvider` chain (LRCLIB, SimpMusic, NetEase, KuGou, BetterLyrics, YouTube Music, lyrics.ovh) with 8 s timeouts, matcher (title ≥0.8, artist overlap, ±3 s), winner + 7-day negative cache in the new `provider_cache` table (DB v9).
   - `MetadataRepository` (MusicBrainz + Cover Art Archive with 1 req/s, Deezer, iTunes, Last.fm via encrypted key).
   - UI: Edit tags "Fetch metadata" candidates (local writes tags; YouTube songs save a Room override applied to Now Playing/notification), lyrics "Try another source" + provider chip, Library "Auto-fix tags" (WorkManager batch, 1 lookup/s, fills empty fields).
+- Part H: a new theme-aware settings module (`ui/settings/`) replaces both old settings bodies.
+  - `SettingsHubScreen` (account card kept at top, quick "Music folders" removed → moved to Storage) + `SettingsSubScreen` routed off 8 new `Destination.Settings*` entries.
+  - Shared composables `SettingsGroupCard/Row/SwitchRow/ValueRow/SectionLabel/HelperText` with Normal (`Surface`) and Glass (`GlassPanel`) branches.
+  - New settings: Wi-Fi/Mobile streaming quality (Low/Normal/High/Best), Data saver, Stream source (Auto/NewPipe/InnerTube), Reduce blur and effects, Download lyrics with songs, Cache size.
+  - Quality flows through `StreamResolver` cache key, `YouTubeRepository.resolveStreamBlocking/prefetchStream`, `NetworkQuality.effective`, `PlaybackService.resolveRemoteUri`; prefetch gated by `NetworkQuality.allowPrefetch`.
+  - `reduceBlurAndEffects` forces `blurEnabled=false`/`ambientMotionEnabled=false` in the root `CompositionLocalProvider`.
+  - Storage: cache-size radio, "Clear cache" w/ live size, "Remove all downloads" (red + confirm); ViewModel `clearCache`/`removeAllDownloads`/`moveLyricsProvider`.

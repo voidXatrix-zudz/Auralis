@@ -1,5 +1,6 @@
 package com.auralis.app.data.youtube
 
+import com.auralis.app.domain.model.StreamQuality
 import com.auralis.app.logging.AppLog
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
@@ -37,6 +38,18 @@ object StreamResolverStatus {
 private class NewPipeUnavailableException(cause: Throwable) : RuntimeException(cause)
 
 /**
+ * Picks the stream closest to a [StreamQuality] target: the highest bitrate at or below the target,
+ * or the highest available when nothing is at or below it ("Best" therefore means highest).
+ */
+internal fun <T> pickByQuality(items: List<T>, quality: StreamQuality, bitrateOf: (T) -> Int): T? {
+    if (items.isEmpty()) return null
+    if (quality == StreamQuality.BEST) return items.maxByOrNull { bitrateOf(it).coerceAtLeast(0) }
+    val sorted = items.sortedBy { bitrateOf(it).coerceAtLeast(0) }
+    val atOrBelow = sorted.filter { bitrateOf(it) in 1..quality.approxKbps }
+    return atOrBelow.maxByOrNull { bitrateOf(it) } ?: sorted.first()
+}
+
+/**
  * Resolves a YouTube video id to a directly playable audio URL.
  *
  * Primary path: NewPipeExtractor. Fallback path: [InnerTubePlayer] (ANDROID_VR/IOS/ANDROID_MUSIC),
@@ -45,7 +58,8 @@ private class NewPipeUnavailableException(cause: Throwable) : RuntimeException(c
  * malformed response or a runtime linkage error can never escape on ExoPlayer's loader/playback
  * threads and kill the app.
  *
- * URLs are signed and expire, so they are cached in memory for [CACHE_TTL_MS].
+ * URLs are signed and expire, so they are cached in memory for [CACHE_TTL_MS]. The cache key
+ * includes the [StreamQuality] so a network change re-resolves at the new quality next song.
  */
 class StreamResolver(
     private val http: OkHttpClient,
@@ -57,12 +71,14 @@ class StreamResolver(
     private val inFlightLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    suspend fun resolve(videoId: String): String = withContext(Dispatchers.IO) {
-        cache[videoId]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let {
-            return@withContext it.url
+    suspend fun resolve(videoId: String, quality: StreamQuality = StreamQuality.BEST): String =
+        withContext(Dispatchers.IO) {
+            val key = cacheKey(videoId, quality)
+            cache[key]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let {
+                return@withContext it.url
+            }
+            inFlightFor(videoId, quality).await()
         }
-        inFlightFor(videoId).await()
-    }
 
     /** Best downloadable audio: Opus when available, otherwise AAC/M4A. */
     suspend fun resolveBest(videoId: String): ResolvedAudio = withContext(Dispatchers.IO) {
@@ -70,28 +86,33 @@ class StreamResolver(
     }
 
     /** Blocking bridge for [androidx.media3.datasource.ResolvingDataSource] on its loader thread. */
-    fun resolveBlocking(videoId: String): String = runBlocking { resolve(videoId) }
+    fun resolveBlocking(videoId: String, quality: StreamQuality = StreamQuality.BEST): String =
+        runBlocking { resolve(videoId, quality) }
 
-    private fun inFlightFor(videoId: String): Deferred<String> = synchronized(inFlightLock) {
-        inFlight[videoId]?.let { return it }
-        val job = scope.async { extractWithRetry(videoId) }
-        inFlight[videoId] = job
+    private fun cacheKey(videoId: String, quality: StreamQuality): String = "$videoId@${quality.name}"
+
+    private fun inFlightFor(videoId: String, quality: StreamQuality): Deferred<String> = synchronized(inFlightLock) {
+        val key = cacheKey(videoId, quality)
+        inFlight[key]?.let { return it }
+        val job = scope.async { extractWithRetry(videoId, quality) }
+        inFlight[key] = job
         job.invokeOnCompletion {
             synchronized(inFlightLock) {
-                if (inFlight[videoId] === job) inFlight.remove(videoId)
+                if (inFlight[key] === job) inFlight.remove(key)
             }
         }
         job
     }
 
-    private suspend fun extractWithRetry(videoId: String): String = withContext(Dispatchers.IO) {
+    private suspend fun extractWithRetry(videoId: String, quality: StreamQuality): String = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
         var lastError: Throwable? = null
+        val key = cacheKey(videoId, quality)
 
         repeat(ATTEMPTS) { attempt ->
             try {
-                val url = extract(videoId)
-                cache[videoId] = CachedStream(url, System.currentTimeMillis() + CACHE_TTL_MS)
+                val url = extract(videoId, quality)
+                cache[key] = CachedStream(url, System.currentTimeMillis() + CACHE_TTL_MS)
                 // Keep the audio host warm: PlaybackService uses the same OkHttp client, so this
                 // 2-byte range request leaves a pooled connection ready for the first real read.
                 scope.launch { warmConnection(url) }
@@ -115,9 +136,9 @@ class StreamResolver(
 
         // Fallback: resolve through InnerTube directly.
         try {
-            val url = innerTubeAudioUrl(videoId)
+            val url = innerTubeAudioUrl(videoId, quality)
             if (url != null) {
-                cache[videoId] = CachedStream(url, System.currentTimeMillis() + CACHE_TTL_MS)
+                cache[key] = CachedStream(url, System.currentTimeMillis() + CACHE_TTL_MS)
                 scope.launch { warmConnection(url) }
                 val elapsed = System.currentTimeMillis() - startedAt
                 StreamResolverStatus.lastResolver = "InnerTube"
@@ -136,7 +157,7 @@ class StreamResolver(
     }
 
     /** NewPipe extraction. Runs off the caller's thread; throws [NewPipeUnavailableException] on linkage errors. */
-    private fun extract(videoId: String): String {
+    private fun extract(videoId: String, quality: StreamQuality): String {
         ensureInitialized()
         val info = try {
             StreamInfo.getInfo(ServiceList.YouTube, "$WATCH_URL$videoId")
@@ -148,19 +169,18 @@ class StreamResolver(
             // Progressive HTTP URLs only; DASH/manifest entries cannot be handed to Media3 as-is.
             it.content.startsWith("http", ignoreCase = true)
         }
-        val best = progressive.minWithOrNull(
-            compareBy<AudioStream> { if (it.averageBitrate > 0) it.averageBitrate else Int.MAX_VALUE },
-        )
-        return best?.content?.takeIf { it.isNotBlank() }
+        val chosen = pickByQuality(progressive, quality) { it.averageBitrate }
+        return chosen?.content?.takeIf { it.isNotBlank() }
             ?: throw IllegalStateException("This song has no audio-only stream available")
     }
 
-    /** InnerTube fallback: prefer Opus, otherwise the lowest-bitrate AAC that resolves. */
-    private suspend fun innerTubeAudioUrl(videoId: String): String? {
+    /** InnerTube fallback: Opus preferred, closest to the requested quality. */
+    private suspend fun innerTubeAudioUrl(videoId: String, quality: StreamQuality): String? {
         val formats = innerTubePlayer.audioFormats(videoId)
         if (formats.isEmpty()) return null
-        val opus = formats.filter { it.isOpus }.minByOrNull { it.bitrate }
-        return (opus ?: formats.minByOrNull { it.bitrate })?.url
+        val opus = formats.filter { it.isOpus }
+        val pool = opus.ifEmpty { formats }
+        return pickByQuality(pool, quality) { it.bitrate }?.url
     }
 
     private fun extractBest(videoId: String): ResolvedAudio {

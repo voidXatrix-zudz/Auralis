@@ -16,6 +16,8 @@ import com.auralis.app.domain.audio.EqLevelsCodec
 import com.auralis.app.domain.audio.EqPresets
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.ReplayGainMode
+import com.auralis.app.domain.model.StreamQuality
+import com.auralis.app.domain.model.StreamSourceMode
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.PerformanceMode
@@ -78,6 +80,13 @@ private object Keys {
     val fetchArtistPhotos = booleanPreferencesKey("fetch_artist_photos")
     val useDeezerForArtistPhotos = booleanPreferencesKey("use_deezer_artist_photos")
     val lastFmApiKey = stringPreferencesKey("lastfm_api_key_enc")
+    val wifiStreamQuality = intPreferencesKey("wifi_stream_quality")
+    val mobileStreamQuality = intPreferencesKey("mobile_stream_quality")
+    val dataSaverEnabled = booleanPreferencesKey("data_saver_enabled")
+    val streamSource = stringPreferencesKey("stream_source")
+    val reduceBlurAndEffects = booleanPreferencesKey("reduce_blur_effects")
+    val downloadLyricsWithSongs = booleanPreferencesKey("download_lyrics_with_songs")
+    val cacheSizeMb = intPreferencesKey("cache_size_mb")
 }
 
 /** Persists [AppSettings] in Preferences DataStore. Unknown or corrupt values fall back to defaults. */
@@ -146,6 +155,13 @@ class SettingsRepository(private val context: Context) {
             fetchArtistPhotos = this[Keys.fetchArtistPhotos] ?: d.fetchArtistPhotos,
             useDeezerForArtistPhotos = this[Keys.useDeezerForArtistPhotos] ?: d.useDeezerForArtistPhotos,
             lastFmApiKey = decrypt(this[Keys.lastFmApiKey]),
+            wifiStreamQuality = StreamQuality.fromIndex(this[Keys.wifiStreamQuality] ?: d.wifiStreamQuality.ordinal),
+            mobileStreamQuality = StreamQuality.fromIndex(this[Keys.mobileStreamQuality] ?: d.mobileStreamQuality.ordinal),
+            dataSaverEnabled = this[Keys.dataSaverEnabled] ?: d.dataSaverEnabled,
+            streamSource = this[Keys.streamSource]?.let { runCatching { StreamSourceMode.valueOf(it) }.getOrNull() } ?: d.streamSource,
+            reduceBlurAndEffects = this[Keys.reduceBlurAndEffects] ?: d.reduceBlurAndEffects,
+            downloadLyricsWithSongs = this[Keys.downloadLyricsWithSongs] ?: d.downloadLyricsWithSongs,
+            cacheSizeMb = this[Keys.cacheSizeMb] ?: d.cacheSizeMb,
         )
     }
 
@@ -201,6 +217,13 @@ class SettingsRepository(private val context: Context) {
         this[Keys.fetchArtistPhotos] = s.fetchArtistPhotos
         this[Keys.useDeezerForArtistPhotos] = s.useDeezerForArtistPhotos
         this[Keys.lastFmApiKey] = encrypt(s.lastFmApiKey)
+        this[Keys.wifiStreamQuality] = s.wifiStreamQuality.ordinal
+        this[Keys.mobileStreamQuality] = s.mobileStreamQuality.ordinal
+        this[Keys.dataSaverEnabled] = s.dataSaverEnabled
+        this[Keys.streamSource] = s.streamSource.name
+        this[Keys.reduceBlurAndEffects] = s.reduceBlurAndEffects
+        this[Keys.downloadLyricsWithSongs] = s.downloadLyricsWithSongs
+        this[Keys.cacheSizeMb] = s.cacheSizeMb
     }
 
     private fun decodeList(raw: String?, default: List<String>): List<String> =

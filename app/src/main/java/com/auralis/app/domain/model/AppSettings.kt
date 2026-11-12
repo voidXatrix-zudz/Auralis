@@ -80,6 +80,20 @@ data class AppSettings(
     val useDeezerForArtistPhotos: Boolean = true,
     /** Last.fm API key for genre tags (empty = provider disabled). Stored encrypted. */
     val lastFmApiKey: String = "",
+    /** Streaming quality on Wi-Fi/Ethernet. Default Best. */
+    val wifiStreamQuality: StreamQuality = StreamQuality.BEST,
+    /** Streaming quality on cellular (and metered Wi-Fi). Default Normal. */
+    val mobileStreamQuality: StreamQuality = StreamQuality.NORMAL,
+    /** Force Low on cellular and stop cellular prefetch. */
+    val dataSaverEnabled: Boolean = false,
+    /** Which resolver stack to use for YouTube streams. Default Auto (fastest). */
+    val streamSource: StreamSourceMode = StreamSourceMode.AUTO,
+    /** Reduce blur and heavy visual effects even on capable devices. */
+    val reduceBlurAndEffects: Boolean = false,
+    /** Download the matching lyrics alongside a downloaded song. */
+    val downloadLyricsWithSongs: Boolean = true,
+    /** Cache size budget in MB (0 = unlimited). Used by the Storage radio list. */
+    val cacheSizeMb: Int = 512,
 ) {
     companion object {
         /** Default lyrics provider lookup order, matching the Settings list. */

@@ -342,6 +342,9 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads WHERE videoId = :videoId")
     suspend fun delete(videoId: String)
+
+    @Query("DELETE FROM downloads")
+    suspend fun clearAll()
 }
 
 /** Spotify (Exportify) CSV imports: run state, per-row matches and their candidates. */

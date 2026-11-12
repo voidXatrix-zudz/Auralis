@@ -5,6 +5,14 @@ enum class Tab { HOME, SEARCH, LIBRARY, EQUALIZER, SETTINGS }
 /** Screens pushed on top of the tab content. More are added as their stages land. */
 sealed interface Destination {
     data object Settings : Destination
+    data object SettingsPlayback : Destination
+    data object SettingsMetadataLyrics : Destination
+    data object SettingsDownloads : Destination
+    data object SettingsYouTubeMusic : Destination
+    data object SettingsAppearance : Destination
+    data object SettingsPerformance : Destination
+    data object SettingsStorage : Destination
+    data object SettingsAbout : Destination
     data object About : Destination
     data object Equalizer : Destination
     data object Wrapped : Destination
