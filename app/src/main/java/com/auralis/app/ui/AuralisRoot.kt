@@ -18,6 +18,7 @@ import com.auralis.app.ui.components.DownloadActions
 import com.auralis.app.ui.components.LocalDownloadActions
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.components.rememberDockScrollState
+import com.auralis.app.ui.components.resolveAccountImageUrl
 
 import android.app.Activity
 import android.os.Build
@@ -377,6 +378,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                         clerkSignedIn = auth.signedIn,
                                         clerkName = auth.account?.displayName.orEmpty(),
                                         clerkEmail = auth.account?.email.orEmpty(),
+                                        accountImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
                                         onClerkSignOut = viewModel::signOutClerk,
                                     )
                                     Destination.About -> AboutScreen()
@@ -440,7 +442,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                         )
                                     }
                                     null -> when (state.tab) {
-                                        Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = mergedFavorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = likeTrack, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, settingsBadge = updateState.available != null, youtubeEnabled = settings.youtubeIntegration, home = home, youtubeAvatarUrl = youtubeAuth?.avatarUrl?.ifBlank { null } ?: auth.account?.imageUrl, youtubeAccountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName, youtubeSignedIn = youtubeAuth?.signedIn == true, onOpenHome = { viewModel.loadHome() }, onRefreshHome = viewModel::refreshYouTubeHome, onSelectHomeCategory = viewModel::selectHomeCategory, onPlayYtTrack = viewModel::playYouTubeTrack, onOpenYtCard = viewModel::openHomeCard, onLikeYtTrack = viewModel::toggleYouTubeLike, onLoadMoreHomeRow = viewModel::loadMoreHomeRow, onCloseHomeCollection = viewModel::closeHomeCollection, onYouTubeSignIn = { youtubeLoginOpen = true }, onYouTubeSignOut = viewModel::signOutYouTube)
+                                        Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = mergedFavorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = likeTrack, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, settingsBadge = updateState.available != null, youtubeEnabled = settings.youtubeIntegration, home = home, youtubeAvatarUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl), youtubeAccountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName, youtubeSignedIn = youtubeAuth?.signedIn == true, onOpenHome = { viewModel.loadHome() }, onRefreshHome = viewModel::refreshYouTubeHome, onSelectHomeCategory = viewModel::selectHomeCategory, onPlayYtTrack = viewModel::playYouTubeTrack, onOpenYtCard = viewModel::openHomeCard, onLikeYtTrack = viewModel::toggleYouTubeLike, onLoadMoreHomeRow = viewModel::loadMoreHomeRow, onCloseHomeCollection = viewModel::closeHomeCollection, onYouTubeSignIn = { youtubeLoginOpen = true }, onYouTubeSignOut = viewModel::signOutYouTube)
                                         Tab.SEARCH -> SearchScreen(
                                             tracks, mergedFavorites, playbackTrackId, { viewModel.play(it, tracks) }, likeTrack, playlists, viewModel::addToPlaylist,
                                             onQueue = viewModel::enqueue, sources = sources, onPlayNext = viewModel::playNext,
@@ -498,6 +500,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             clerkSignedIn = auth.signedIn,
                                             clerkName = auth.account?.displayName.orEmpty(),
                                             clerkEmail = auth.account?.email.orEmpty(),
+                                            accountImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
                                             onClerkSignOut = viewModel::signOutClerk,
                                         )
                                     }

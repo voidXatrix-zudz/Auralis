@@ -84,6 +84,7 @@ import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.PerformanceMode
 import com.auralis.app.domain.model.ReplayGainMode
 import com.auralis.app.domain.model.ThemeStyle
+import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.components.PlayerBackgroundSelector
 import com.auralis.app.ui.performance.LocalPerformanceProfile
@@ -119,6 +120,7 @@ fun GlassSettingsScreen(
     clerkSignedIn: Boolean = false,
     clerkName: String = "",
     clerkEmail: String = "",
+    accountImageUrl: String? = null,
     onClerkSignOut: () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
@@ -186,7 +188,13 @@ fun GlassSettingsScreen(
                 )
             }
             item {
-                ProfileCard(sourceCount = sources.size)
+                ProfileCard(
+                    sourceCount = sources.size,
+                    signedIn = clerkSignedIn,
+                    name = clerkName,
+                    email = clerkEmail,
+                    imageUrl = accountImageUrl,
+                )
             }
 
             if (clerkSignedIn && matches("Account", "profile", "sign out", "clerk", "email")) {
@@ -318,22 +326,37 @@ fun GlassSettingsScreen(
 }
 
 @Composable
-private fun ProfileCard(sourceCount: Int) {
+private fun ProfileCard(
+    sourceCount: Int,
+    signedIn: Boolean,
+    name: String,
+    email: String,
+    imageUrl: String?,
+) {
     GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusCard)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
+            AccountAvatar(
+                imageUrl = if (signedIn) imageUrl else null,
+                contentDescription = if (signedIn) name.ifBlank { "Account" } else null,
+                iconTint = GlassTokens.Silver,
+                modifier = Modifier
                     .size(56.dp)
                     .clip(CircleShape)
                     .background(Brush.linearGradient(listOf(GlassTokens.Violet.copy(alpha = 0.60f), GlassTokens.Ice.copy(alpha = 0.42f))))
                     .border(1.dp, GlassTokens.BorderBrush, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Rounded.Person, null, tint = GlassTokens.Silver, modifier = Modifier.size(28.dp))
-            }
+            )
             Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                Text("Local listener", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                Text("Offline library · $sourceCount folder${if (sourceCount == 1) "" else "s"} linked", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (signedIn) {
+                    Text(name.ifBlank { "Signed in" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        email.ifBlank { "Signed in to AURALIS" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text("Local listener", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Offline library · $sourceCount folder${if (sourceCount == 1) "" else "s"} linked", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
         }

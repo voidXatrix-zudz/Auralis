@@ -64,6 +64,7 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.domain.model.PerformanceMode
+import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.components.ScreenPadding
 import com.auralis.app.ui.components.SectionTitle
 import com.auralis.app.ui.performance.LocalPerformanceProfile
@@ -96,6 +97,7 @@ fun SettingsScreen(
     clerkSignedIn: Boolean = false,
     clerkName: String = "",
     clerkEmail: String = "",
+    accountImageUrl: String? = null,
     onClerkSignOut: () -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
@@ -104,6 +106,7 @@ fun SettingsScreen(
             onOpenWrapped, onOpenBackup, onOpenLogs, modifier, onBack, onCheckForUpdates, updateChecking,
             updateStatus, updateAvailableVersion,
             clerkSignedIn = clerkSignedIn, clerkName = clerkName, clerkEmail = clerkEmail,
+            accountImageUrl = accountImageUrl,
             onClerkSignOut = onClerkSignOut,
         )
         return
@@ -125,15 +128,15 @@ fun SettingsScreen(
             item { SectionTitle("Account") }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
+                    AccountAvatar(
+                        imageUrl = accountImageUrl,
+                        contentDescription = clerkName.ifBlank { "Account" },
+                        iconTint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(Icons.Rounded.Person, null, tint = MaterialTheme.colorScheme.onPrimary)
-                    }
+                    )
                     Column(Modifier.weight(1f).padding(start = 12.dp)) {
                         Text(clerkName.ifBlank { "Signed in" }, style = MaterialTheme.typography.bodyLarge)
                         if (clerkEmail.isNotBlank()) {

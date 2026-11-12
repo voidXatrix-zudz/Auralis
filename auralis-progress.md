@@ -3,7 +3,7 @@
 Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed locally.
 
 - [x] Part A — Download crash hardening
-- [ ] Part B — Profile picture + account card (both themes)
+- [x] Part B — Profile picture + account card (both themes)
 - [ ] Part C — Glass YouTube Home header + branch
 - [ ] Part D — Clerk hand-off to YouTube Music
 - [ ] Part E — Sync to YouTube account (history/likes/playlists)
