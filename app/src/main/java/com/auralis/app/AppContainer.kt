@@ -52,6 +52,10 @@ class AppContainer(context: Context) {
     val metadataRepository: com.auralis.app.data.metadata.MetadataRepository by lazy {
         com.auralis.app.data.metadata.MetadataRepository(youtubeHttp, settings, BuildConfig.VERSION_NAME)
     }
+    /** Real square album art lookup for songs that only have a video thumbnail (Part J). */
+    val artworkResolver: com.auralis.app.data.artwork.ArtworkResolver by lazy {
+        com.auralis.app.data.artwork.ArtworkResolver(database.providerCacheDao(), metadataRepository)
+    }
     val metadata: MetadataEditor by lazy { MetadataEditor(appContext) }
     /** GitHub release checks, APK download and the package-installer hand-off. */
     val updates: UpdateManager by lazy { UpdateManager(appContext, settings) }

@@ -120,7 +120,7 @@ class LyricsRepository(
                 if (!cachedRow.found) {
                     if (System.currentTimeMillis() - cachedRow.updatedAt < NEGATIVE_TTL_MS) continue
                 } else {
-                    val parsed = parseWithProvider(track.id, cachedRow.payload, providerId)
+                    val parsed = parseWithProvider(track, cachedRow.payload, providerId)
                     if (parsed.synced != null) return@withContext parsed
                     if (firstUnsynced == null) firstUnsynced = parsed
                     if (!preferSynced) return@withContext parsed
@@ -143,7 +143,7 @@ class LyricsRepository(
                 continue
             }
             cacheProvider(track.id, providerId, raw, found = true)
-            val parsed = parseWithProvider(track.id, raw, providerId)
+            val parsed = parseWithProvider(track, raw, providerId)
             if (parsed.synced != null) return@withContext parsed
             if (firstUnsynced == null) firstUnsynced = parsed
             if (!preferSynced) return@withContext parsed
@@ -428,11 +428,82 @@ class LyricsRepository(
         return parsed
     }
 
-    /** Parses online lyrics and tags the result with the provider name (for the source chip). */
-    private suspend fun parseWithProvider(trackId: String, raw: String, provider: String): Lyrics {
-        val parsed = parseRaw(trackId, raw, LyricsSource.LRCLIB).copy(provider = provider)
-        parsedCache.put(trackId, parsed)
+    /** Parses online lyrics and tags the result with the provider name and a match confidence. */
+    private suspend fun parseWithProvider(track: Track, raw: String, provider: String): Lyrics {
+        val base = parseRaw(track.id, raw, LyricsSource.LRCLIB).copy(provider = provider)
+        val header = lrcHeaders(raw)
+        val confidence = confidenceFor(track, header)
+        // Slowed/sped-up versions are accepted only when the synced timing still matches the track;
+        // otherwise the page warns that the lyrics may be out of sync.
+        val outOfSync = LyricsMatcher.isSlowedOrSped(track.title) &&
+            base.synced != null && !headerDurationMatches(track, header)
+        val parsed = base.copy(confidence = confidence, outOfSync = outOfSync)
+        parsedCache.put(track.id, parsed)
         return parsed
+    }
+
+    /** Reads `[ti:]`/`[ar:]`/`[al:]`/`[length:]` LRC header fields for match scoring. */
+    private fun lrcHeaders(raw: String): Map<String, String> {
+        val field = Regex("^\\[(ti|ar|al|length):\\s*(.*?)]$", RegexOption.IGNORE_CASE)
+        val result = HashMap<String, String>(4)
+        for (line in raw.lineSequence().take(40)) {
+            val match = field.find(line.trim()) ?: continue
+            result[match.groupValues[1].lowercase()] = match.groupValues[2]
+        }
+        return result
+    }
+
+    private fun confidenceFor(track: Track, header: Map<String, String>): Double {
+        val tagTitle = header["ti"]
+        val tagArtist = header["ar"]
+        if (tagTitle.isNullOrBlank() && tagArtist.isNullOrBlank()) return 0.7
+        val titleScore = if (tagTitle.isNullOrBlank()) 0.6
+        else LyricsMatcher.similarity(track.title, tagTitle)
+        val artistScore = if (tagArtist.isNullOrBlank()) 0.6
+        else LyricsMatcher.similarity(LyricsMatcher.primaryArtist(track.artist), LyricsMatcher.primaryArtist(tagArtist))
+        return (titleScore * 0.65 + artistScore * 0.35).coerceIn(0.0, 1.0)
+    }
+
+    /** True when an LRC `[length:]` header is within tolerance of the track duration. */
+    private fun headerDurationMatches(track: Track, header: Map<String, String>): Boolean {
+        val seconds = parseLength(header["length"]) ?: return false
+        if (track.durationMs <= 0) return false
+        return kotlin.math.abs(track.durationMs - seconds * 1000L) <= DURATION_TOLERANCE_MS
+    }
+
+    private fun parseLength(value: String?): Long? {
+        if (value.isNullOrBlank()) return null
+        val parts = value.trim().split(':')
+        return runCatching {
+            when (parts.size) {
+                1 -> parts[0].toDoubleOrNull()
+                2 -> parts[0].toLong() * 60 + parts[1].toDouble()
+                3 -> parts[0].toLong() * 3600 + parts[1].toLong() * 60 + parts[2].toDouble()
+                else -> null
+            }?.toLong()
+        }.getOrNull()
+    }
+
+    /** Per-song lyrics timing offset in ms (Part J). Stored in the shared provider cache. */
+    suspend fun offsetMs(trackId: String): Int = withContext(Dispatchers.IO) {
+        runCatching { providerCacheDao?.get(KIND_OFFSET, trackId, PROVIDER_OFFSET)?.payload?.toIntOrNull() }.getOrNull() ?: 0
+    }
+
+    suspend fun setOffsetMs(trackId: String, ms: Int) = withContext(Dispatchers.IO) {
+        val safe = ms.coerceIn(-MAX_OFFSET_MS, MAX_OFFSET_MS)
+        runCatching {
+            providerCacheDao?.upsert(
+                ProviderCacheEntity(
+                    kind = KIND_OFFSET,
+                    trackId = trackId,
+                    provider = PROVIDER_OFFSET,
+                    payload = safe.toString(),
+                    found = true,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+        Unit
     }
 
     private fun okayTitle(track: Track): String = metadataTitle(track)
@@ -459,5 +530,13 @@ class LyricsRepository(
         const val MIN_MATCH_SCORE = 50
         /** A "none found" marker is re-queried after this long. */
         const val NEGATIVE_TTL_MS = 7L * 24 * 60 * 60 * 1000
+
+        /** Per-song lyrics timing offset (Part J), stored in the shared provider cache. */
+        const val KIND_OFFSET = "lyrics_offset"
+        const val PROVIDER_OFFSET = "offset"
+        /** The user may nudge timing by at most ±5 s. */
+        const val MAX_OFFSET_MS = 5_000
+        /** How far an LRC `[length:]` header may differ from the track duration and still count as synced. */
+        const val DURATION_TOLERANCE_MS = 5_000L
     }
 }

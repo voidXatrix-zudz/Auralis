@@ -29,6 +29,21 @@ class ArtworkStore(context: Context) {
         return writeThumbnail("media-$albumId", open)
     }
 
+    /**
+     * Saves a sibling `folder.jpg`/`cover.jpg`/`folder.png` as the album art when nothing is embedded
+     * (Part J). The bank is content-hashed like embedded art, so tracks in the same folder share one
+     * cached file and the source image is never written into the audio file.
+     */
+    fun saveFolderArt(open: () -> InputStream?): String? = try {
+        open()?.use { saveEmbedded(it.readAtMost(MAX_EMBEDDED_BYTES)) }
+    } catch (e: Exception) {
+        Log.w(TAG, "Could not read folder artwork", e)
+        null
+    } catch (e: OutOfMemoryError) {
+        Log.w(TAG, "Skipped folder artwork while low on memory", e)
+        null
+    }
+
     fun file(key: String): File? {
         if (!key.matches(Regex("[a-zA-Z0-9_-]{1,80}"))) return null
         return File(directory, "$key.jpg").takeIf(File::isFile)
@@ -95,6 +110,20 @@ class ArtworkStore(context: Context) {
         var sample = 1
         while (maxOf(width / sample, height / sample) > TARGET_SIZE * 2) sample *= 2
         return sample
+    }
+
+    /** Reads at most [limit] bytes so an oversized folder image can never exhaust memory. */
+    private fun InputStream.readAtMost(limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(16 * 1024)
+        var total = 0
+        while (total < limit) {
+            val read = read(chunk, 0, minOf(chunk.size, limit - total))
+            if (read < 0) break
+            out.write(chunk, 0, read)
+            total += read
+        }
+        return out.toByteArray()
     }
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).take(16).joinToString("") { "%02x".format(it) }

@@ -66,8 +66,10 @@ import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
@@ -164,6 +166,8 @@ fun GlassNowPlayingScreen(
     onImportLyrics: (Track, Uri) -> Unit,
     onSaveLyrics: (Track, String) -> Unit,
     onTryAnotherLyricsSource: (Track) -> Unit = {},
+    onAdjustLyricsOffset: (Int) -> Unit = {},
+    onResetLyricsOffset: () -> Unit = {},
     onSeekBy: (Long) -> Unit,
     doubleTapSeekSeconds: Int,
     gesturesEnabled: Boolean,
@@ -324,6 +328,8 @@ fun GlassNowPlayingScreen(
                     onImport = { lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*")) },
                     onSaveText = { text -> onSaveLyrics(track, text) },
                     onTryAnotherSource = { onTryAnotherLyricsSource(track) },
+                    onAdjustOffset = onAdjustLyricsOffset,
+                    onResetOffset = onResetLyricsOffset,
                 )
             }
             else -> {
@@ -478,6 +484,26 @@ fun GlassNowPlayingScreen(
                                                         lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"))
                                                     },
                                                 )
+                                                // Per-song timing nudge (Part J).
+                                                DropdownMenuItem(
+                                                    text = { Text("Lyrics earlier by 0.5s") },
+                                                    leadingIcon = { Icon(Icons.Rounded.Remove, null) },
+                                                    enabled = lyricsOffsetMs > -5_000,
+                                                    onClick = { onAdjustLyricsOffset(-500) },
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Lyrics later by 0.5s") },
+                                                    leadingIcon = { Icon(Icons.Rounded.Add, null) },
+                                                    enabled = lyricsOffsetMs < 5_000,
+                                                    onClick = { onAdjustLyricsOffset(500) },
+                                                )
+                                                if (lyricsOffsetMs != 0) {
+                                                    DropdownMenuItem(
+                                                        text = { Text("Reset timing (now ${if (lyricsOffsetMs > 0) "+" else ""}${lyricsOffsetMs} ms)") },
+                                                        leadingIcon = { Icon(Icons.Rounded.RestartAlt, null) },
+                                                        onClick = { lyricsMenuOpen = false; onResetLyricsOffset() },
+                                                    )
+                                                }
                                                 DropdownMenuItem(
                                                     text = { Text("Full lyrics view") },
                                                     leadingIcon = { Icon(Icons.Rounded.Lyrics, null) },

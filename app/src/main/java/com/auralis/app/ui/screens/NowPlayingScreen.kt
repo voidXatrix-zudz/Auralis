@@ -103,6 +103,8 @@ fun NowPlayingScreen(
     onImportLyrics: (Track, Uri) -> Unit = { _, _ -> },
     onSaveLyrics: (Track, String) -> Unit = { _, _ -> },
     onTryAnotherLyricsSource: (Track) -> Unit = {},
+    onAdjustLyricsOffset: (Int) -> Unit = {},
+    onResetLyricsOffset: () -> Unit = {},
     onSeekBy: (Long) -> Unit = {},
     doubleTapSeekSeconds: Int = 10,
     gesturesEnabled: Boolean = true,
@@ -136,6 +138,7 @@ fun NowPlayingScreen(
             lyricsOffsetMs = lyricsOffsetMs,
             onLoadLyrics = onLoadLyrics, onImportLyrics = onImportLyrics, onSaveLyrics = onSaveLyrics, onSeekBy = onSeekBy,
             onTryAnotherLyricsSource = onTryAnotherLyricsSource,
+            onAdjustLyricsOffset = onAdjustLyricsOffset, onResetLyricsOffset = onResetLyricsOffset,
             doubleTapSeekSeconds = doubleTapSeekSeconds, gesturesEnabled = gesturesEnabled,
             onOpenEqualizer = onOpenEqualizer, onOpenWrapped = onOpenWrapped,
             onOpenBackup = onOpenBackup, onEditMetadata = onEditMetadata, onOpenAudioAnalysis = onOpenAudioAnalysis,
@@ -242,6 +245,8 @@ fun NowPlayingScreen(
             onImport = { lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*")) },
             onSaveText = { text -> onSaveLyrics(track, text) },
             onTryAnotherSource = { onTryAnotherLyricsSource(track) },
+            onAdjustOffset = onAdjustLyricsOffset,
+            onResetOffset = onResetLyricsOffset,
         )
       } else {
         val photoBackground = settings.playerBackground

@@ -26,6 +26,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.FileNotFoundException
+import java.io.InputStream
 
 /** Imports local tracks in bounded batches on Dispatchers.IO. A bad file is isolated from the scan. */
 class MusicScanner(
@@ -76,6 +77,7 @@ class MusicScanner(
         val (selection, args) = mediaStoreSelection(scopes)
         val cursor = context.contentResolver.query(collection, projection, selection, args, "${MediaStore.Audio.Media._ID} ASC") ?: throw IllegalStateException("MediaStore returned no cursor")
         cursor.use { c ->
+            val folderArtCache=HashMap<String,Uri?>()
             val idCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);val nameCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME);val titleCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);val artistCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);val albumCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM);val albumIdCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID);val durationCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);val sizeCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE);val modifiedCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED);val mimeCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE);val pathCol=relativePathColumn(c);val yearCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR);val trackCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
             while(c.moveToNext()) {
                 if (visited++ % BATCH_SIZE == 0) currentCoroutineContext().ensureActive()
@@ -83,7 +85,7 @@ class MusicScanner(
                 val path=if(pathCol>=0)c.getString(pathCol).orEmpty() else ""
                 if (isIncompleteName(name) || isExcludedPath(path) || !isInScopes(path, scopes)) continue
                 val artUri=if(albumId>0) Uri.parse("content://media/external/audio/albumart/$albumId") else null
-                val row=safeMetadata(uri,sourceId,name,path,c.getLong(sizeCol).coerceAtLeast(0),c.getLong(modifiedCol).coerceAtLeast(0)*1000,c.getString(mimeCol) ?: mimeFor(name),c.getString(titleCol),c.getString(artistCol),c.getString(albumCol),c.getLong(durationCol).coerceAtLeast(0),c.getInt(yearCol).takeIf{it>0},c.getInt(trackCol).takeIf{it>0},albumId,artUri)
+                val row=safeMetadata(uri,sourceId,name,path,c.getLong(sizeCol).coerceAtLeast(0),c.getLong(modifiedCol).coerceAtLeast(0)*1000,c.getString(mimeCol) ?: mimeFor(name),c.getString(titleCol),c.getString(artistCol),c.getString(albumCol),c.getLong(durationCol).coerceAtLeast(0),c.getInt(yearCol).takeIf{it>0},c.getInt(trackCol).takeIf{it>0},albumId,artUri,{folderArtStream(path,folderArtCache)})
                 stale.remove(row.id);batch+=row
                 if(batch.size>=BATCH_SIZE){tracks.upsertBatch(batch);indexed+=batch.size;batch=ArrayList(BATCH_SIZE)}
             }
@@ -132,6 +134,7 @@ class MusicScanner(
         var indexed = 0; var visited = 0; var batch = ArrayList<TrackEntity>(BATCH_SIZE)
         val cursor = context.contentResolver.query(collection, projection, selection, args, "${MediaStore.Audio.Media._ID} ASC") ?: throw IllegalStateException("MediaStore returned no cursor")
         cursor.use { c ->
+            val folderArtCache=HashMap<String,Uri?>()
             val idCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);val nameCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME);val titleCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);val artistCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);val albumCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM);val albumIdCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID);val durationCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);val sizeCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE);val modifiedCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED);val mimeCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE);val pathCol=relativePathColumn(c);val yearCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR);val trackCol=c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
             while(c.moveToNext()) {
                 if (visited++ % BATCH_SIZE == 0) currentCoroutineContext().ensureActive()
@@ -144,7 +147,7 @@ class MusicScanner(
                 if (previous != null && previous.lastModified == modified && previous.sizeBytes == size) continue
                 val albumId=c.getLong(albumIdCol)
                 val artUri=if(albumId>0) Uri.parse("content://media/external/audio/albumart/$albumId") else null
-                val row=safeMetadata(uri,sourceId,name,path,size,modified,c.getString(mimeCol) ?: mimeFor(name),c.getString(titleCol),c.getString(artistCol),c.getString(albumCol),c.getLong(durationCol).coerceAtLeast(0),c.getInt(yearCol).takeIf{it>0},c.getInt(trackCol).takeIf{it>0},albumId,artUri)
+                val row=safeMetadata(uri,sourceId,name,path,size,modified,c.getString(mimeCol) ?: mimeFor(name),c.getString(titleCol),c.getString(artistCol),c.getString(albumCol),c.getLong(durationCol).coerceAtLeast(0),c.getInt(yearCol).takeIf{it>0},c.getInt(trackCol).takeIf{it>0},albumId,artUri,{folderArtStream(path,folderArtCache)})
                 batch+=row
                 if(batch.size>=BATCH_SIZE){tracks.upsertBatch(batch);indexed+=batch.size;batch=ArrayList(BATCH_SIZE)}
             }
@@ -169,7 +172,7 @@ class MusicScanner(
                 val trackId=sha(file.uri.toString());seen+=trackId
                 val previous=known[trackId]
                 if(previous!=null&&previous.lastModified==modified&&previous.sizeBytes==size) return@forEach
-                val row=safeMetadata(file.uri,source.id,name,"$prefix$name",size,modified,file.type?:mimeFor(name),null,null,null,0,null,null,0,null)
+                val row=safeMetadata(file.uri,source.id,name,"$prefix$name",size,modified,file.type?:mimeFor(name),null,null,null,0,null,null,0,null,folderArtOpener(files))
                 batch+=row;if(batch.size>=BATCH_SIZE){tracks.upsertBatch(batch);indexed+=batch.size;batch=ArrayList(BATCH_SIZE)}
             }
         }}
@@ -194,18 +197,18 @@ class MusicScanner(
             if(files.any{it.name.equals(".nomedia",true)}) continue
             files.forEach{file->currentCoroutineContext().ensureActive();val name=file.name ?: return@forEach
             if(file.isDirectory){if(includeSubfolders&&!isExcludedPath("$prefix$name/")) stack.add(file to "$prefix$name/")} else if(file.isFile&&!isIncompleteName(name)&&!isExcludedPath("$prefix$name")&&isAudio(name,file.type)){
-                val row=safeMetadata(file.uri,source.id,name,"$prefix$name",file.length().coerceAtLeast(0),file.lastModified().coerceAtLeast(0),file.type?:mimeFor(name),null,null,null,0,null,null,0,null)
+                val row=safeMetadata(file.uri,source.id,name,"$prefix$name",file.length().coerceAtLeast(0),file.lastModified().coerceAtLeast(0),file.type?:mimeFor(name),null,null,null,0,null,null,0,null,folderArtOpener(files))
                 stale.remove(row.id);batch+=row;if(batch.size>=BATCH_SIZE){tracks.upsertBatch(batch);indexed+=batch.size;batch=ArrayList(BATCH_SIZE)}
             }
         }}
         if(batch.isNotEmpty()){tracks.upsertBatch(batch);indexed+=batch.size};deleteStale(stale);return indexed
     }
 
-    private fun safeMetadata(uri:Uri,sourceId:String,name:String,path:String,size:Long,modified:Long,mime:String,titleHint:String?,artistHint:String?,albumHint:String?,durationHint:Long,yearHint:Int?,trackHint:Int?,albumId:Long,artUri:Uri?):TrackEntity = try {
-        metadata(uri,sourceId,name,path,size,modified,mime,titleHint,artistHint,albumHint,durationHint,yearHint,trackHint,albumId,artUri)
-    } catch(e:Exception){Log.w(TAG,"Using file-name metadata fallback for $uri",e);fallback(uri,sourceId,name,path,size,modified,mime,titleHint,artistHint,albumHint,durationHint,yearHint,trackHint,e.message)}
+    private fun safeMetadata(uri:Uri,sourceId:String,name:String,path:String,size:Long,modified:Long,mime:String,titleHint:String?,artistHint:String?,albumHint:String?,durationHint:Long,yearHint:Int?,trackHint:Int?,albumId:Long,artUri:Uri?,folderArt:(()->InputStream?)?=null):TrackEntity = try {
+        metadata(uri,sourceId,name,path,size,modified,mime,titleHint,artistHint,albumHint,durationHint,yearHint,trackHint,albumId,artUri,folderArt)
+    } catch(e:Exception){Log.w(TAG,"Using file-name metadata fallback for $uri",e);fallback(uri,sourceId,name,path,size,modified,mime,titleHint,artistHint,albumHint,durationHint,yearHint,trackHint,e.message,folderArt)}
 
-    private fun metadata(uri:Uri,sourceId:String,name:String,path:String,size:Long,modified:Long,mime:String,titleHint:String?,artistHint:String?,albumHint:String?,durationHint:Long,yearHint:Int?,trackHint:Int?,albumId:Long,artUri:Uri?):TrackEntity {
+    private fun metadata(uri:Uri,sourceId:String,name:String,path:String,size:Long,modified:Long,mime:String,titleHint:String?,artistHint:String?,albumHint:String?,durationHint:Long,yearHint:Int?,trackHint:Int?,albumId:Long,artUri:Uri?,folderArt:(()->InputStream?)?=null):TrackEntity {
         val r=MediaMetadataRetriever();var error:String?=null;val opened=try{r.setDataSource(context,uri);true}catch(e:Exception){error=e.message?:"Metadata unavailable";false}
         fun tag(k:Int):String?=if(opened)try{r.extractMetadata(k)}catch(e:Exception){error=error?:e.message;null}else null
         try {
@@ -214,7 +217,7 @@ class MusicScanner(
             val album=tag(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.takeIf(String::isNotBlank)?:albumHint?.takeIf(String::isNotBlank)?:"Unknown album"
             val duration=tag(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.takeIf{it>0}?:durationHint
             val embedded=if(opened)try{r.embeddedPicture}catch(_:Exception){null}catch(e:OutOfMemoryError){Log.w(TAG,"Skipping oversized embedded artwork for $uri",e);null}else null
-            val artKey=artwork.saveEmbedded(embedded)?:artUri?.let{u->artwork.saveMediaStore(albumId){context.contentResolver.openInputStream(u)}}
+            val artKey=artwork.saveEmbedded(embedded)?:artUri?.let{u->artwork.saveMediaStore(albumId){context.contentResolver.openInputStream(u)}}?:folderArt?.let{artwork.saveFolderArt(it)}
             val artColor=artKey?.let(artwork::colorOf)
             val ext=name.substringAfterLast('.',"").lowercase()
             return TrackEntity(id=sha(uri.toString()),sourceId=sourceId,uri=uri.toString(),relativePath=path,displayName=name,sizeBytes=size,lastModified=modified,ext=ext,mime=mime,title=title,artist=artist,albumArtist=tag(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)?:artist,album=album,genres=tag(MediaMetadataRetriever.METADATA_KEY_GENRE).orEmpty(),trackNumber=tag(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.substringBefore('/')?.toIntOrNull()?:trackHint,discNumber=null,year=tag(MediaMetadataRetriever.METADATA_KEY_DATE)?.take(4)?.toIntOrNull()?:yearHint,composer=tag(MediaMetadataRetriever.METADATA_KEY_COMPOSER),durationMs=duration,codec=ext.uppercase().ifBlank{null},container=mime.substringAfter('/',"audio"),sampleRateHz=tag(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE)?.toIntOrNull(),bitDepth=null,bitrateBps=tag(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull(),channels=null,lossless=ext=="flac"||ext=="wav",replayGainTrackDb=null,replayGainAlbumDb=null,artKey=artKey,artColor=artColor,addedAt=System.currentTimeMillis(),tagError=error)
@@ -225,6 +228,52 @@ class MusicScanner(
         val segments=path.split('/').filter{it.isNotBlank()}
         if (segments.any{it.equals(".nomedia",true)}) return true
         return segments.any{it.lowercase() in EXCLUDED_SEGMENTS}
+    }
+
+    /**
+     * Part J: a sibling `folder.jpg`/`cover.jpg`/`folder.png` in the same SAF directory, opened lazily
+     * only when the track has no embedded or MediaStore artwork. Never written into the audio file.
+     */
+    private fun folderArtOpener(files: Array<DocumentFile>): (() -> InputStream?)? {
+        val doc = FOLDER_ART_NAMES.firstNotNullOfOrNull { wanted ->
+            files.firstOrNull { it.isFile && it.name?.equals(wanted, true) == true }
+        } ?: return null
+        return { runCatching { context.contentResolver.openInputStream(doc.uri) }.getOrNull() }
+    }
+
+    /** Part J: the same folder-art lookup for MediaStore-backed files, cached per scan by directory. */
+    private fun folderArtStream(path: String, cache: MutableMap<String, Uri?>): InputStream? {
+        if (path.isBlank()) return null
+        val dir = if (path.contains('/')) path.substringBeforeLast('/') + "/" else ""
+        val uri = folderArtUri(dir, cache) ?: return null
+        return runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+    }
+
+    private fun folderArtUri(dir: String, cache: MutableMap<String, Uri?>): Uri? = cache.getOrPut(dir) {
+        if (dir.isBlank()) return@getOrPut null
+        runCatching {
+            val files = MediaStore.Files.getContentUri("external")
+            val modern = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+            val dirCol = if (modern) MediaStore.MediaColumns.RELATIVE_PATH else MediaStore.MediaColumns.DATA
+            val dirValue = if (modern) dir else dir.trimEnd('/')
+            val nameCol = MediaStore.MediaColumns.DISPLAY_NAME
+            val selection = "$dirCol = ? AND $nameCol IN (?,?,?)"
+            val args = arrayOf(dirValue, "folder.jpg", "cover.jpg", "folder.png")
+            context.contentResolver.query(files, arrayOf(MediaStore.MediaColumns._ID, nameCol), selection, args, null)?.use { c ->
+                val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                val nameIndex = c.getColumnIndexOrThrow(nameCol)
+                var best: Uri? = null
+                var bestRank = Int.MAX_VALUE
+                while (c.moveToNext()) {
+                    val rank = FOLDER_ART_NAMES.indexOf(c.getString(nameIndex)?.lowercase())
+                    if (rank in 0 until bestRank) {
+                        best = ContentUris.withAppendedId(files, c.getLong(idCol))
+                        bestRank = rank
+                    }
+                }
+                best
+            }
+        }.getOrNull()
     }
 
     /** Maps a SAF tree grant to a MediaStore volume + relative path when the provider allows it. */
@@ -299,7 +348,10 @@ class MusicScanner(
     )
 
     private suspend fun deleteStale(ids:Set<String>){ids.toList().chunked(DELETE_BATCH_SIZE).forEach{if(it.isNotEmpty())tracks.deleteIdsNow(it)}}
-    private fun fallback(uri:Uri,sourceId:String,name:String,path:String,size:Long,modified:Long,mime:String,titleHint:String?,artistHint:String?,albumHint:String?,durationHint:Long,yearHint:Int?,trackHint:Int?,error:String?)=TrackEntity(id=sha(uri.toString()),sourceId=sourceId,uri=uri.toString(),relativePath=path,displayName=name,sizeBytes=size,lastModified=modified,ext=name.substringAfterLast('.',"").lowercase(),mime=mime,title=titleHint?.takeIf(String::isNotBlank)?:name.substringBeforeLast('.'),artist=artistHint?.takeIf(String::isNotBlank)?:"Unknown artist",albumArtist=artistHint?.takeIf(String::isNotBlank)?:"Unknown artist",album=albumHint?.takeIf(String::isNotBlank)?:"Unknown album",genres="",trackNumber=trackHint,discNumber=null,year=yearHint,composer=null,durationMs=durationHint,codec=name.substringAfterLast('.',"").uppercase(),container=mime.substringAfter('/',"audio"),sampleRateHz=null,bitDepth=null,bitrateBps=null,channels=null,lossless=name.endsWith(".flac",true)||name.endsWith(".wav",true),replayGainTrackDb=null,replayGainAlbumDb=null,artKey=null,artColor=null,addedAt=System.currentTimeMillis(),tagError=error)
+    private fun fallback(uri:Uri,sourceId:String,name:String,path:String,size:Long,modified:Long,mime:String,titleHint:String?,artistHint:String?,albumHint:String?,durationHint:Long,yearHint:Int?,trackHint:Int?,error:String?,folderArt:(()->InputStream?)?=null):TrackEntity {
+        val artKey=folderArt?.let{artwork.saveFolderArt(it)}
+        return TrackEntity(id=sha(uri.toString()),sourceId=sourceId,uri=uri.toString(),relativePath=path,displayName=name,sizeBytes=size,lastModified=modified,ext=name.substringAfterLast('.',"").lowercase(),mime=mime,title=titleHint?.takeIf(String::isNotBlank)?:name.substringBeforeLast('.'),artist=artistHint?.takeIf(String::isNotBlank)?:"Unknown artist",albumArtist=artistHint?.takeIf(String::isNotBlank)?:"Unknown artist",album=albumHint?.takeIf(String::isNotBlank)?:"Unknown album",genres="",trackNumber=trackHint,discNumber=null,year=yearHint,composer=null,durationMs=durationHint,codec=name.substringAfterLast('.',"").uppercase(),container=mime.substringAfter('/',"audio"),sampleRateHz=null,bitDepth=null,bitrateBps=null,channels=null,lossless=name.endsWith(".flac",true)||name.endsWith(".wav",true),replayGainTrackDb=null,replayGainAlbumDb=null,artKey=artKey,artColor=artKey?.let(artwork::colorOf),addedAt=System.currentTimeMillis(),tagError=error)
+    }
     private fun isAudio(name:String,mime:String?)=mime?.startsWith("audio/")==true||name.substringAfterLast('.',"").lowercase() in AUDIO_EXTENSIONS
 
     /** `RELATIVE_PATH` only exists from API 29; older devices fall back to the absolute `DATA` path. */
@@ -326,5 +378,5 @@ class MusicScanner(
     private fun mimeFor(name:String)=when(name.substringAfterLast('.',"").lowercase()){ "mp3"->"audio/mpeg";"flac"->"audio/flac";"wav"->"audio/wav";"aac"->"audio/aac";"m4a"->"audio/mp4";"ogg"->"audio/ogg";"opus"->"audio/opus";else->"audio/*" }
     private fun sha(v:String)=java.security.MessageDigest.getInstance("SHA-256").digest(v.toByteArray()).take(16).joinToString(""){"%02x".format(it)}
     data class ScanResult(val tracks:Int,val failedSources:Int)
-    private companion object{const val TAG="AuralisScan";const val BATCH_SIZE=100;const val DELETE_BATCH_SIZE=500;val AUDIO_EXTENSIONS=setOf("mp3","flac","wav","aac","m4a","ogg","opus");val EXCLUDED_SEGMENTS=setOf("ringtones","alarms","notifications","recordings")}
+    private companion object{const val TAG="AuralisScan";const val BATCH_SIZE=100;const val DELETE_BATCH_SIZE=500;val AUDIO_EXTENSIONS=setOf("mp3","flac","wav","aac","m4a","ogg","opus");val EXCLUDED_SEGMENTS=setOf("ringtones","alarms","notifications","recordings");val FOLDER_ART_NAMES=listOf("folder.jpg","cover.jpg","folder.png")}
 }

@@ -20,9 +20,12 @@ typealias SearchResult = YtSong
  * Normalizes YouTube and Google User Content artwork URLs:
  * - Forces https
  * - Handles "//" prefixes
- * - Sets size to =w544-h544 for googleusercontent URLs
+ * - Sets the requested square size for googleusercontent URLs (largest by default, Part J)
+ *
+ * [sizePx] defaults to the largest square YouTube Music serves; pass [ARTWORK_FALLBACK_PX] for the
+ * smaller variant used when the large one fails to load.
  */
-fun normalizeArtworkUrl(raw: String): String {
+fun normalizeArtworkUrl(raw: String, sizePx: Int = ARTWORK_LARGEST_PX): String {
     var url = raw.trim()
     if (url.isBlank()) return url
     if (url.startsWith("//")) {
@@ -34,15 +37,22 @@ fun normalizeArtworkUrl(raw: String): String {
     }
 
     if (url.contains("googleusercontent.com", ignoreCase = true) || url.contains("googleusercontent", ignoreCase = true)) {
+        val requested = "=w$sizePx-h$sizePx"
         url = when {
-            WIDTH_HEIGHT_PATTERN.containsMatchIn(url) -> url.replace(WIDTH_HEIGHT_PATTERN, "=w544-h544")
-            SQUARE_SIZE_PATTERN.containsMatchIn(url) -> url.replace(SQUARE_SIZE_PATTERN, "=w544-h544")
-            PARAM_SIZE_PATTERN.containsMatchIn(url) -> url.replace(PARAM_SIZE_PATTERN, "=w544-h544")
-            else -> "$url=w544-h544"
+            WIDTH_HEIGHT_PATTERN.containsMatchIn(url) -> url.replace(WIDTH_HEIGHT_PATTERN, requested)
+            SQUARE_SIZE_PATTERN.containsMatchIn(url) -> url.replace(SQUARE_SIZE_PATTERN, requested)
+            PARAM_SIZE_PATTERN.containsMatchIn(url) -> url.replace(PARAM_SIZE_PATTERN, requested)
+            else -> "$url$requested"
         }
     }
     return url
 }
+
+/** The largest square album-art size we request from YouTube Music. */
+const val ARTWORK_LARGEST_PX = 1200
+
+/** The smaller square fallback requested when the largest size fails to load. */
+const val ARTWORK_FALLBACK_PX = 544
 
 private val WIDTH_HEIGHT_PATTERN = Regex("=w\\d+-h\\d+.*$")
 private val SQUARE_SIZE_PATTERN = Regex("=s\\d+.*$")
@@ -50,6 +60,10 @@ private val PARAM_SIZE_PATTERN = Regex("=[^/]*$")
 
 fun fallbackThumbnailUrl(videoId: String): String =
     "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+
+/** True when a URL is the low-res video thumbnail (4:3 letterboxed), not real square album art. */
+fun isVideoThumbnailUrl(url: String?): Boolean =
+    url != null && url.contains("ytimg.com", ignoreCase = true)
 
 /**
  * Maps a remote result onto the app's existing [Track] model so every screen (rows, dock, Now

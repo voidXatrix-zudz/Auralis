@@ -12,7 +12,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part G — Lyrics + metadata providers
 - [x] Part H — Settings redesign (both themes)
 - [x] Part I — Next/previous always plays
-- [ ] Part J — Better artwork + lyrics matching
+- [x] Part J — Better artwork + lyrics matching
 - [ ] Part L — Artist photos
 - [ ] Part M — Racing stream resolvers
 
@@ -42,3 +42,8 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - The service's player listener calls `play()` on `STATE_READY` if the latch is still set (lazy stream resolve), clears the latch on `onIsPlayingChanged`/user pause (`TransportPlayer.pause`/`setPlayWhenReady(false)`).
   - `onPlayerError` skips to the next song and keeps playing (max 3 in a row, logged) instead of stopping.
   - `PlaybackController.next()/previous()` also call `play()`; prefetch of the next URL was already in place, and the resolver cache is keyed by video id + quality, so a skip reuses it.
+- Part J: real square artwork + smarter lyrics matching.
+  - Artwork: `normalizeArtworkUrl(raw, sizePx)` requests the largest square from YouTube Music (`w1200-h1200`, `w544-h544` fallback); new `isVideoThumbnailUrl`. New `ArtworkResolver` looks up real covers via the metadata providers (Cover Art Archive/Deezer/iTunes, title ≥0.8 + artist ≥0.5) and caches the winner / 7-day negative in `provider_cache` kind `artwork`. `AppViewModel.ensureArtwork` upgrades a video thumbnail on the current + next song and pushes it to the notification via `PlaybackController.updateArtwork`. `ArtworkImage` now walks an ordered candidate list (primary → w544 → thumbnail) on load error; Coil `ContentScale.Crop` keeps everything square.
+  - Local art: `MusicScanner` now falls back to `folder.jpg` → `cover.jpg` → `folder.png` (SAF `DocumentFile` siblings and a cached MediaStore query) via `ArtworkStore.saveFolderArt`, after embedded then MediaStore album art; nothing is written into the audio file.
+  - Lyrics: `LyricsMatcher` gains `isSlowedOrSped`; `Lyrics` carries `provider`, `confidence` and `outOfSync`; `LyricsRepository.parseWithProvider` scores the LRC header, and slowed/sped-up songs keep synced lyrics only when `[length:]` still matches (else `outOfSync`).
+  - Per-song lyrics offset (−5 s…+5 s) saved in `provider_cache` kind `lyrics_offset`; `AppViewModel.adjustTrackLyricsOffset`/`resetTrackLyricsOffset`; applied on top of the global offset. Lyrics "…" menu gains earlier/later/reset; the source chip shows provider + confidence %, and an "may be out of sync" chip appears when flagged.

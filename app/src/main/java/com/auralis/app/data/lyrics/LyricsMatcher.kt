@@ -21,6 +21,10 @@ object LyricsMatcher {
     private val FEAT = Regex("\\s*[(\\[]?\\s*(?:feat|ft|featuring|with)\\.?\\s+[^)\\]]*[)\\]]?", RegexOption.IGNORE_CASE)
     private val PUNCT = Regex("[^\\p{L}\\p{N}]+")
     private val SPACES = Regex("\\s+")
+    private val SLOWED_SPED = Regex(
+        "slowed|sped\\s*up|speed\\s*up|nightcore",
+        RegexOption.IGNORE_CASE,
+    )
 
     /** Strips edit/format noise from a title while keeping original scripts (Devanagari, Bengali, …). */
     fun cleanTitle(raw: String): String {
@@ -90,6 +94,9 @@ object LyricsMatcher {
         }
         return true
     }
+
+    /** True when a title advertises a slowed/sped-up/nightcore edit (Part J). */
+    fun isSlowedOrSped(raw: String): Boolean = SLOWED_SPED.containsMatchIn(raw)
 
     /** One query form tried in order: most specific first. */
     data class QueryVariant(val title: String, val artist: String)

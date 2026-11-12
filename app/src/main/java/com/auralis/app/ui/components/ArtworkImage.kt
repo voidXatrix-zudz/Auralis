@@ -28,6 +28,7 @@ import coil3.compose.AsyncImage
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.auralis.app.data.artwork.ArtworkResolver
 import com.auralis.app.data.youtube.fallbackThumbnailUrl
 import com.auralis.app.data.youtube.normalizeArtworkUrl
 import com.auralis.app.domain.model.Track
@@ -60,30 +61,33 @@ fun ArtworkImage(
     val context = LocalContext.current
     val profile = LocalPerformanceProfile.current
 
-    val primaryImage: Any? = remember(artUri, track?.artKey, track?.artworkUrl) {
-        artUri?.let { uri ->
+    // Ordered candidates: real art (largest square) → its smaller square variant → the video
+    // thumbnail as an absolute last resort. Coil's Crop keeps everything square.
+    val candidates: List<Any> = remember(artUri, track?.artKey, track?.artworkUrl, track?.remoteId, track?.uri) {
+        val primary = artUri?.let { uri ->
             when (uri) {
                 is Uri -> uri
-                is String -> uri.takeIf { it.isNotBlank() }?.let(::normalizeArtworkUrl)
+                is String -> uri.takeIf { it.isNotBlank() }?.let { normalizeArtworkUrl(it) }
                 else -> uri
             }
         } ?: track?.artworkUrl?.takeIf { it.isNotBlank() }?.let(::localOrRemoteArt)
           ?: track?.artKey?.takeIf { it.matches(ArtworkKeyPattern) }
               ?.let { key -> File(context.filesDir, "artwork/$key.jpg").takeIf(File::isFile) }
+        buildList {
+            if (primary != null) add(primary)
+            if (primary is String) {
+                val smaller = ArtworkResolver.smallerVariant(primary)
+                if (smaller != primary) add(smaller)
+            }
+            val videoId = track?.remoteId
+                ?: track?.uri?.takeIf { it.startsWith("auralis-yt://") }?.removePrefix("auralis-yt://")
+            if (videoId != null) add(fallbackThumbnailUrl(videoId))
+        }.distinct()
     }
 
-    val fallbackImage: Any? = remember(track?.remoteId, track?.uri) {
-        val videoId = track?.remoteId
-            ?: track?.uri?.takeIf { it.startsWith("auralis-yt://") }?.removePrefix("auralis-yt://")
-        videoId?.let(::fallbackThumbnailUrl)
-    }
-
-    var loadFailed by remember(primaryImage) { mutableStateOf(false) }
-    val effectiveImage = if (loadFailed && fallbackImage != null && fallbackImage != primaryImage) {
-        fallbackImage
-    } else {
-        primaryImage
-    }
+    // Advance to the next candidate when one fails to load.
+    var attempt by remember(candidates) { mutableStateOf(0) }
+    val effectiveImage = candidates.getOrNull(attempt)
 
     BoxWithConstraints(
         modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -116,9 +120,9 @@ fun ArtworkImage(
                         },
                         onError = { _, result ->
                             AppLog.e("Artwork", "Image load ERROR for $data: ${result.throwable.message}", result.throwable)
-                            if (!loadFailed && fallbackImage != null && fallbackImage != data) {
-                                AppLog.w("Artwork", "Retrying with fallback art: $fallbackImage")
-                                loadFailed = true
+                            if (attempt < candidates.lastIndex) {
+                                AppLog.w("Artwork", "Trying next art candidate (index ${attempt + 1})")
+                                attempt++
                             }
                         }
                     )

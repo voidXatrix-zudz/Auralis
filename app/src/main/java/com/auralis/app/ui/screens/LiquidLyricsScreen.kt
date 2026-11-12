@@ -49,6 +49,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -57,6 +58,8 @@ import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -162,6 +165,8 @@ fun LiquidLyricsScreen(
     isFavorite: Boolean = false,
     onToggleFavorite: () -> Unit = {},
     onTryAnotherSource: () -> Unit = {},
+    onAdjustOffset: (Int) -> Unit = {},
+    onResetOffset: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onClose)
@@ -380,6 +385,10 @@ fun LiquidLyricsScreen(
                             )
                             Spacer(Modifier.width(6.dp))
                             SourceChip(lyrics)
+                            if (lyrics?.outOfSync == true) {
+                                Spacer(Modifier.width(6.dp))
+                                OutOfSyncChip()
+                            }
                         }
                     }
                     RoundGlassButton(
@@ -401,6 +410,26 @@ fun LiquidLyricsScreen(
                                 leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
                                 onClick = { moreOpen = false; onTryAnotherSource() },
                             )
+                            // Per-song timing nudge (Part J): −5 s…+5 s, saved for this track.
+                            DropdownMenuItem(
+                                text = { Text("Lyrics earlier by 0.5s") },
+                                leadingIcon = { Icon(Icons.Rounded.Remove, null) },
+                                enabled = lyricsOffsetMs > -5_000,
+                                onClick = { onAdjustOffset(-500) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Lyrics later by 0.5s") },
+                                leadingIcon = { Icon(Icons.Rounded.Add, null) },
+                                enabled = lyricsOffsetMs < 5_000,
+                                onClick = { onAdjustOffset(500) },
+                            )
+                            if (lyricsOffsetMs != 0) {
+                                DropdownMenuItem(
+                                    text = { Text("Reset timing (now ${if (lyricsOffsetMs > 0) "+" else ""}${lyricsOffsetMs} ms)") },
+                                    leadingIcon = { Icon(Icons.Rounded.RestartAlt, null) },
+                                    onClick = { moreOpen = false; onResetOffset() },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text("Paste lyrics") },
                                 leadingIcon = { Icon(Icons.Rounded.ContentPaste, null) },
@@ -536,11 +565,18 @@ private fun RoundGlassButton(
 @Composable
 private fun SourceChip(lyrics: Lyrics?) {
     val source = lyrics?.source ?: return
-    val label = when (source) {
+    val base = when (source) {
         LyricsSource.USER -> "Manual"
         LyricsSource.EMBEDDED -> "Embedded"
         LyricsSource.LRC -> "LRC file"
         LyricsSource.LRCLIB -> lyrics.provider ?: "Online"
+    }
+    // Part J: the chip shows the online provider plus a match-confidence percentage when known.
+    val confidence = lyrics.confidence
+    val label = if (source == LyricsSource.LRCLIB && confidence != null) {
+        "$base · ${(confidence * 100).toInt()}%"
+    } else {
+        base
     }
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f),
@@ -552,6 +588,23 @@ private fun SourceChip(lyrics: Lyrics?) {
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Shown for a slowed/sped-up song whose synced lyrics could not be verified against its length. */
+@Composable
+private fun OutOfSyncChip() {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f),
+        shape = CircleShape,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.22f)),
+    ) {
+        Text(
+            "may be out of sync",
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onErrorContainer,
         )
     }
 }

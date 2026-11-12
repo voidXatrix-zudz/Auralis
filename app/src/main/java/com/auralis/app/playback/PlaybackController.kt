@@ -215,6 +215,18 @@ class PlaybackController(private val context: Context) {
         safely { it.seekTo(index, 0L); it.play() }
     }
 
+    /**
+     * Replaces a queued item's artwork once better square art is resolved (Part J), so the
+     * notification and lock screen show the same image as the app.
+     */
+    fun updateArtwork(trackId: String, artworkUrl: String) {
+        val p = player ?: return
+        val index = (0 until p.mediaItemCount).firstOrNull { p.getMediaItemAt(it).mediaId == trackId } ?: return
+        val item = p.getMediaItemAt(index)
+        val metadata = item.mediaMetadata.buildUpon().setArtworkUri(Uri.parse(artworkUrl)).build()
+        safely { it.replaceMediaItem(index, item.buildUpon().setMediaMetadata(metadata).build()) }
+    }
+
     fun clearQueue() {
         pending = null
         pendingAdds.clear()

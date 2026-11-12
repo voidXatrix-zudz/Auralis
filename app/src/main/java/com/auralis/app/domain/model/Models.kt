@@ -38,6 +38,13 @@ data class Lyrics(
     val plain: String?,
     /** Name of the online provider that supplied these lyrics (e.g. "LRCLIB", "NetEase"), or null for local sources. */
     val provider: String? = null,
+    /** How confidently the provider result matches this song (0..1), when known. Part J. */
+    val confidence: Double? = null,
+    /**
+     * True for slowed/sped-up songs whose synced lyrics could not be verified against the track
+     * duration; the lyrics page then warns they "may be out of sync". Part J.
+     */
+    val outOfSync: Boolean = false,
 )
 
 /** A music file in the library. Mirrors the Track model of the AURALIS web reference. */

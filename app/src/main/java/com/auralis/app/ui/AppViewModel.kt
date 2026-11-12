@@ -159,6 +159,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val lyrics = _lyrics.asStateFlow()
     private val _lyricsLoading = MutableStateFlow(false)
     val lyricsLoading = _lyricsLoading.asStateFlow()
+    /** Per-song lyrics timing offset in ms (Part J), applied on top of the global offset. */
+    private val _lyricsOffsetMs = MutableStateFlow(0)
+    val lyricsOffsetMs = _lyricsOffsetMs.asStateFlow()
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = _messages.receiveAsFlow()
     /** In-app updater: GitHub release check, APK download and install state. */
@@ -226,6 +229,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private var radioSeedingTrackId: String? = null
     private var searchPrefetchJob: Job? = null
     private val prefetchedStreamIds = mutableSetOf<String>()
+    /** Track ids we have already tried to upgrade to real album art (Part J). */
+    private val artworkResolved = mutableSetOf<String>()
     private var tapStartedAt = 0L
     private var tapTrackId: String? = null
     private var loadedLyricsTrackId: String? = null
@@ -500,6 +505,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 .collect { (currentId, nextId) ->
                     currentId?.let(::prefetchRemoteStream)
                     nextId?.let(::prefetchRemoteStream)
+                    // Upgrade a YouTube video thumbnail to real square album art (Part J).
+                    currentId?.let(::ensureArtwork)
+                    nextId?.let(::ensureArtwork)
                 }
         }
 
@@ -1299,6 +1307,24 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Upgrades a YouTube video thumbnail to real square album art; updates the UI and notification. */
+    private fun ensureArtwork(trackId: String?) {
+        if (trackId == null) return
+        val track = _remoteTracks.value[trackId] ?: return
+        // Real art already present (square googleusercontent or a metadata cover): nothing to do.
+        if (!track.artworkUrl.isNullOrBlank() && !com.auralis.app.data.youtube.isVideoThumbnailUrl(track.artworkUrl)) return
+        if (!artworkResolved.add(trackId)) return
+        if (artworkResolved.size > ARTWORK_MEMORY_LIMIT) artworkResolved.clear()
+        viewModelScope.launch {
+            val url = runCatching { container.artworkResolver.resolve(track) }.getOrNull() ?: return@launch
+            _remoteTracks.update { known ->
+                val current = known[trackId] ?: return@update known
+                known + (trackId to current.copy(artworkUrl = url))
+            }
+            container.playback.updateArtwork(trackId, url)
+        }
+    }
+
     private fun prefetchRemoteStream(trackId: String?) {
         if (trackId == null) return
         val track = _remoteTracks.value[trackId] ?: return
@@ -1730,6 +1756,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         // A new song cancels the previous lookup; slow late responses are also dropped by the
         // track-id check below, so lyrics can never land on the wrong song.
         lyricsLoadJob?.cancel()
+        // Reset immediately so a previous song's offset never leaks on while the saved value loads.
+        _lyricsOffsetMs.value = 0
+        viewModelScope.launch {
+            val saved = runCatching { container.lyrics.offsetMs(track.id) }.getOrDefault(0)
+            if (loadedLyricsTrackId == track.id) _lyricsOffsetMs.value = saved
+        }
         // Prefetched or previously visited track: show the fully parsed result in one frame.
         container.lyrics.cached(track.id)?.let { cached ->
             loadedLyricsTrackId = track.id
@@ -1754,6 +1786,25 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 _lyrics.value = result
                 _lyricsLoading.value = false
             }
+        }
+    }
+
+    /** Nudges this song's lyrics timing by [deltaMs] (clamped to ±5 s) and persists it. Part J. */
+    fun adjustTrackLyricsOffset(track: Track, deltaMs: Int) {
+        val next = (_lyricsOffsetMs.value + deltaMs).coerceIn(-MAX_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
+        _lyricsOffsetMs.value = next
+        viewModelScope.launch {
+            runCatching { container.lyrics.setOffsetMs(track.id, next) }
+                .onFailure { report("Couldn't save the lyrics offset", it) }
+        }
+    }
+
+    /** Clears this song's lyrics timing offset back to zero. Part J. */
+    fun resetTrackLyricsOffset(track: Track) {
+        _lyricsOffsetMs.value = 0
+        viewModelScope.launch {
+            runCatching { container.lyrics.setOffsetMs(track.id, 0) }
+                .onFailure { report("Couldn't reset the lyrics offset", it) }
         }
     }
 
@@ -2031,6 +2082,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         const val MIN_RADIO_AHEAD = 3
         const val SEARCH_PREFETCH_COUNT = 3
         const val PREFETCH_MEMORY_LIMIT = 200
+        const val ARTWORK_MEMORY_LIMIT = 200
+        /** Per-song lyrics timing offset ceiling (Part J). */
+        const val MAX_LYRICS_OFFSET_MS = 5_000
         const val HISTORY_MIN_MS = 30_000L
         /** YouTube Music charts landing page (public browse id); powers Trending and Popular Artists. */
         const val CHARTS_BROWSE_ID = "FEmusic_charts"
