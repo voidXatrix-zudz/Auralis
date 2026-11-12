@@ -1796,8 +1796,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         _lyricsLoading.value = true
         lyricsLoadJob = viewModelScope.launch {
             val result = try {
-                // Cached lyrics first, then embedded/sidecar, then a live LRCLIB lookup.
-                container.lyrics.load(track)
+                // Cached lyrics first, then embedded/sidecar, then a live online lookup. Providers
+                // are queried in parallel (Part Q); each intermediate winner is shown as it arrives.
+                container.lyrics.load(track, onUpdate = { partial ->
+                    if (loadedLyricsTrackId == track.id) {
+                        _lyrics.value = partial
+                        _lyricsLoading.value = false
+                    }
+                })
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (error: Throwable) {
@@ -1879,19 +1885,45 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun tryAnotherLyricsSource(track: Track) {
         viewModelScope.launch {
             _lyricsLoading.value = true
-            val currentProvider = _lyrics.value?.provider
-            val result = runCatching { container.lyrics.tryAnother(track, currentProvider) }
-                .onFailure { report("Couldn't fetch lyrics from another source", it) }
-                .getOrNull()
-            if (loadedLyricsTrackId != track.id) return@launch
-            if (result != null) {
-                _lyrics.value = result
-                val label = result.provider ?: "another source"
-                _messages.trySend("Lyrics from $label")
-            } else {
-                _messages.trySend("No other provider has lyrics for this song")
+            try {
+                val currentProvider = _lyrics.value?.provider
+                val result = runCatching { container.lyrics.tryAnother(track, currentProvider) }
+                    .onFailure { report("Couldn't fetch lyrics from another source", it) }
+                    .getOrNull()
+                if (loadedLyricsTrackId != track.id) return@launch
+                if (result != null) {
+                    _lyrics.value = result
+                    val label = result.provider ?: "another source"
+                    _messages.trySend("Lyrics from $label")
+                } else {
+                    _messages.trySend("No other provider has lyrics for this song")
+                }
+            } finally {
+                if (loadedLyricsTrackId == track.id) _lyricsLoading.value = false
             }
-            _lyricsLoading.value = false
+        }
+    }
+
+    /** Retry button: forces a fresh lookup (forgetting cached provider answers) for this song. */
+    fun retryLyrics(track: Track) {
+        lyricsLoadJob?.cancel()
+        _lyricsOffsetMs.value = 0
+        loadedLyricsTrackId = track.id
+        _lyrics.value = null
+        _lyricsLoading.value = true
+        lyricsLoadJob = viewModelScope.launch {
+            val result = try {
+                container.lyrics.retry(track)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                report("Couldn't load lyrics", error)
+                null
+            }
+            if (loadedLyricsTrackId == track.id) {
+                _lyrics.value = result
+                _lyricsLoading.value = false
+            }
         }
     }
 

@@ -17,9 +17,15 @@ import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.Track
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -70,6 +76,7 @@ class LyricsRepository(
         allowNetwork: Boolean = true,
         skipProviders: Set<String> = emptySet(),
         ignoreMemoryCache: Boolean = false,
+        onUpdate: (suspend (Lyrics) -> Unit)? = null,
     ): Lyrics? = withContext(Dispatchers.IO) {
         if (!ignoreMemoryCache) parsedCache.get(track.id)?.let { return@withContext it }
         val stored = runCatching { lyricsDao.forTrack(track.id) }.getOrDefault(emptyList())
@@ -104,51 +111,18 @@ class LyricsRepository(
             return@withContext parseRaw(track.id, discovered.first, LyricsSource.LRC)
         }
 
-        // 4. Online providers, in the user's enabled order (LRCLIB first by default). A positive
-        //    cache row short-circuits; a fresh negative row means "checked, nothing found here" and
-        //    the provider is skipped until it expires. A failed provider is never negative-cached.
+        // 4. Online providers, queried in parallel (Part Q): every enabled provider starts at once,
+        //    each with a 6 s budget and an overall 6 s cap. The first acceptable synced result is
+        //    shown immediately and silently upgraded within a 2 s window; otherwise the best
+        //    unsynced result wins. A positive cache row is reused, a fresh negative row skips a
+        //    provider, and a failing provider is only logged (never negative-cached).
         if (!allowNetwork) return@withContext null
         val current = runCatching { settings?.settings?.first() }.getOrNull()
         val order = (current?.lyricsProviderOrder ?: com.auralis.app.domain.model.AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER)
             .filter { it in (current?.lyricsProvidersEnabled ?: com.auralis.app.domain.model.AppSettings().lyricsProvidersEnabled) }
             .filterNot { it in skipProviders }
         val preferSynced = current?.preferSyncedLyrics ?: true
-        var firstUnsynced: Lyrics? = null
-        for (providerId in order) {
-            val cachedRow = runCatching { providerCacheDao?.get(KIND_LYRICS, track.id, providerId) }.getOrNull()
-            if (cachedRow != null) {
-                if (!cachedRow.found) {
-                    if (System.currentTimeMillis() - cachedRow.updatedAt < NEGATIVE_TTL_MS) continue
-                } else {
-                    val parsed = parseWithProvider(track, cachedRow.payload, providerId)
-                    if (parsed.synced != null) return@withContext parsed
-                    if (firstUnsynced == null) firstUnsynced = parsed
-                    if (!preferSynced) return@withContext parsed
-                    continue
-                }
-            }
-            val provider = providers[providerId] ?: continue
-            val result = runCatching {
-                provider.search(
-                    title = okayTitle(track),
-                    artist = track.artist,
-                    album = track.album.takeIf { it.isNotBlank() },
-                    durationMs = track.durationMs.takeIf { it > 0 },
-                    videoId = if (track.isRemote) (track.remoteId ?: track.id.removePrefix("yt:")) else null,
-                )
-            }.onFailure { Log.w(TAG, "Lyrics provider $providerId failed", it) }.getOrNull() ?: continue
-            val raw = result.raw
-            if (raw == null) {
-                cacheProvider(track.id, providerId, "", found = false)
-                continue
-            }
-            cacheProvider(track.id, providerId, raw, found = true)
-            val parsed = parseWithProvider(track, raw, providerId)
-            if (parsed.synced != null) return@withContext parsed
-            if (firstUnsynced == null) firstUnsynced = parsed
-            if (!preferSynced) return@withContext parsed
-        }
-        return@withContext firstUnsynced
+        return@withContext loadOnlineParallel(track, order, preferSynced, onUpdate)
     }
 
     /**
@@ -166,6 +140,145 @@ class LyricsRepository(
         )
         if (result != null) parsedCache.put(track.id, result)
         result
+    }
+
+    /**
+     * Explicit "Retry": forgets every cached provider answer for this track (positive and negative)
+     * and looks the song up again. Used by the empty lyrics state.
+     */
+    suspend fun retry(track: Track): Lyrics? = withContext(Dispatchers.IO) {
+        runCatching { providerCacheDao?.deleteKey(KIND_LYRICS, track.id) }
+        parsedCache.remove(track.id)
+        load(track, ignoreMemoryCache = true)
+    }
+
+    /** The query fields shared by every provider lookup. */
+    private data class LyricsQuery(
+        val title: String,
+        val artist: String,
+        val album: String?,
+        val durationMs: Long?,
+        val videoId: String?,
+    )
+
+    /** A parsed result with its ranking score. */
+    private data class ScoredLyrics(val lyrics: Lyrics, val score: Double)
+
+    /** A provider outcome on the results channel ([lyrics] is null when it found or returned nothing). */
+    private class LyricsHit(val lyrics: Lyrics?)
+
+    /**
+     * Queries every enabled [order] provider in parallel and picks the best answer (Part Q).
+     *
+     * One coroutine per provider starts at once (never for a disabled one); each has a
+     * [PROVIDER_TIMEOUT_MS] budget and the whole lookup is capped at [OVERALL_BUDGET_MS]. Results are
+     * scored by confidence (title similarity, artist overlap, duration agreement) plus a strong
+     * synced-over-plain bonus. The first synced result is emitted through [onUpdate] immediately and
+     * silently upgraded if a higher-scored one arrives within [UPGRADE_WINDOW_MS]; when nothing is
+     * synced the best unsynced result wins. Cached positives are reused and fresh negatives skip a
+     * provider; provider failures are only logged.
+     */
+    private suspend fun loadOnlineParallel(
+        track: Track,
+        order: List<String>,
+        preferSynced: Boolean,
+        onUpdate: (suspend (Lyrics) -> Unit)?,
+    ): Lyrics? {
+        if (order.isEmpty()) return null
+        val query = LyricsQuery(
+            title = okayTitle(track),
+            artist = track.artist,
+            album = track.album.takeIf { it.isNotBlank() },
+            durationMs = track.durationMs.takeIf { it > 0 },
+            videoId = if (track.isRemote) (track.remoteId ?: track.id.removePrefix("yt:")) else null,
+        )
+        return coroutineScope {
+            val hits = Channel<LyricsHit>(Channel.UNLIMITED)
+            val jobs = order.map { providerId ->
+                launch { hits.send(LyricsHit(searchProvider(track, providerId, query))) }
+            }
+            launch {
+                jobs.joinAll()
+                hits.close()
+            }
+
+            var best: ScoredLyrics? = null
+            var bestSynced: ScoredLyrics? = null
+            var shown: ScoredLyrics? = null
+            var windowStartedAt = 0L
+            val deadline = System.currentTimeMillis() + OVERALL_BUDGET_MS
+            while (true) {
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0L) break
+                val hit = withTimeoutOrNull(remaining) { hits.receiveCatching().getOrNull() } ?: break
+                val lyrics = hit.lyrics ?: continue
+                val scored = ScoredLyrics(lyrics, scoreLyrics(lyrics))
+                if (best == null || scored.score > best!!.score) best = scored
+
+                val synced = lyrics.synced != null
+                if (synced) {
+                    if (bestSynced == null || scored.score > bestSynced!!.score) bestSynced = scored
+                }
+                val withinUpgrade = windowStartedAt > 0L &&
+                    System.currentTimeMillis() - windowStartedAt <= UPGRADE_WINDOW_MS
+                val emit = when {
+                    shown == null -> synced || !preferSynced
+                    synced && withinUpgrade -> scored.score > (shown?.score ?: 0.0)
+                    !synced && !preferSynced && withinUpgrade -> scored.score > (shown?.score ?: 0.0)
+                    else -> false
+                }
+                if (emit) {
+                    onUpdate?.invoke(lyrics)
+                    shown = scored
+                    if (windowStartedAt == 0L) windowStartedAt = System.currentTimeMillis()
+                }
+            }
+
+            val winner = (if (preferSynced) bestSynced ?: best else best)?.lyrics
+            if (winner != null && winner !== shown?.lyrics) onUpdate?.invoke(winner)
+            winner
+        }
+    }
+
+    /** Resolves one provider: cached row first, else a bounded search; both cache their outcome. */
+    private suspend fun searchProvider(track: Track, providerId: String, query: LyricsQuery): Lyrics? {
+        val cachedRow = runCatching { providerCacheDao?.get(KIND_LYRICS, track.id, providerId) }.getOrNull()
+        if (cachedRow != null) {
+            if (!cachedRow.found) {
+                if (System.currentTimeMillis() - cachedRow.updatedAt < NEGATIVE_TTL_MS) return null
+            } else {
+                return parseWithProvider(track, cachedRow.payload, providerId)
+            }
+        }
+        val provider = providers[providerId] ?: return null
+        val result = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
+            runProvider { provider.search(query.title, query.artist, query.album, query.durationMs, query.videoId) }
+        } ?: return null
+        val raw = result.raw
+        if (raw == null) {
+            cacheProvider(track.id, providerId, "", found = false)
+            return null
+        }
+        cacheProvider(track.id, providerId, raw, found = true)
+        return parseWithProvider(track, raw, providerId)
+    }
+
+    /** Runs a provider call, logging (never surfacing) failures but honouring cancellation. */
+    private suspend fun <T> runProvider(block: suspend () -> T): T? = try {
+        block()
+    } catch (cancel: CancellationException) {
+        throw cancel
+    } catch (error: Throwable) {
+        Log.w(TAG, "Lyrics provider failed", error)
+        null
+    }
+
+    /** Confidence plus a strong synced-over-plain bonus, minus an out-of-sync penalty. */
+    private fun scoreLyrics(lyrics: Lyrics): Double {
+        val confidence = lyrics.confidence ?: 0.6
+        val syncedBonus = if (lyrics.synced != null) 1.0 else 0.0
+        val outOfSyncPenalty = if (lyrics.outOfSync) 0.25 else 0.0
+        return confidence + syncedBonus - outOfSyncPenalty
     }
 
     /** Deletes every cached provider winner and "none found" marker (Settings: clear cache). */
@@ -456,12 +569,28 @@ class LyricsRepository(
     private fun confidenceFor(track: Track, header: Map<String, String>): Double {
         val tagTitle = header["ti"]
         val tagArtist = header["ar"]
-        if (tagTitle.isNullOrBlank() && tagArtist.isNullOrBlank()) return 0.7
+        val duration = durationAgreement(track, header)
+        if (tagTitle.isNullOrBlank() && tagArtist.isNullOrBlank()) {
+            // No header metadata: lean on the track/lyrics length agreement (0.6 when unknown).
+            return (0.55 + duration * 0.15).coerceIn(0.0, 1.0)
+        }
         val titleScore = if (tagTitle.isNullOrBlank()) 0.6
         else LyricsMatcher.similarity(track.title, tagTitle)
         val artistScore = if (tagArtist.isNullOrBlank()) 0.6
         else LyricsMatcher.similarity(LyricsMatcher.primaryArtist(track.artist), LyricsMatcher.primaryArtist(tagArtist))
-        return (titleScore * 0.65 + artistScore * 0.35).coerceIn(0.0, 1.0)
+        return (titleScore * 0.5 + artistScore * 0.25 + duration * 0.25).coerceIn(0.0, 1.0)
+    }
+
+    /** 0..1 agreement between the track duration and an LRC `[length:]` header (0.6 when unknown). */
+    private fun durationAgreement(track: Track, header: Map<String, String>): Double {
+        val seconds = parseLength(header["length"]) ?: return 0.6
+        if (track.durationMs <= 0) return 0.6
+        val diff = kotlin.math.abs(track.durationMs - seconds * 1000L)
+        return when {
+            diff <= 3_000L -> 1.0
+            diff <= 10_000L -> 0.5
+            else -> 0.2
+        }
     }
 
     /** True when an LRC `[length:]` header is within tolerance of the track duration. */
@@ -530,6 +659,12 @@ class LyricsRepository(
         const val MIN_MATCH_SCORE = 50
         /** A "none found" marker is re-queried after this long. */
         const val NEGATIVE_TTL_MS = 7L * 24 * 60 * 60 * 1000
+        /** Per-provider lookup budget (Part Q). */
+        const val PROVIDER_TIMEOUT_MS = 6_000L
+        /** Budget for the whole parallel lookup. */
+        const val OVERALL_BUDGET_MS = 6_000L
+        /** How long a shown synced result may be silently upgraded by a better one. */
+        const val UPGRADE_WINDOW_MS = 2_000L
 
         /** Per-song lyrics timing offset (Part J), stored in the shared provider cache. */
         const val KIND_OFFSET = "lyrics_offset"

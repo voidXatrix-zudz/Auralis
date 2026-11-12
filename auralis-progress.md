@@ -16,6 +16,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part L — Artist photos
 - [x] Part M — Racing stream resolvers
 - [x] Part P — Fast chunked downloads
+- [x] Part Q — Lyrics page fix + all providers
 
 ## Notes
 - Part A: single allowed `adb logcat -d AndroidRuntime:E *:S` returned nothing (no device attached); cause found by code reading.
@@ -57,3 +58,11 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - `StreamResolver` now races `[NewPipe, InnerTube]`: the currently-preferred source (lower recent avg latency + higher success rate, rolling and persisted in DataStore via `ResolverStat`; NewPipe by default) starts first, the other begins if the first fails or after a 2 s hedge, first success wins and the loser is cancelled; an 8 s overall budget then logs and lets playback skip. Every win logs `resolved via <name> in <ms>`; the winner is cached (key still includes quality) so next-song prefetch uses the same race.
   - The Part H "Stream source" setting pins Auto (race) / NewPipe only / InnerTube only via `StreamSourceMode`; `InnerTubePlayer` is unchanged.
   - `PlaybackService` fallback: on an ExoPlayer 403/410/source error it re-resolves the same song with the other resolver (`resolveBlocking(..., force, bypassCache=true)`), seeks back to the same position and resumes, honouring a user pause — up to 2 retries per song, then the existing skip-to-next logic. The retry budget resets on every media-item transition.
+- Part P: fast chunked downloads.
+  - New `ChunkedDownloader`: probes the URL for byte-range support (`Range: bytes=0-0`, or the `&range=` parameter when the header is ignored), reads the size from `Content-Range`/`clen`, then fetches ~1 MB pieces with up to 4 in parallel over the shared OkHttp client and writes each at its offset with `FileChannel`. Falls back to one streaming request when ranges are unsupported.
+  - A failed piece retries up to 3 times; a 403/410 re-resolves through the racing resolver and continues with the missing pieces; a `.<videoId>.part` file plus a tiny `.state` sidecar resume a cancelled/failed download. Progress is throttled to ~5 Hz and feeds the existing notification + Cancel.
+  - `ResolvedAudio` gained `candidates` (all same-quality streams); `extractBest` orders them least-throttled first (`ratebypass=yes`, then non-web InnerTube URLs). The worker logs `download <title>: <MB> in <sec> s (<MB/s>)` to the Logs screen.
+- Part Q: lyrics page fix + all providers.
+  - `LyricsRepository.load` now queries every enabled provider in parallel (`loadOnlineParallel`, one coroutine each, 6 s per provider / 6 s overall); each result is scored (confidence = title similarity + artist overlap + duration agreement, plus a strong synced-over-plain bonus, minus an out-of-sync penalty). The first synced result is shown at once and silently upgraded if a better one lands within 2 s; otherwise the best unsynced wins. Disabled providers are never called, failures only log, positives and 7-day negatives are cached in Room as before; new `retry(track)` forgets cached answers.
+  - The lyrics page always shows a state: the loading indicator, the lyrics, or a "No lyrics found" card with "Try another source" and "Retry" (both LiquidLyricsScreen and the glass inline layer). `AppViewModel` streams the intermediate winners via `load(..., onUpdate)`, resets loading in a `finally`, and adds `retryLyrics`.
+  - Readability: lyric lines no longer blur into unreadability (dim floors raised, blur cut), and auto-scroll now centres the active line (top/bottom padding 50 %).

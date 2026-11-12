@@ -327,6 +327,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onImportLyrics = viewModel::importLyrics,
                     onSaveLyrics = viewModel::saveLyrics,
                     onTryAnotherLyricsSource = viewModel::tryAnotherLyricsSource,
+                    onRetryLyrics = viewModel::retryLyrics,
                     onAdjustLyricsOffset = { delta -> currentTrack?.let { viewModel.adjustTrackLyricsOffset(it, delta) } },
                     onResetLyricsOffset = { currentTrack?.let { viewModel.resetTrackLyricsOffset(it) } },
                     onBack = { nowPlayingOpen = false },

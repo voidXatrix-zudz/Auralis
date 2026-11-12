@@ -167,6 +167,7 @@ fun GlassNowPlayingScreen(
     onImportLyrics: (Track, Uri) -> Unit,
     onSaveLyrics: (Track, String) -> Unit,
     onTryAnotherLyricsSource: (Track) -> Unit = {},
+    onRetryLyrics: (Track) -> Unit = {},
     onAdjustLyricsOffset: (Int) -> Unit = {},
     onResetLyricsOffset: () -> Unit = {},
     onSeekBy: (Long) -> Unit,
@@ -329,6 +330,7 @@ fun GlassNowPlayingScreen(
                     onImport = { lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*")) },
                     onSaveText = { text -> onSaveLyrics(track, text) },
                     onTryAnotherSource = { onTryAnotherLyricsSource(track) },
+                    onRetry = { onRetryLyrics(track) },
                     onAdjustOffset = onAdjustLyricsOffset,
                     onResetOffset = onResetLyricsOffset,
                 )
@@ -542,6 +544,8 @@ fun GlassNowPlayingScreen(
                             autoScroll = lyricsAutoScroll,
                             interactive = lyricsOpen,
                             onSeek = onSeek,
+                            onTryAnother = { onTryAnotherLyricsSource(track) },
+                            onRetry = { onRetryLyrics(track) },
                             progress = { lyricsProgress.value },
                             topInset = lyricsTop,
                             modifier = Modifier.matchParentSize(),
@@ -771,6 +775,8 @@ private fun InlineLyricsOverlay(
     autoScroll: Boolean,
     interactive: Boolean,
     onSeek: (Long) -> Unit,
+    onTryAnother: () -> Unit,
+    onRetry: () -> Unit,
     progress: () -> Float,
     topInset: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
@@ -843,6 +849,8 @@ private fun InlineLyricsOverlay(
                     autoScroll = autoScroll,
                     interactive = interactive,
                     onSeek = onSeek,
+                    onTryAnother = onTryAnother,
+                    onRetry = onRetry,
                     modeProgress = progress,
                     blurAvailable = Build.VERSION.SDK_INT >= 31,
                 )
@@ -863,6 +871,8 @@ private fun InlineLyricsBody(
     autoScroll: Boolean,
     interactive: Boolean,
     onSeek: (Long) -> Unit,
+    onTryAnother: () -> Unit,
+    onRetry: () -> Unit,
     modeProgress: () -> Float,
     blurAvailable: Boolean,
 ) {
@@ -892,7 +902,7 @@ private fun InlineLyricsBody(
             modeProgress = modeProgress,
             blurAvailable = blurAvailable,
         )
-        else -> CenteredLyricMessage("No lyrics found", lyricSizeSp)
+        else -> EmptyLyricActions(onTryAnother = onTryAnother, onRetry = onRetry, sizeSp = lyricSizeSp)
     }
 }
 
@@ -964,7 +974,7 @@ private fun SyncedLyricList(
         if (!interactive || !autoScroll || manualPause || active < 0) return@LaunchedEffect
         val viewport = listState.layoutInfo.viewportSize.height
         if (viewport <= 0) return@LaunchedEffect
-        val target = viewport * 0.30f
+        val target = viewport * 0.50f
         val safeActive = active.coerceIn(0, lines.lastIndex)
         val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == safeActive }
         if (info != null) {
@@ -1047,6 +1057,37 @@ private fun CenteredLyricMessage(text: String, sizeSp: Int) {
     }
 }
 
+/** Empty lyrics state with the two recovery actions required by the fix (Part Q). */
+@Composable
+private fun EmptyLyricActions(onTryAnother: () -> Unit, onRetry: () -> Unit, sizeSp: Int) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            "No lyrics found",
+            color = Color.White,
+            fontFamily = LyricsTypography.familyFor("No lyrics found"),
+            fontSize = sizeSp.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "No provider had lyrics for this song.",
+            color = Color.White.copy(alpha = 0.72f),
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onTryAnother) { Text("Try another source", color = Color.White) }
+            TextButton(onClick = onRetry) { Text("Retry", color = Color.White) }
+        }
+    }
+}
+
 @Composable
 private fun InlineLyricLine(
     text: String,
@@ -1060,7 +1101,7 @@ private fun InlineLyricLine(
 ) {
     val family = remember(text) { LyricsTypography.familyFor(text) }
     val alphaState = animateFloatAsState(
-        targetValue = if (active) 1f else 0.45f,
+        targetValue = if (active) 1f else 0.72f,
         animationSpec = spring(dampingRatio = 0.85f, stiffness = 350f),
         label = "lyricLineAlpha",
     )
@@ -1071,10 +1112,10 @@ private fun InlineLyricLine(
     )
     val targetBlur = when {
         active || !blurAvailable -> 0f
-        distance <= 1 -> 2f
-        distance == 2 -> 4f
-        distance == 3 -> 6f
-        else -> 8f
+        distance <= 1 -> 0f
+        distance == 2 -> 1f
+        distance == 3 -> 2f
+        else -> 3f
     }
     val blurState = animateFloatAsState(
         targetValue = targetBlur,

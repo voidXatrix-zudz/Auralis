@@ -104,6 +104,7 @@ fun NowPlayingScreen(
     onImportLyrics: (Track, Uri) -> Unit = { _, _ -> },
     onSaveLyrics: (Track, String) -> Unit = { _, _ -> },
     onTryAnotherLyricsSource: (Track) -> Unit = {},
+    onRetryLyrics: (Track) -> Unit = {},
     onAdjustLyricsOffset: (Int) -> Unit = {},
     onResetLyricsOffset: () -> Unit = {},
     onSeekBy: (Long) -> Unit = {},
@@ -139,6 +140,7 @@ fun NowPlayingScreen(
             lyricsOffsetMs = lyricsOffsetMs,
             onLoadLyrics = onLoadLyrics, onImportLyrics = onImportLyrics, onSaveLyrics = onSaveLyrics, onSeekBy = onSeekBy,
             onTryAnotherLyricsSource = onTryAnotherLyricsSource,
+            onRetryLyrics = onRetryLyrics,
             onAdjustLyricsOffset = onAdjustLyricsOffset, onResetLyricsOffset = onResetLyricsOffset,
             doubleTapSeekSeconds = doubleTapSeekSeconds, gesturesEnabled = gesturesEnabled,
             onOpenEqualizer = onOpenEqualizer, onOpenWrapped = onOpenWrapped,
@@ -246,6 +248,7 @@ fun NowPlayingScreen(
             onImport = { lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*")) },
             onSaveText = { text -> onSaveLyrics(track, text) },
             onTryAnotherSource = { onTryAnotherLyricsSource(track) },
+            onRetry = { onRetryLyrics(track) },
             onAdjustOffset = onAdjustLyricsOffset,
             onResetOffset = onResetLyricsOffset,
         )

@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -165,6 +166,7 @@ fun LiquidLyricsScreen(
     isFavorite: Boolean = false,
     onToggleFavorite: () -> Unit = {},
     onTryAnotherSource: () -> Unit = {},
+    onRetry: () -> Unit = {},
     onAdjustOffset: (Int) -> Unit = {},
     onResetOffset: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -261,7 +263,7 @@ fun LiquidLyricsScreen(
         if (rowIndex < 0) return@LaunchedEffect
         val viewport = listState.layoutInfo.viewportSize.height
         if (viewport <= 0) return@LaunchedEffect
-        val target = viewport * 0.30f
+        val target = viewport * 0.50f
         if (reduceMotion) {
             listState.scrollToItem(rowIndex, -target.toInt())
             return@LaunchedEffect
@@ -445,8 +447,8 @@ fun LiquidLyricsScreen(
                 }
 
                 BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-                    val topPadding = maxHeight * 0.30f
-                    val bottomPadding = maxHeight * 0.52f
+                    val topPadding = maxHeight * 0.50f
+                    val bottomPadding = maxHeight * 0.50f
                     when {
                         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -511,6 +513,8 @@ fun LiquidLyricsScreen(
                         )
                         else -> EmptyLyricsState(
                             accent = accent,
+                            onTryAnother = onTryAnotherSource,
+                            onRetry = onRetry,
                             onPaste = { pasteOpen = true },
                             onImport = onImport,
                         )
@@ -630,11 +634,11 @@ private fun LyricLineRow(
     val alpha by animateFloatAsState(
         targetValue = when {
             active -> 1f
-            distance == 1 -> 0.62f
-            distance == 2 -> 0.46f
-            distance == 3 -> 0.34f
-            else -> 0.24f
-        } * if (passed && !active) 0.88f else 1f,
+            distance == 1 -> 0.80f
+            distance == 2 -> 0.66f
+            distance == 3 -> 0.55f
+            else -> 0.44f
+        } * if (passed && !active) 0.9f else 1f,
         animationSpec = tween(motionMs),
         label = "lineAlpha",
     )
@@ -649,14 +653,14 @@ private fun LyricLineRow(
         label = "lineScale",
     )
     val fixedBlur = when {
-        distance == 1 -> 2f
-        distance == 2 -> 4f
-        else -> 6f
+        distance == 1 -> 0f
+        distance == 2 -> 1f
+        else -> 2.5f
     }
     val targetBlur = when {
         !blurAvailable || clearForTouch || active -> 0f
         distance <= 2 -> fixedBlur * blurScale
-        else -> 6f * blurScale
+        else -> 2.5f * blurScale
     }
     val blurDp by animateDpAsState(targetBlur.dp, tween(motionMs), label = "lineBlur")
     val shift by animateFloatAsState(
@@ -835,7 +839,13 @@ private fun UnsyncedLyrics(plain: String, accent: Color) {
 }
 
 @Composable
-private fun EmptyLyricsState(accent: Color, onPaste: () -> Unit, onImport: () -> Unit) {
+private fun EmptyLyricsState(
+    accent: Color,
+    onTryAnother: () -> Unit,
+    onRetry: () -> Unit,
+    onPaste: () -> Unit,
+    onImport: () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     Box(Modifier.fillMaxSize().padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
         Column(
@@ -849,19 +859,29 @@ private fun EmptyLyricsState(accent: Color, onPaste: () -> Unit, onImport: () ->
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Icon(Icons.Rounded.Lyrics, null, tint = accent, modifier = Modifier.size(34.dp))
-            Text("No synchronized lyrics yet", style = MaterialTheme.typography.titleMedium)
+            Text("No lyrics found", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Paste LRC text directly, or import a .lrc file that sits next to the song. Embedded lyrics are detected automatically.",
+                "No provider had lyrics for this song. Try another source, retry, or add them yourself.",
                 color = colors.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
-                Button(onClick = onPaste, shape = CircleShape) {
+                Button(onClick = onTryAnother, shape = CircleShape) {
+                    Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp))
+                    Text("Try another source", Modifier.padding(start = 6.dp))
+                }
+                OutlinedButton(onClick = onRetry, shape = CircleShape) {
+                    Icon(Icons.Rounded.Replay, null, modifier = Modifier.size(18.dp))
+                    Text("Retry", Modifier.padding(start = 6.dp))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TextButton(onClick = onPaste) {
                     Icon(Icons.Rounded.ContentPaste, null, modifier = Modifier.size(18.dp))
                     Text("Paste LRC", Modifier.padding(start = 6.dp))
                 }
-                OutlinedButton(onClick = onImport, shape = CircleShape) {
+                TextButton(onClick = onImport) {
                     Icon(Icons.Rounded.FileOpen, null, modifier = Modifier.size(18.dp))
                     Text("Import file", Modifier.padding(start = 6.dp))
                 }
