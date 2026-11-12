@@ -162,7 +162,18 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) : CoroutineW
                 }
             }
 
-            val art = thumb?.takeIf { it.isNotBlank() }?.let { url -> downloadArt(dir, base, url) }
+            val artBytes = thumb?.takeIf { it.isNotBlank() }?.let { url -> downloadArtBytes(url) }
+            val art = artBytes?.let { bytes -> writeArt(dir, base, bytes) }
+            // Embed tags into the finished file (best effort: the download stays even if this fails).
+            AudioTagWriter.write(
+                target,
+                com.auralis.app.data.metadata.TagData(
+                    title = title,
+                    artist = artist,
+                    album = album,
+                    artwork = artBytes,
+                ),
+            )
             dao.upsert(
                 DownloadEntity(
                     videoId = videoId,
@@ -190,12 +201,15 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) : CoroutineW
         Result.failure()
     }
 
-    private fun downloadArt(dir: File, base: String, url: String): String? = runCatching {
-        val file = uniqueFile(dir, base, "jpg")
+    private fun downloadArtBytes(url: String): ByteArray? = runCatching {
         http.newCall(Request.Builder().url(url).header("User-Agent", UA).build()).execute().use { response ->
-            val body = response.body ?: return@runCatching null
-            file.outputStream().use { body.byteStream().copyTo(it) }
+            response.body?.bytes()
         }
+    }.getOrNull()
+
+    private fun writeArt(dir: File, base: String, bytes: ByteArray): String? = runCatching {
+        val file = uniqueFile(dir, base, "jpg")
+        file.outputStream().use { it.write(bytes) }
         file.absolutePath
     }.getOrNull()
 

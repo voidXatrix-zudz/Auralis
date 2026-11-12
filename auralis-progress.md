@@ -7,7 +7,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part C — Glass YouTube Home header + branch
 - [x] Part D — Clerk hand-off to YouTube Music
 - [x] Part E — Sync to YouTube account (history/likes/playlists)
-- [ ] Part F — Download tag embedding
+- [x] Part F — Download tag embedding
 - [ ] Part G — Lyrics + metadata providers
 - [ ] Part H — Settings redesign (both themes)
 
