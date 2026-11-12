@@ -28,6 +28,10 @@ data class AppSettings(
     val lyricsAutoScroll: Boolean = true,
     /** Global timing correction for synced lyrics, in milliseconds (positive = lyrics later). */
     val lyricsOffsetMs: Int = 0,
+    /** Library sort selector: "CUSTOM", "RECENTS" or "AZ" (Part R). */
+    val librarySort: String = "CUSTOM",
+    /** Library list/grid toggle; false = list (Part R). */
+    val libraryGridView: Boolean = false,
     val performanceProfile: PerformanceMode = PerformanceMode.AUTOMATIC,
     val gestureSeekEnabled: Boolean = true,
     val gestureSwipeEnabled: Boolean = true,

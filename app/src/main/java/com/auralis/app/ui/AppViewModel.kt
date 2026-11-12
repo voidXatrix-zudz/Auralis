@@ -1400,6 +1400,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         _remoteTracks.update { known -> known + ordered.filter { it.isRemote }.associateBy { it.id } }
         play(ordered[startIndex.coerceIn(0, ordered.lastIndex)], ordered)
     }
+
+    /** Plays a playlist in a random order (Part R ⋮ menu). */
+    fun shufflePlaylist(playlistId: Long) {
+        val ordered = playlistItems(playlistId).map { it.track }
+        if (ordered.isEmpty()) return
+        _remoteTracks.update { known -> known + ordered.filter { it.isRemote }.associateBy { it.id } }
+        play(ordered.random(), ordered)
+        if (!container.playback.state.value.shuffle) toggleShuffle()
+    }
     fun toggleFavorite(track: Track) {
         if (track.isRemote) { _messages.trySend("Favorites are for library songs only"); return }
         viewModelScope.launch { runCatching { container.database.favoriteDao().toggle(track.id, System.currentTimeMillis()) }.onFailure { report("Couldn't update favorite", it) } }

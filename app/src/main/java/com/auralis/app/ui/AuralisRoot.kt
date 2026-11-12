@@ -550,6 +550,18 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             spotifyImports = spotifyImports,
                                             onOpenImport = { id -> viewModel.push(Destination.SpotifyImport(id)) },
                                             onAutoFixTags = viewModel::autoFixTags,
+                                            playlistEntries = playlistEntries,
+                                            playlistYtEntries = playlistYtEntries,
+                                            profileImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
+                                            accountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName,
+                                            librarySort = settings.librarySort,
+                                            libraryGridView = settings.libraryGridView,
+                                            onLibrarySortChange = { value -> viewModel.updateSettings { s -> s.copy(librarySort = value) } },
+                                            onLibraryGridChange = { value -> viewModel.updateSettings { s -> s.copy(libraryGridView = value) } },
+                                            onRenamePlaylist = { id, name -> viewModel.renamePlaylist(id, name) },
+                                            onDeletePlaylist = viewModel::deletePlaylist,
+                                            onPlayPlaylist = { id -> viewModel.playPlaylist(id) },
+                                            onShufflePlaylist = viewModel::shufflePlaylist,
                                         )
                                         Tab.EQUALIZER -> EqualizerScreen(settings, viewModel::updateSettings)
                                         Tab.SETTINGS -> SettingsHubScreen(

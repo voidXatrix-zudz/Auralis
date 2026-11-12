@@ -17,6 +17,8 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part M — Racing stream resolvers
 - [x] Part P — Fast chunked downloads
 - [x] Part Q — Lyrics page fix + all providers
+- [x] Part R — Library redesign (both themes)
+- [ ] Part S — Search defaults to YouTube
 
 ## Notes
 - Part A: single allowed `adb logcat -d AndroidRuntime:E *:S` returned nothing (no device attached); cause found by code reading.
@@ -66,3 +68,8 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - `LyricsRepository.load` now queries every enabled provider in parallel (`loadOnlineParallel`, one coroutine each, 6 s per provider / 6 s overall); each result is scored (confidence = title similarity + artist overlap + duration agreement, plus a strong synced-over-plain bonus, minus an out-of-sync penalty). The first synced result is shown at once and silently upgraded if a better one lands within 2 s; otherwise the best unsynced wins. Disabled providers are never called, failures only log, positives and 7-day negatives are cached in Room as before; new `retry(track)` forgets cached answers.
   - The lyrics page always shows a state: the loading indicator, the lyrics, or a "No lyrics found" card with "Try another source" and "Retry" (both LiquidLyricsScreen and the glass inline layer). `AppViewModel` streams the intermediate winners via `load(..., onUpdate)`, resets loading in a `finally`, and adds `retryLyrics`.
   - Readability: lyric lines no longer blur into unreadability (dim floors raised, blur cut), and auto-scroll now centres the active line (top/bottom padding 50 %).
+- Part R: library redesign (both themes; Library screen only).
+  - Top bar: a large "Your Library" title, a rounded "+" pill (New playlist / Import Spotify CSV / History / Auto-fix tags), a library search toggle, and the account avatar (same Clerk→YouTube logic as Home) that opens Settings.
+  - Below: a sort selector ("Custom order"/"Recents"/"A-Z") and a list/grid toggle, both persisted in DataStore (`librarySort`/`libraryGridView` in `AppSettings`). Filter chips Playlists / By me / Artists / Albums; tapping the active chip clears it. "By me" is limited to locally created playlists; Artists/Albums show the existing lists (artist photos reused).
+  - Main list: Liked Songs (gradient heart tile, merges YouTube account likes + local favourites), Local Files (folder tile, all local songs sorted/searched), Downloaded (download tile), then every playlist with songs — local, Spotify-imported and (signed in) YouTube account playlists — as a 64 dp mosaic row (bigger cards in grid mode) from the first four distinct covers (single cover when fewer than four), labelled "Playlist • <owner>", with a ⋮ menu (Play / Shuffle / Rename / Delete). Empty playlists are hidden; internal Liked/Local/Downloaded sections avoid new nav routes.
+  - `buildLibraryPlaylists(...)` + `LibraryPlaylistRow` are shared by both themes; `AppViewModel.shufflePlaylist` added. Glass theme uses the same layout with glass panels, chips and artwork. The dock and mini-player are untouched.

@@ -9,9 +9,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,14 +25,28 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,10 +72,18 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.auralis.app.data.db.PlaylistEntity
+import com.auralis.app.data.db.PlaylistEntryEntity
+import com.auralis.app.data.db.PlaylistYtEntryEntity
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
+import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.LocalDockBottomInset
+import com.auralis.app.ui.screens.LibraryFilter
+import com.auralis.app.ui.screens.LibraryPlaylistKind
+import com.auralis.app.ui.screens.LibraryPlaylistRow
+import com.auralis.app.ui.screens.LibrarySortOption
+import com.auralis.app.ui.screens.buildLibraryPlaylists
 import com.auralis.app.ui.theme.GlassTokens
 import java.time.LocalTime
 import java.time.ZoneId
@@ -429,24 +454,119 @@ fun GlassLibraryScreen(
     spotifyImports: List<com.auralis.app.data.db.SpotifyImportEntity> = emptyList(),
     onOpenImport: (Long) -> Unit = {},
     onAutoFixTags: () -> Unit = {},
+    // Part R: library redesign inputs and callbacks.
+    playlistEntries: List<PlaylistEntryEntity> = emptyList(),
+    playlistYtEntries: List<PlaylistYtEntryEntity> = emptyList(),
+    profileImageUrl: String? = null,
+    accountName: String? = null,
+    librarySort: String = LibrarySortOption.CUSTOM.id,
+    libraryGridView: Boolean = false,
+    onLibrarySortChange: (String) -> Unit = {},
+    onLibraryGridChange: (Boolean) -> Unit = {},
+    onRenamePlaylist: (Long, String) -> Unit = { _, _ -> },
+    onDeletePlaylist: (Long) -> Unit = {},
+    onPlayPlaylist: (Long) -> Unit = {},
+    onShufflePlaylist: (Long) -> Unit = {},
 ) {
-    var selected by remember { mutableIntStateOf(0) }
+    val sort = LibrarySortOption.fromId(librarySort)
+    var filter by remember { mutableStateOf<LibraryFilter?>(null) }
+    var section by remember { mutableStateOf<GlassLibrarySection?>(null) }
+    var query by remember { mutableStateOf("") }
+    var searchOpen by remember { mutableStateOf(false) }
+    var plusOpen by remember { mutableStateOf(false) }
+    var sortOpen by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
-    val tabs = remember(youtubeEnabled) { if (youtubeEnabled) GlassLibraryTabs + listOf("Liked Songs", "Downloads") else GlassLibraryTabs }
+    var renameTarget by remember { mutableStateOf<LibraryPlaylistRow?>(null) }
+    var deleteTarget by remember { mutableStateOf<LibraryPlaylistRow?>(null) }
+
     LaunchedEffect(youtubeEnabled) { if (youtubeEnabled) onRefreshYouTubeLibrary() }
+
+    val playlistRows = remember(playlists, tracks, playlistEntries, playlistYtEntries, youtubePlaylists, spotifyImports, accountName, sort, query, filter) {
+        val all = buildLibraryPlaylists(playlists, tracks, playlistEntries, playlistYtEntries, youtubePlaylists, spotifyImports, accountName, sort)
+        val scoped = when (filter) {
+            LibraryFilter.BY_ME -> all.filter { it.kind == LibraryPlaylistKind.LOCAL }
+            else -> all
+        }
+        if (query.isBlank()) scoped else scoped.filter { it.name.contains(query, ignoreCase = true) }
+    }
+    val localSongs = remember(tracks, query) {
+        if (query.isBlank()) tracks else tracks.filter {
+            it.title.contains(query, ignoreCase = true) || it.artist.contains(query, ignoreCase = true) || it.album.contains(query, ignoreCase = true)
+        }
+    }
+    val likedMerged = remember(tracks, favorites, youtubeLiked) { (youtubeLiked + tracks.filter { it.id in favorites }).distinctBy { it.id } }
+    val libraryEmpty = tracks.isEmpty() && playlists.isEmpty() && youtubePlaylists.isEmpty() &&
+        downloads.isEmpty() && youtubeLiked.isEmpty() && spotifyImports.isEmpty()
+
     Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            GlassHeader("Library", Modifier.weight(1f), "${tracks.size} songs")
-            GlassGhostButton("Fix tags", onAutoFixTags)
-            GlassGhostButton("History", onOpenHistory)
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Your Library",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Box {
+                Box(
+                    Modifier.heightIn(min = 40.dp).clip(CircleShape)
+                        .background(GlassTokens.Violet.copy(alpha = 0.18f))
+                        .border(1.dp, GlassTokens.BorderBrush, CircleShape)
+                        .clickable { plusOpen = true }.padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.Add, "Add", tint = GlassTokens.Violet, modifier = Modifier.size(20.dp)) }
+                DropdownMenu(plusOpen, { plusOpen = false }) {
+                    DropdownMenuItem(text = { Text("New playlist") }, leadingIcon = { Icon(Icons.Rounded.Add, null) }, onClick = { plusOpen = false; name = ""; creating = true })
+                    DropdownMenuItem(text = { Text("Import Spotify CSV") }, leadingIcon = { Icon(Icons.Rounded.Download, null) }, onClick = { plusOpen = false; onImportSpotify() })
+                    DropdownMenuItem(text = { Text("History") }, leadingIcon = { Icon(Icons.Rounded.MusicNote, null) }, onClick = { plusOpen = false; onOpenHistory() })
+                    DropdownMenuItem(text = { Text("Auto-fix tags") }, leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { plusOpen = false; onAutoFixTags() })
+                }
+            }
+            GlassIconAction(Icons.Rounded.Search, "Search library", { searchOpen = !searchOpen; if (!searchOpen) query = "" })
+            Box(
+                Modifier.size(36.dp).clip(CircleShape).clickable { onOpenSettings() },
+                contentAlignment = Alignment.Center,
+            ) { AccountAvatar(imageUrl = profileImageUrl, contentDescription = "Open settings", modifier = Modifier.fillMaxSize()) }
+        }
+        if (searchOpen) {
+            GlassSearchField(query, { query = it }, "Search your library", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp))
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                Row(
+                    Modifier.clip(CircleShape).clickable { sortOpen = true }.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(sort.label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+                    Icon(Icons.Rounded.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                }
+                DropdownMenu(sortOpen, { sortOpen = false }) {
+                    LibrarySortOption.entries.forEach { option ->
+                        DropdownMenuItem(text = { Text(option.label) }, onClick = { sortOpen = false; onLibrarySortChange(option.id) })
+                    }
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            GlassIconAction(
+                if (libraryGridView) Icons.Rounded.ViewList else Icons.Rounded.GridView,
+                if (libraryGridView) "Switch to list" else "Switch to grid",
+                { onLibraryGridChange(!libraryGridView) },
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
         }
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(tabs.size) { i -> GlassChip(tabs[i], selected == i, { selected = i }) }
+            val filters = LibraryFilter.entries
+            items(filters.size) { i ->
+                val option = filters[i]
+                GlassChip(option.label, filter == option, { filter = if (filter == option) null else option; section = null })
+            }
         }
         Spacer(Modifier.height(8.dp))
-        when (selected) {
-            0 -> if (tracks.isEmpty()) {
+        when {
+            filter == null && section == null && libraryEmpty ->
                 if (sources.isEmpty()) {
                     GlassEmptyState("Choose a music folder to start", "AURALIS only scans the folders you choose.", Modifier.weight(1f)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -460,8 +580,40 @@ fun GlassLibraryScreen(
                         GlassGhostButton("Add folder", onAddMusic, icon = Icons.Rounded.FolderOpen, enabled = !scanning)
                     }
                 }
-            } else GlassTrackRows(tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
-            1 -> {
+            section != null -> {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    GlassIconAction(Icons.Rounded.ArrowBack, "Back to library", { section = null })
+                    Text(glassSectionTitle(section!!), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.weight(1f))
+                    if (section == GlassLibrarySection.LIKED && youtubeEnabled) GlassGhostButton("Refresh", onRefreshYouTubeLibrary)
+                }
+                when (section) {
+                    GlassLibrarySection.LIKED ->
+                        if (likedMerged.isEmpty()) GlassEmptyState("No liked songs yet", "Heart a song to see it here.", Modifier.weight(1f))
+                        else GlassTrackRows(likedMerged, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                    GlassLibrarySection.LOCAL ->
+                        if (localSongs.isEmpty()) GlassEmptyState("No local songs", "Add a folder or scan this device.", Modifier.weight(1f))
+                        else GlassTrackRows(localSongs, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                    GlassLibrarySection.DOWNLOADED ->
+                        if (downloads.isEmpty()) GlassEmptyState("No downloads yet", "Use \"Download\" on a YouTube song.", Modifier.weight(1f))
+                        else GlassTrackRows(downloads, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                    else -> Unit
+                }
+            }
+            filter == LibraryFilter.ARTISTS -> {
+                val values = remember(tracks) { tracks.map { it.artist }.filter { it.isNotBlank() }.distinct().sorted() }
+                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(values) { value ->
+                        GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd)) {
+                            Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                ArtistAvatar(name = value, size = 40.dp)
+                                Text(value, Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+            filter == LibraryFilter.ALBUMS -> {
                 val albums = remember(tracks) {
                     tracks.groupBy { it.album.ifBlank { "Unknown album" } }
                         .mapValues { (_, albumTracks) -> albumTracks.sortedWith(GlassAlbumTrackOrder) }
@@ -469,13 +621,12 @@ fun GlassLibraryScreen(
                 }
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(albums.entries.toList(), key = { it.key }) { entry ->
-                        val album = entry.key
                         val ordered = entry.value
                         GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onPlayAlbum(ordered) }) {
                             Row(Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 GlassArtwork(ordered.first(), Modifier.size(64.dp), 16.dp)
                                 Column(Modifier.weight(1f).padding(start = 12.dp, end = 4.dp)) {
-                                    Text(album, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                                    Text(entry.key, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
                                     Text("${ordered.first().albumArtist} · ${ordered.size} songs", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 GlassIconAction(Icons.Rounded.QueueMusic, "Add album to queue", { onQueueAlbum(ordered) }, tint = GlassTokens.Violet)
@@ -484,106 +635,65 @@ fun GlassLibraryScreen(
                     }
                 }
             }
-            2 -> {
-                val values = remember(tracks) { tracks.map { it.artist }.distinct().sorted() }
-                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(values) { value ->
-                        GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd)) {
-                            Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                ArtistAvatar(name = value, size = 40.dp)
-                                Text(value.ifBlank { "Unknown" }, Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
-                }
-            }
-            3 -> {
-                val values = remember(tracks) { tracks.flatMap { it.genres }.distinct().sorted() }
-                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(values) { value ->
-                        GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd)) {
-                            Text(value.ifBlank { "Unknown" }, Modifier.padding(horizontal = 18.dp, vertical = 16.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
-                }
-            }
-            4 -> {
-                val favoriteTracks = remember(tracks, favorites) { tracks.filter { it.id in favorites } }
-                GlassTrackRows(favoriteTracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
-            }
-            5 -> {
-                Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GlassPrimaryButton("Create playlist", { creating = true }, icon = Icons.Rounded.Add)
-                    GlassGhostButton("Import Spotify", onImportSpotify)
-                    playlists.forEach { playlist ->
-                        GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onOpenPlaylist(playlist.id) }) {
-                            Row(Modifier.padding(start = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(playlist.name, Modifier.weight(1f).padding(vertical = 14.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                                GlassIconAction(Icons.Rounded.QueueMusic, "Add ${playlist.name} to queue", { onQueuePlaylist(playlist.id) }, tint = GlassTokens.Violet)
-                            }
-                        }
-                    }
-                    if (youtubeEnabled && youtubePlaylists.isNotEmpty()) {
-                        Text("YouTube Music playlists", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        youtubePlaylists.forEach { playlist ->
-                            GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onOpenYouTubePlaylist(playlist) }) {
-                                Text(
-                                    "${playlist.title} · ${playlist.trackCount}",
-                                    Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                    if (spotifyImports.isNotEmpty()) {
-                        Text("Spotify imports", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        spotifyImports.forEach { row ->
-                            GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onOpenImport(row.id) }) {
-                                Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
-                                    Text(row.fileName.removeSuffix(".csv"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        if (row.state == "RUNNING") "Matching ${row.processed}/${row.total}"
-                                        else "${row.matched} matched · ${row.review} to review · ${row.failed} failed",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = GlassTokens.SilverMuted,
-                                    )
+            else -> {
+                val showTiles = filter == null
+                LazyColumn(
+                    Modifier.weight(1f),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (showTiles) {
+                        val tiles = listOf(
+                            GlassLibraryTile(GlassTileKind.LIKED, "Liked Songs", "${likedMerged.size} songs"),
+                            GlassLibraryTile(GlassTileKind.LOCAL, "Local Files", "${localSongs.size} songs"),
+                            GlassLibraryTile(GlassTileKind.DOWNLOADED, "Downloaded", "${downloads.size} songs"),
+                        )
+                        if (libraryGridView) {
+                            items(tiles.chunked(2)) { pair ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                    pair.forEach { tile -> GlassTileCard(tile, Modifier.weight(1f)) { section = tile.kind.toSection() } }
+                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
                                 }
                             }
+                        } else {
+                            items(tiles) { tile -> GlassTileRow(tile) { section = tile.kind.toSection() } }
                         }
                     }
-                }
-            }
-            6 -> {
-                Column(Modifier.weight(1f).fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Liked Songs", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                        GlassGhostButton("Refresh", onRefreshYouTubeLibrary)
+                    if (playlistRows.isEmpty() && !showTiles) {
+                        item {
+                            Box(Modifier.fillMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) {
+                                Text("No playlists yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
-                    if (youtubeLiked.isEmpty()) {
-                        Text(
-                            "No liked YouTube songs yet.",
-                            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    if (libraryGridView) {
+                        items(playlistRows.chunked(2), key = { it.first().key }) { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                pair.forEach { row ->
+                                    GlassPlaylistCard(
+                                        row = row,
+                                        modifier = Modifier.weight(1f),
+                                        onOpen = { glassOpenPlaylist(row, onOpenPlaylist, onOpenYouTubePlaylist) },
+                                        onPlay = { row.localPlaylistId?.let(onPlayPlaylist) ?: row.ytPlaylist?.let(onOpenYouTubePlaylist) },
+                                        onShuffle = { row.localPlaylistId?.let(onShufflePlaylist) },
+                                        onRename = { renameTarget = row },
+                                        onDelete = { deleteTarget = row },
+                                    )
+                                }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
                     } else {
-                        GlassTrackRows(youtubeLiked, favorites, currentId, onPlayYouTubeTrack, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
-                    }
-                }
-            }
-            7 -> {
-                Column(Modifier.weight(1f).fillMaxWidth()) {
-                    Text("Downloaded", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                    if (downloads.isEmpty()) {
-                        Text(
-                            "No downloads yet. Use “Download” on a YouTube song.",
-                            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        GlassTrackRows(downloads, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                        items(playlistRows, key = { it.key }) { row ->
+                            GlassPlaylistRowItem(
+                                row = row,
+                                onOpen = { glassOpenPlaylist(row, onOpenPlaylist, onOpenYouTubePlaylist) },
+                                onPlay = { row.localPlaylistId?.let(onPlayPlaylist) ?: row.ytPlaylist?.let(onOpenYouTubePlaylist) },
+                                onShuffle = { row.localPlaylistId?.let(onShufflePlaylist) },
+                                onRename = { renameTarget = row },
+                                onDelete = { deleteTarget = row },
+                            )
+                        }
                     }
                 }
             }
@@ -593,9 +703,189 @@ fun GlassLibraryScreen(
         onDismissRequest = { creating = false },
         title = { Text("New playlist") },
         text = { GlassSearchField(name, { name = it }, "Name") },
-        confirmButton = { TextButton(onClick = { onCreatePlaylist(name); name = ""; creating = false }) { Text("Create") } },
+        confirmButton = { TextButton(onClick = { if (name.isNotBlank()) onCreatePlaylist(name); name = ""; creating = false }) { Text("Create") } },
         dismissButton = { TextButton(onClick = { creating = false }) { Text("Cancel") } },
     )
+    renameTarget?.let { row ->
+        var updated by remember(row.key) { mutableStateOf(row.name) }
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Rename playlist") },
+            text = { GlassSearchField(updated, { updated = it }, "Name") },
+            confirmButton = {
+                TextButton(onClick = {
+                    row.localPlaylistId?.let { if (updated.isNotBlank()) onRenamePlaylist(it, updated) }
+                    renameTarget = null
+                }) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
+        )
+    }
+    deleteTarget?.let { row ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete playlist") },
+            text = { Text("Delete “${row.name}”? This cannot be undone.") },
+            confirmButton = { TextButton(onClick = { row.localPlaylistId?.let(onDeletePlaylist); deleteTarget = null }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+private enum class GlassLibrarySection { LIKED, LOCAL, DOWNLOADED }
+
+private enum class GlassTileKind { LIKED, LOCAL, DOWNLOADED }
+
+private data class GlassLibraryTile(val kind: GlassTileKind, val title: String, val subtitle: String)
+
+private fun GlassTileKind.toSection(): GlassLibrarySection = when (this) {
+    GlassTileKind.LIKED -> GlassLibrarySection.LIKED
+    GlassTileKind.LOCAL -> GlassLibrarySection.LOCAL
+    GlassTileKind.DOWNLOADED -> GlassLibrarySection.DOWNLOADED
+}
+
+private fun glassSectionTitle(section: GlassLibrarySection): String = when (section) {
+    GlassLibrarySection.LIKED -> "Liked Songs"
+    GlassLibrarySection.LOCAL -> "Local Files"
+    GlassLibrarySection.DOWNLOADED -> "Downloaded"
+}
+
+private fun glassOpenPlaylist(row: LibraryPlaylistRow, onOpenPlaylist: (Long) -> Unit, onOpenYouTubePlaylist: (com.auralis.app.data.youtube.YtPlaylist) -> Unit) {
+    row.localPlaylistId?.let(onOpenPlaylist) ?: row.ytPlaylist?.let(onOpenYouTubePlaylist)
+}
+
+@Composable
+private fun GlassTileRow(tile: GlassLibraryTile, onClick: () -> Unit) {
+    GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = onClick) {
+        Row(Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            GlassTileArt(tile.kind, Modifier.size(64.dp))
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(tile.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(tile.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GlassTileCard(tile: GlassLibraryTile, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    GlassPanel(modifier, RoundedCornerShape(GlassTokens.RadiusMd), onClick = onClick) {
+        Column(Modifier.padding(10.dp)) {
+            GlassTileArt(tile.kind, Modifier.fillMaxWidth().aspectRatio(1f))
+            Text(tile.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+            Text(tile.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun GlassTileArt(kind: GlassTileKind, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(16.dp)
+    val brush = when (kind) {
+        GlassTileKind.LIKED -> Brush.linearGradient(listOf(Color(0xFFE23E7A), Color(0xFF9B4DFF)))
+        GlassTileKind.LOCAL -> Brush.linearGradient(listOf(GlassTokens.Violet.copy(alpha = 0.35f), GlassTokens.Ice.copy(alpha = 0.20f)))
+        GlassTileKind.DOWNLOADED -> Brush.linearGradient(listOf(Color(0xFF3E7BE2), Color(0xFF42C6D6)))
+    }
+    val icon = when (kind) {
+        GlassTileKind.LIKED -> Icons.Rounded.Favorite
+        GlassTileKind.LOCAL -> Icons.Rounded.Folder
+        GlassTileKind.DOWNLOADED -> Icons.Rounded.Download
+    }
+    Box(modifier.clip(shape).background(brush).border(1.dp, GlassTokens.BorderBrush, shape), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = Color.White, modifier = Modifier.fillMaxSize(0.42f))
+    }
+}
+
+@Composable
+private fun GlassPlaylistRowItem(
+    row: LibraryPlaylistRow,
+    onOpen: () -> Unit,
+    onPlay: () -> Unit,
+    onShuffle: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = onOpen) {
+        Row(Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            GlassPlaylistMosaic(row, Modifier.size(64.dp))
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(row.name, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Playlist • ${row.owner}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            GlassPlaylistMenu(row, onPlay, onShuffle, onRename, onDelete)
+        }
+    }
+}
+
+@Composable
+private fun GlassPlaylistCard(
+    row: LibraryPlaylistRow,
+    modifier: Modifier = Modifier,
+    onOpen: () -> Unit,
+    onPlay: () -> Unit,
+    onShuffle: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    GlassPanel(modifier, RoundedCornerShape(GlassTokens.RadiusMd), onClick = onOpen) {
+        Column(Modifier.padding(10.dp)) {
+            GlassPlaylistMosaic(row, Modifier.fillMaxWidth().aspectRatio(1f))
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text(row.name, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Playlist • ${row.owner}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                GlassPlaylistMenu(row, onPlay, onShuffle, onRename, onDelete)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GlassPlaylistMenu(
+    row: LibraryPlaylistRow,
+    onPlay: () -> Unit,
+    onShuffle: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var expanded by remember(row.key) { mutableStateOf(false) }
+    Box {
+        GlassIconAction(Icons.Rounded.MoreVert, "More actions for ${row.name}", { expanded = true })
+        DropdownMenu(expanded, { expanded = false }) {
+            DropdownMenuItem(text = { Text("Play") }, leadingIcon = { Icon(Icons.Rounded.QueueMusic, null) }, onClick = { expanded = false; onPlay() })
+            if (row.localPlaylistId != null) {
+                DropdownMenuItem(text = { Text("Shuffle") }, leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }, onClick = { expanded = false; onShuffle() })
+                DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { expanded = false; onRename() })
+                DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Rounded.Delete, null) }, onClick = { expanded = false; onDelete() })
+            }
+        }
+    }
+}
+
+@Composable
+private fun GlassPlaylistMosaic(row: LibraryPlaylistRow, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(14.dp)
+    Box(modifier.clip(shape)) {
+        when {
+            row.covers.isEmpty() && !row.coverUrl.isNullOrBlank() ->
+                GlassArtwork(track = null, modifier = Modifier.fillMaxSize(), radius = 14.dp, artUri = row.coverUrl)
+            row.covers.size >= 4 -> Column(Modifier.fillMaxSize()) {
+                Row(Modifier.weight(1f)) {
+                    GlassArtwork(row.covers[0], Modifier.weight(1f).fillMaxHeight(), 0.dp)
+                    GlassArtwork(row.covers[1], Modifier.weight(1f).fillMaxHeight(), 0.dp)
+                }
+                Row(Modifier.weight(1f)) {
+                    GlassArtwork(row.covers[2], Modifier.weight(1f).fillMaxHeight(), 0.dp)
+                    GlassArtwork(row.covers[3], Modifier.weight(1f).fillMaxHeight(), 0.dp)
+                }
+            }
+            row.covers.isNotEmpty() -> GlassArtwork(row.covers[0], Modifier.fillMaxSize(), 14.dp)
+            else -> Box(Modifier.fillMaxSize().background(GlassTokens.Violet.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.MusicNote, null, tint = GlassTokens.Violet, modifier = Modifier.fillMaxSize(0.4f))
+            }
+        }
+    }
 }
 
 private fun greetingFor(time: LocalTime): String = when (time.hour) {

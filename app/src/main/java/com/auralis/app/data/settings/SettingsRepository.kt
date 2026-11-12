@@ -51,6 +51,8 @@ private object Keys {
     val lyricSize = intPreferencesKey("lyric_size_sp")
     val lyricsAutoScroll = booleanPreferencesKey("lyrics_auto_scroll")
     val lyricsOffset = intPreferencesKey("lyrics_offset_ms")
+    val librarySort = stringPreferencesKey("library_sort")
+    val libraryGridView = booleanPreferencesKey("library_grid_view")
     val performanceProfile = stringPreferencesKey("performance_profile")
     val gestureSeek = booleanPreferencesKey("gesture_seek")
     val gestureSwipe = booleanPreferencesKey("gesture_swipe")
@@ -211,6 +213,8 @@ class SettingsRepository(private val context: Context) {
             lyricSizeSp = (this[Keys.lyricSize] ?: d.lyricSizeSp).coerceIn(14, 40),
             lyricsAutoScroll = this[Keys.lyricsAutoScroll] ?: d.lyricsAutoScroll,
             lyricsOffsetMs = (this[Keys.lyricsOffset] ?: d.lyricsOffsetMs).coerceIn(-5_000, 5_000),
+            librarySort = this[Keys.librarySort] ?: d.librarySort,
+            libraryGridView = this[Keys.libraryGridView] ?: d.libraryGridView,
             performanceProfile = enumOr(this[Keys.performanceProfile], d.performanceProfile),
             gestureSeekEnabled = this[Keys.gestureSeek] ?: d.gestureSeekEnabled,
             gestureSwipeEnabled = this[Keys.gestureSwipe] ?: d.gestureSwipeEnabled,
@@ -273,6 +277,8 @@ class SettingsRepository(private val context: Context) {
         this[Keys.lyricSize] = s.lyricSizeSp
         this[Keys.lyricsAutoScroll] = s.lyricsAutoScroll
         this[Keys.lyricsOffset] = s.lyricsOffsetMs
+        this[Keys.librarySort] = s.librarySort
+        this[Keys.libraryGridView] = s.libraryGridView
         this[Keys.performanceProfile] = s.performanceProfile.name
         this[Keys.gestureSeek] = s.gestureSeekEnabled
         this[Keys.gestureSwipe] = s.gestureSwipeEnabled
