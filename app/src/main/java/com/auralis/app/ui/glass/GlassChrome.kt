@@ -51,12 +51,18 @@ import androidx.compose.ui.unit.sp
 import com.auralis.app.R
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
+import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.nav.Tab
 import com.auralis.app.ui.theme.GlassTokens
 
 /** Wordmark on the left (or a back button on pushed screens). The dock owns Settings now. */
 @Composable
-fun GlassTopBar(showBack: Boolean, onBack: () -> Unit, collapseProgress: Float = 0f) {
+fun GlassTopBar(
+    showBack: Boolean,
+    onBack: () -> Unit,
+    collapseProgress: Float = 0f,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     Row(
         Modifier.fillMaxWidth().height(androidx.compose.ui.unit.lerp(64.dp, 56.dp, collapseProgress)).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -79,6 +85,30 @@ fun GlassTopBar(showBack: Boolean, onBack: () -> Unit, collapseProgress: Float =
             )
         }
         Box(Modifier.weight(1f))
+        trailing?.invoke()
+    }
+}
+
+/**
+ * Circular glass profile button for the YouTube Home header: 44dp, a thin 2dp dark translucent
+ * ring (the Obsidian glass token) and a ripple. Tapping opens Settings.
+ */
+@Composable
+fun GlassAvatarButton(imageUrl: String?, name: String?, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        AccountAvatar(
+            imageUrl = imageUrl,
+            contentDescription = name ?: "Account",
+            iconTint = GlassTokens.Silver,
+            modifier = Modifier.matchParentSize().background(GlassTokens.Surface2),
+        )
+        Box(Modifier.matchParentSize().border(2.dp, GlassTokens.Obsidian.copy(alpha = 0.45f), CircleShape))
     }
 }
 

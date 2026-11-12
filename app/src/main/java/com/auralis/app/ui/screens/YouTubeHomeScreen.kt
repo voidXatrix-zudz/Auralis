@@ -92,20 +92,22 @@ fun YouTubeHomeScreen(
     ) {
         LazyColumn(
             Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 32.dp),
+            contentPadding = PaddingValues(top = if (glass) 16.dp else 0.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            item(key = "header") {
-                HomeHeader(
-                    signedIn = signedIn,
-                    accountName = accountName,
-                    avatarUrl = avatarUrl,
-                    refreshing = state.refreshing,
-                    onRefresh = onRefresh,
-                    onSignIn = onSignIn,
-                    onSignOut = onSignOut,
-                    onSwitchAccount = onSwitchAccount,
-                )
+            if (!glass) {
+                item(key = "header") {
+                    HomeHeader(
+                        signedIn = signedIn,
+                        accountName = accountName,
+                        avatarUrl = avatarUrl,
+                        refreshing = state.refreshing,
+                        onRefresh = onRefresh,
+                        onSignIn = onSignIn,
+                        onSignOut = onSignOut,
+                        onSwitchAccount = onSwitchAccount,
+                    )
+                }
             }
             item(key = "categories") {
                 CategoryChips(state.category, onSelectCategory)

@@ -8,6 +8,7 @@ import com.auralis.app.ui.theme.LyricsFontPreloader
 import com.auralis.app.ui.theme.LocalGlassOptics
 import com.auralis.app.ui.components.AuralisBackdrop
 import com.auralis.app.ui.glass.GlassTopBar
+import com.auralis.app.ui.glass.GlassAvatarButton
 import com.auralis.app.ui.glass.LocalDockGlassStyle
 import com.auralis.app.ui.glass.resolveDockGlass
 import com.auralis.app.ui.components.AppDock
@@ -333,10 +334,22 @@ fun AuralisRoot(viewModel: AppViewModel) {
                             val glassSettings = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC &&
                                 nav.top == Destination.Settings
                             if (!glassSettings) {
+                                val glassYouTubeHome = dockStyle == DockStyle.GLASS &&
+                                    nav.top == null && nav.tab == Tab.HOME && settings.youtubeIntegration
+                                val headerTrailing: (@Composable () -> Unit)? = if (glassYouTubeHome) {
+                                    {
+                                        GlassAvatarButton(
+                                            imageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
+                                            name = auth.account?.displayName?.ifBlank { null } ?: youtubeAuth?.name,
+                                            onClick = { viewModel.push(Destination.Settings) },
+                                        )
+                                    }
+                                } else null
                                 TopBar(
                                     showBack = nav.top != null,
                                     onBack = viewModel::back,
                                     collapseProgress = { dockScroll.progress },
+                                    trailing = headerTrailing,
                                 )
                             }
                             Crossfade(
@@ -593,9 +606,14 @@ fun AuralisRoot(viewModel: AppViewModel) {
  * The large "AURALIS" wordmark collapses into a small top-bar title in sync with the dock.
  */
 @Composable
-private fun TopBar(showBack: Boolean, onBack: () -> Unit, collapseProgress: () -> Float) {
+private fun TopBar(
+    showBack: Boolean,
+    onBack: () -> Unit,
+    collapseProgress: () -> Float,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     val progress = collapseProgress()
-    if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) { GlassTopBar(showBack, onBack, progress); return }
+    if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) { GlassTopBar(showBack, onBack, progress, trailing); return }
     Row(
         modifier = Modifier
             .fillMaxWidth()
