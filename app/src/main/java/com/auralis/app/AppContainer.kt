@@ -100,7 +100,7 @@ class AppContainer(context: Context) {
     }
     /** YouTube source: keyless search + lazily resolved audio stream URLs. */
     val youtubeAuth by lazy { com.auralis.app.data.youtube.YouTubeAuthStore(appContext) }
-    val youtube: YouTubeRepository by lazy { YouTubeRepository(youtubeHttp, youtubeAuth) }
+    val youtube: YouTubeRepository by lazy { YouTubeRepository(youtubeHttp, youtubeAuth, settings) }
     /** Offline YouTube downloads: WorkManager jobs into the app's music folder. */
     val downloads by lazy { com.auralis.app.data.download.DownloadManager(appContext) }
     /** Spotify (Exportify) CSV imports: background matching into local playlists. */

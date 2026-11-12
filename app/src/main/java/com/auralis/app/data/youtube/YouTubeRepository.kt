@@ -23,9 +23,10 @@ import okhttp3.OkHttpClient
 class YouTubeRepository(
     http: OkHttpClient,
     private val authStore: YouTubeAuthStore? = null,
+    settings: com.auralis.app.data.settings.SettingsRepository? = null,
 ) {
     private val innerTube = InnerTubeClient(http, auth = { authStore?.snapshot() })
-    private val resolver = StreamResolver(http)
+    private val resolver = StreamResolver(http, settingsRepo = settings)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
@@ -187,8 +188,12 @@ class YouTubeRepository(
     suspend fun resolveBestAudio(videoId: String): ResolvedAudio = resolver.resolveBest(videoId)
 
     /** Blocking bridge for Media3's background data-source resolver (never called on the UI thread). */
-    fun resolveStreamBlocking(videoId: String, quality: StreamQuality = StreamQuality.BEST): String =
-        resolver.resolveBlocking(videoId, quality)
+    fun resolveStreamBlocking(
+        videoId: String,
+        quality: StreamQuality = StreamQuality.BEST,
+        force: ResolverKind? = null,
+        bypassCache: Boolean = false,
+    ): String = resolver.resolveBlocking(videoId, quality, force, bypassCache)
 
     /** Warm a stream URL ahead of playback so the next transition opens instantly from cache. */
     fun prefetchStream(videoId: String, quality: StreamQuality = StreamQuality.BEST) {

@@ -34,7 +34,10 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.auralis.app.AuralisApp
 import com.auralis.app.R
 import com.auralis.app.data.db.toDomain
+import com.auralis.app.data.youtube.ResolverKind
+import com.auralis.app.data.youtube.StreamResolverStatus
 import com.auralis.app.data.youtube.YOUTUBE_PLAYBACK_SCHEME
+import com.auralis.app.data.youtube.YOUTUBE_TRACK_PREFIX
 import com.auralis.app.data.youtube.YOUTUBE_USER_AGENT
 import com.auralis.app.data.youtube.normalizeArtworkUrl
 import com.auralis.app.data.youtube.videoIdFromPlaybackUri
@@ -69,6 +72,12 @@ class PlaybackService : MediaLibraryService() {
     private var autoPlayOnReady = false
     /** Consecutive "stream failed → skipped to next" attempts, to avoid an infinite failure loop. */
     private var skipRetries = 0
+    /** Part M: per-song stream-resolve retries before giving up and skipping. */
+    private var retryMediaId: String? = null
+    private var retryCount = 0
+    /** Set for the next data-source open when a stream error triggers a re-resolve. */
+    @Volatile private var forcedResolver: ResolverKind? = null
+    @Volatile private var bypassResolveCache = false
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
@@ -140,6 +149,13 @@ class PlaybackService : MediaLibraryService() {
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 crossfade?.onMediaItemTransition(reason)
+                // A new song gets a fresh stream-retry budget.
+                if (mediaItem?.mediaId != retryMediaId) {
+                    retryMediaId = mediaItem?.mediaId
+                    retryCount = 0
+                    forcedResolver = null
+                    bypassResolveCache = false
+                }
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -170,8 +186,39 @@ class PlaybackService : MediaLibraryService() {
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                // A remote stream can fail to resolve (expired/blocked URL, network change). Instead
-                // of stopping, skip to the following song and keep playing; log the reason. Give up
+                val mediaId = ownedPlayer.currentMediaItem?.mediaId
+                if (retryMediaId != mediaId) {
+                    retryMediaId = mediaId
+                    retryCount = 0
+                }
+                // Part M: a remote stream can fail because its signed URL expired or was blocked
+                // (403/410) or the source broke. Re-resolve with the OTHER resolver and resume the
+                // same position, respecting a user pause, up to MAX_STREAM_RETRIES times per song.
+                if (mediaId?.startsWith(YOUTUBE_TRACK_PREFIX) == true &&
+                    retryCount < MAX_STREAM_RETRIES &&
+                    isRetryableStreamError(error)
+                ) {
+                    retryCount++
+                    val base = resolverFromStatus()
+                    forcedResolver = if (retryCount == 1) base.other else base
+                    bypassResolveCache = true
+                    val position = ownedPlayer.currentPosition
+                    val resume = ownedPlayer.playWhenReady
+                    AppLog.w(
+                        "Playback",
+                        "Stream error (${error.errorCode}); re-resolving via ${forcedResolver?.label} " +
+                            "at ${position} ms (attempt $retryCount)",
+                        error,
+                    )
+                    runCatching {
+                        ownedPlayer.stop()
+                        ownedPlayer.seekTo(position)
+                        ownedPlayer.prepare()
+                        if (resume) ownedPlayer.play()
+                    }
+                    return
+                }
+                // Otherwise skip to the following song and keep playing; log the reason. Give up
                 // after a few failures in a row so we never spin forever.
                 if (skipRetries >= MAX_SKIP_RETRIES || !ownedPlayer.hasNextMediaItem()) {
                     AppLog.e("Playback", "Stream failed and there is no further song to try", error)
@@ -446,10 +493,38 @@ class PlaybackService : MediaLibraryService() {
             ?: return dataSpec
         val startedAt = System.currentTimeMillis()
         val quality = com.auralis.app.data.network.NetworkQuality.effective(this, settings)
-        val url = (application as AuralisApp).container.youtube.resolveStreamBlocking(videoId, quality)
+        // Part M fallback: when a retry is armed, force the other resolver and ignore the failed URL.
+        val force = forcedResolver
+        val bypass = bypassResolveCache
+        forcedResolver = null
+        bypassResolveCache = false
+        val url = (application as AuralisApp).container.youtube
+            .resolveStreamBlocking(videoId, quality, force, bypass)
         AppLog.i("Timing", "stream URL ready in ${System.currentTimeMillis() - startedAt} ms")
         return dataSpec.withUri(Uri.parse(url))
     }
+
+    /** Which resolver produced the last successful URL; the retry then prefers the other one. */
+    private fun resolverFromStatus(): ResolverKind =
+        if (StreamResolverStatus.lastResolver.contains("InnerTube")) ResolverKind.INNERTUBE else ResolverKind.NEWPIPE
+
+    /**
+     * True for failures a different stream URL can plausibly fix: an expired/blocked HTTP status
+     * (403/410 → [PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS]), connection loss, or a source
+     * format the resolver picked badly.
+     */
+    private fun isRetryableStreamError(error: androidx.media3.common.PlaybackException): Boolean =
+        when (error.errorCode) {
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+            androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            -> true
+            else -> false
+        }
 
     /**
      * Exposes next/previous to every MediaSession controller and applies the standard music
@@ -523,6 +598,8 @@ class PlaybackService : MediaLibraryService() {
         private const val PREVIOUS_RESTART_MS = 3_000L
         /** How many consecutive failed streams to auto-skip past before giving up. */
         private const val MAX_SKIP_RETRIES = 3
+        /** Part M: re-resolve attempts with the other resolver before skipping a failed song. */
+        private const val MAX_STREAM_RETRIES = 2
         private const val TAG = "AuralisService"
         private const val ROOT = "auralis_root"
         private const val LIBRARY = "auralis_library"

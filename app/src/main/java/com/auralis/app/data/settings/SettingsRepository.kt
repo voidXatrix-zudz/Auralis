@@ -23,6 +23,7 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.PerformanceMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 
@@ -87,6 +88,55 @@ private object Keys {
     val reduceBlurAndEffects = booleanPreferencesKey("reduce_blur_effects")
     val downloadLyricsWithSongs = booleanPreferencesKey("download_lyrics_with_songs")
     val cacheSizeMb = intPreferencesKey("cache_size_mb")
+    // Part M: rolling stream-resolver stats (latency + success/failure counts).
+    val resolverNpAvg = longPreferencesKey("resolver_newpipe_avg_ms")
+    val resolverNpSuccess = intPreferencesKey("resolver_newpipe_success")
+    val resolverNpFailure = intPreferencesKey("resolver_newpipe_failure")
+    val resolverItAvg = longPreferencesKey("resolver_innertube_avg_ms")
+    val resolverItSuccess = intPreferencesKey("resolver_innertube_success")
+    val resolverItFailure = intPreferencesKey("resolver_innertube_failure")
+}
+
+/**
+ * Rolling success/latency record for one stream resolver (Part M). The recent average is bounded by
+ * [MAX_SAMPLES] so a device that gets faster (or slower) over time adapts. Persisted in DataStore.
+ */
+data class ResolverStat(
+    val avgMs: Long = 0L,
+    val success: Int = 0,
+    val failure: Int = 0,
+) {
+    val total: Int get() = success + failure
+
+    /** A clear success-rate win beats latency; otherwise the lower average latency wins. */
+    fun beats(other: ResolverStat): Boolean {
+        val mine = if (total == 0) DEFAULT_RATE else success.toDouble() / total
+        val theirs = if (other.total == 0) DEFAULT_RATE else other.success.toDouble() / other.total
+        if (kotlin.math.abs(mine - theirs) > RATE_MARGIN) return mine > theirs
+        val myLatency = if (success == 0) NEUTRAL_LATENCY_MS else avgMs
+        val theirLatency = if (other.success == 0) NEUTRAL_LATENCY_MS else other.avgMs
+        return myLatency < theirLatency
+    }
+
+    /** Folds one resolution outcome into the rolling average/counters. */
+    fun updated(latencyMs: Long, succeeded: Boolean): ResolverStat {
+        val ok = success + if (succeeded) 1 else 0
+        val bad = failure + if (succeeded) 0 else 1
+        val n = (ok + bad).coerceAtMost(MAX_SAMPLES)
+        val newAvg = if (succeeded) {
+            if (n <= 1) latencyMs else (avgMs * (n - 1) + latencyMs) / n
+        } else {
+            avgMs
+        }
+        return copy(avgMs = newAvg, success = ok, failure = bad)
+    }
+
+    companion object {
+        const val MAX_SAMPLES = 20
+        const val DEFAULT_RATE = 0.5
+        const val NEUTRAL_LATENCY_MS = 4_000L
+        const val RATE_MARGIN = 0.1
+    }
 }
 
 /** Persists [AppSettings] in Preferences DataStore. Unknown or corrupt values fall back to defaults. */
@@ -98,6 +148,42 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         context.settingsStore.edit { prefs -> prefs.write(transform(prefs.toSettings())) }
+    }
+
+    /** Reads one resolver's persisted rolling stats (Part M). */
+    suspend fun resolverStat(newpipe: Boolean): ResolverStat {
+        val prefs = context.settingsStore.data.first()
+        return if (newpipe) {
+            ResolverStat(
+                avgMs = prefs[Keys.resolverNpAvg] ?: 0L,
+                success = prefs[Keys.resolverNpSuccess] ?: 0,
+                failure = prefs[Keys.resolverNpFailure] ?: 0,
+            )
+        } else {
+            ResolverStat(
+                avgMs = prefs[Keys.resolverItAvg] ?: 0L,
+                success = prefs[Keys.resolverItSuccess] ?: 0,
+                failure = prefs[Keys.resolverItFailure] ?: 0,
+            )
+        }
+    }
+
+    /** Persists one resolution outcome for the resolver race (Part M). */
+    suspend fun recordResolverResult(newpipe: Boolean, latencyMs: Long, succeeded: Boolean) {
+        context.settingsStore.edit { prefs ->
+            val avgKey = if (newpipe) Keys.resolverNpAvg else Keys.resolverItAvg
+            val okKey = if (newpipe) Keys.resolverNpSuccess else Keys.resolverItSuccess
+            val failKey = if (newpipe) Keys.resolverNpFailure else Keys.resolverItFailure
+            val current = ResolverStat(
+                avgMs = prefs[avgKey] ?: 0L,
+                success = prefs[okKey] ?: 0,
+                failure = prefs[failKey] ?: 0,
+            )
+            val next = current.updated(latencyMs, succeeded)
+            prefs[avgKey] = next.avgMs
+            prefs[okKey] = next.success
+            prefs[failKey] = next.failure
+        }
     }
 
     private fun Preferences.toSettings(): AppSettings {

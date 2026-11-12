@@ -14,7 +14,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part I — Next/previous always plays
 - [x] Part J — Better artwork + lyrics matching
 - [x] Part L — Artist photos
-- [ ] Part M — Racing stream resolvers
+- [x] Part M — Racing stream resolvers
 
 ## Notes
 - Part A: single allowed `adb logcat -d AndroidRuntime:E *:S` returned nothing (no device attached); cause found by code reading.
@@ -52,3 +52,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - `ArtistImageRepository` resolves in order: thumbnail already in hand → the artist-page header via `InnerTubeClient.artistImage(browseId)` (browse request) → Deezer public artist search (`picture_xl`) for artists without a YouTube id, only on a ≥0.75 name match. A `Semaphore(3)` gate keeps at most 3 lookups in flight; respects the Part H `fetchArtistPhotos`/`useDeezerForArtistPhotos` switches.
   - New `ArtistAvatar` composable + `LocalArtistImages` CompositionLocal (root-provided `ArtistImageResolver { viewModel.resolveArtistImage(...) }`); an initial-on-`primaryContainer` circle shows until the photo loads or when none exists.
   - Wired into Home artist cards, both Now Playing artist lines (small inline avatar), Library > Artists (Normal + Glass), and the artist collection sheet header (only when the opened card is a YouTube artist). "Clear lyrics & metadata cache" now also clears cached artist photos.
+- Part M: racing stream resolvers.
+  - `StreamResolver` now races `[NewPipe, InnerTube]`: the currently-preferred source (lower recent avg latency + higher success rate, rolling and persisted in DataStore via `ResolverStat`; NewPipe by default) starts first, the other begins if the first fails or after a 2 s hedge, first success wins and the loser is cancelled; an 8 s overall budget then logs and lets playback skip. Every win logs `resolved via <name> in <ms>`; the winner is cached (key still includes quality) so next-song prefetch uses the same race.
+  - The Part H "Stream source" setting pins Auto (race) / NewPipe only / InnerTube only via `StreamSourceMode`; `InnerTubePlayer` is unchanged.
+  - `PlaybackService` fallback: on an ExoPlayer 403/410/source error it re-resolves the same song with the other resolver (`resolveBlocking(..., force, bypassCache=true)`), seeks back to the same position and resumes, honouring a user pause — up to 2 retries per song, then the existing skip-to-next logic. The retry budget resets on every media-item transition.

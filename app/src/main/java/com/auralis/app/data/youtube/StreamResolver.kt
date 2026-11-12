@@ -1,18 +1,26 @@
 package com.auralis.app.data.youtube
 
+import com.auralis.app.data.settings.ResolverStat
+import com.auralis.app.data.settings.SettingsRepository
 import com.auralis.app.domain.model.StreamQuality
+import com.auralis.app.domain.model.StreamSourceMode
 import com.auralis.app.logging.AppLog
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.schabi.newpipe.extractor.NewPipe
@@ -28,6 +36,15 @@ object StreamResolverStatus {
     @Volatile var lastResolver: String = "—"
     @Volatile var lastResolveMs: Long = 0L
     @Volatile var newPipeAvailable: Boolean = true
+}
+
+/** Which of the two stream resolvers produced (or is being asked for) a URL (Part M). */
+enum class ResolverKind(val label: String) {
+    NEWPIPE("NewPipeExtractor"),
+    INNERTUBE("InnerTube");
+
+    /** The competing resolver used by the playback fallback. */
+    val other: ResolverKind get() = if (this == NEWPIPE) INNERTUBE else NEWPIPE
 }
 
 /**
@@ -50,20 +67,23 @@ internal fun <T> pickByQuality(items: List<T>, quality: StreamQuality, bitrateOf
 }
 
 /**
- * Resolves a YouTube video id to a directly playable audio URL.
+ * Resolves a YouTube video id to a directly playable audio URL by racing the two resolvers.
  *
- * Primary path: NewPipeExtractor. Fallback path: [InnerTubePlayer] (ANDROID_VR/IOS/ANDROID_MUSIC),
- * used when NewPipe throws a [LinkageError]/[NoSuchMethodError] — older runtimes missing Java 10+
- * methods it relies on. Every failure is caught (only [CancellationException] is rethrown) so a
- * malformed response or a runtime linkage error can never escape on ExoPlayer's loader/playback
- * threads and kill the app.
+ * In [StreamSourceMode.AUTO] the resolver with the better recent record (lower average latency and a
+ * higher success rate, persisted in DataStore; NewPipe by default) starts first. If it fails, or has
+ * not answered within [HEDGE_DELAY_MS], the other one starts at once and the first success wins; the
+ * loser is cancelled. An overall [OVERALL_TIMEOUT_MS] budget bounds the race. [StreamSourceMode.NEWPIPE]
+ * and [StreamSourceMode.INNERTUBE] pin the source. Every failure is caught (only [CancellationException]
+ * is rethrown) so a malformed response or a runtime linkage error can never escape on ExoPlayer's
+ * loader/playback threads and kill the app.
  *
- * URLs are signed and expire, so they are cached in memory for [CACHE_TTL_MS]. The cache key
- * includes the [StreamQuality] so a network change re-resolves at the new quality next song.
+ * URLs are signed and expire, so they are cached in memory for [CACHE_TTL_MS]. The cache key includes
+ * the [StreamQuality] so a network change re-resolves at the new quality next song.
  */
 class StreamResolver(
     private val http: OkHttpClient,
     private val innerTubePlayer: InnerTubePlayer = InnerTubePlayer(http),
+    private val settingsRepo: SettingsRepository? = null,
 ) {
     private val downloader = NewPipeDownloader(http)
     private val cache = ConcurrentHashMap<String, CachedStream>()
@@ -71,14 +91,48 @@ class StreamResolver(
     private val inFlightLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    suspend fun resolve(videoId: String, quality: StreamQuality = StreamQuality.BEST): String =
-        withContext(Dispatchers.IO) {
-            val key = cacheKey(videoId, quality)
+    /** User's "Stream source" choice (Part H), kept in sync from DataStore. */
+    @Volatile private var sourceMode: StreamSourceMode = StreamSourceMode.AUTO
+
+    /** Rolling stats; NewPipe is preferred until the InnerTube record is clearly better. */
+    private val statLock = Any()
+    private var newPipeStat = ResolverStat()
+    private var innerTubeStat = ResolverStat()
+    @Volatile private var preferNewPipe = true
+
+    init {
+        val repo = settingsRepo
+        if (repo != null) {
+            scope.launch { repo.settings.collect { sourceMode = it.streamSource } }
+            scope.launch {
+                val np = runCatching { repo.resolverStat(newpipe = true) }.getOrDefault(ResolverStat())
+                val it = runCatching { repo.resolverStat(newpipe = false) }.getOrDefault(ResolverStat())
+                synchronized(statLock) {
+                    newPipeStat = np
+                    innerTubeStat = it
+                    preferNewPipe = if (np.total == 0 && it.total == 0) true else np.beats(it)
+                }
+            }
+        }
+    }
+
+    suspend fun resolve(
+        videoId: String,
+        quality: StreamQuality = StreamQuality.BEST,
+        force: ResolverKind? = null,
+        bypassCache: Boolean = false,
+    ): String = withContext(Dispatchers.IO) {
+        val key = cacheKey(videoId, quality)
+        if (bypassCache) {
+            // Playback fallback: the cached URL just failed, so re-resolve (and replace) it.
+            extractWithRetry(videoId, quality, force)
+        } else {
             cache[key]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let {
                 return@withContext it.url
             }
-            inFlightFor(videoId, quality).await()
+            inFlightFor(videoId, quality, force).await()
         }
+    }
 
     /** Best downloadable audio: Opus when available, otherwise AAC/M4A. */
     suspend fun resolveBest(videoId: String): ResolvedAudio = withContext(Dispatchers.IO) {
@@ -86,15 +140,19 @@ class StreamResolver(
     }
 
     /** Blocking bridge for [androidx.media3.datasource.ResolvingDataSource] on its loader thread. */
-    fun resolveBlocking(videoId: String, quality: StreamQuality = StreamQuality.BEST): String =
-        runBlocking { resolve(videoId, quality) }
+    fun resolveBlocking(
+        videoId: String,
+        quality: StreamQuality = StreamQuality.BEST,
+        force: ResolverKind? = null,
+        bypassCache: Boolean = false,
+    ): String = runBlocking { resolve(videoId, quality, force, bypassCache) }
 
     private fun cacheKey(videoId: String, quality: StreamQuality): String = "$videoId@${quality.name}"
 
-    private fun inFlightFor(videoId: String, quality: StreamQuality): Deferred<String> = synchronized(inFlightLock) {
-        val key = cacheKey(videoId, quality)
+    private fun inFlightFor(videoId: String, quality: StreamQuality, force: ResolverKind?): Deferred<String> = synchronized(inFlightLock) {
+        val key = inFlightKey(videoId, quality, force)
         inFlight[key]?.let { return it }
-        val job = scope.async { extractWithRetry(videoId, quality) }
+        val job = scope.async { extractWithRetry(videoId, quality, force) }
         inFlight[key] = job
         job.invokeOnCompletion {
             synchronized(inFlightLock) {
@@ -104,56 +162,132 @@ class StreamResolver(
         job
     }
 
-    private suspend fun extractWithRetry(videoId: String, quality: StreamQuality): String = withContext(Dispatchers.IO) {
-        val startedAt = System.currentTimeMillis()
-        var lastError: Throwable? = null
-        val key = cacheKey(videoId, quality)
+    private fun inFlightKey(videoId: String, quality: StreamQuality, force: ResolverKind?): String =
+        "$videoId@${quality.name}@${force?.name ?: "auto"}"
 
-        repeat(ATTEMPTS) { attempt ->
+    /** The resolver order for this request: pinned, forced, or the AUTO race preference. */
+    private fun candidates(force: ResolverKind?): List<ResolverKind> = when {
+        force != null -> listOf(force)
+        sourceMode == StreamSourceMode.NEWPIPE -> listOf(ResolverKind.NEWPIPE)
+        sourceMode == StreamSourceMode.INNERTUBE -> listOf(ResolverKind.INNERTUBE)
+        !StreamResolverStatus.newPipeAvailable -> listOf(ResolverKind.INNERTUBE, ResolverKind.NEWPIPE)
+        preferNewPipe -> listOf(ResolverKind.NEWPIPE, ResolverKind.INNERTUBE)
+        else -> listOf(ResolverKind.INNERTUBE, ResolverKind.NEWPIPE)
+    }
+
+    private suspend fun extractWithRetry(
+        videoId: String,
+        quality: StreamQuality,
+        force: ResolverKind?,
+    ): String = withContext(Dispatchers.IO) {
+        val startedAt = System.currentTimeMillis()
+        val key = cacheKey(videoId, quality)
+        val resolution = race(videoId, quality, candidates(force))
+        cache[key] = CachedStream(resolution.url, System.currentTimeMillis() + CACHE_TTL_MS)
+        // Keep the audio host warm: PlaybackService uses the same OkHttp client, so this 2-byte range
+        // request leaves a pooled connection ready for the first real read.
+        scope.launch { warmConnection(resolution.url) }
+        val elapsed = System.currentTimeMillis() - startedAt
+        StreamResolverStatus.lastResolver = resolution.kind.label
+        StreamResolverStatus.lastResolveMs = elapsed
+        AppLog.i(TAG, "resolved via ${resolution.kind.label} in $elapsed ms")
+        resolution.url
+    }
+
+    private data class Resolution(val kind: ResolverKind, val url: String)
+
+    /**
+     * Runs the resolver candidates. A single candidate (pinned/forced) is a plain attempt; two are
+     * raced: the second starts when the first fails or after [HEDGE_DELAY_MS], and the first success
+     * wins. Throws the last error if neither succeeds before [OVERALL_TIMEOUT_MS].
+     */
+    private suspend fun race(
+        videoId: String,
+        quality: StreamQuality,
+        candidates: List<ResolverKind>,
+    ): Resolution = coroutineScope {
+        if (candidates.size == 1) {
+            return@coroutineScope attempt(candidates.first(), videoId, quality)
+        }
+        val first = candidates[0]
+        val second = candidates[1]
+        val firstFailed = CompletableDeferred<Unit>()
+        val outcome = CompletableDeferred<Resolution>()
+        val lastError = AtomicReference<Throwable?>(null)
+
+        val firstJob = launch {
             try {
-                val url = extract(videoId, quality)
-                cache[key] = CachedStream(url, System.currentTimeMillis() + CACHE_TTL_MS)
-                // Keep the audio host warm: PlaybackService uses the same OkHttp client, so this
-                // 2-byte range request leaves a pooled connection ready for the first real read.
-                scope.launch { warmConnection(url) }
-                val elapsed = System.currentTimeMillis() - startedAt
-                StreamResolverStatus.lastResolver = "NewPipeExtractor"
-                StreamResolverStatus.lastResolveMs = elapsed
-                AppLog.i(TAG, "resolved via NewPipeExtractor in $elapsed ms (attempt ${attempt + 1})")
-                return@withContext url
+                outcome.complete(attempt(first, videoId, quality))
             } catch (cancel: CancellationException) {
                 throw cancel
-            } catch (unavailable: NewPipeUnavailableException) {
-                // NewPipe is unusable for this session; do not burn the retry budget on it.
-                lastError = unavailable.cause
-                AppLog.w(TAG, "NewPipeExtractor unavailable; falling back to InnerTube", unavailable.cause)
             } catch (error: Throwable) {
-                lastError = error
-                AppLog.w(TAG, "Stream resolution attempt ${attempt + 1} failed", error)
-                if (attempt < ATTEMPTS - 1) delay(RETRY_DELAY_MS)
+                lastError.set(error)
+                firstFailed.complete(Unit)
             }
         }
-
-        // Fallback: resolve through InnerTube directly.
+        val secondJob = launch {
+            // Hedge: start the other resolver as soon as the first fails, or after the delay.
+            if (!firstFailed.isCompleted) withTimeoutOrNull(HEDGE_DELAY_MS) { firstFailed.await() }
+            if (outcome.isCompleted) return@launch
+            try {
+                outcome.complete(attempt(second, videoId, quality))
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                lastError.compareAndSet(null, error)
+            }
+        }
         try {
-            val url = innerTubeAudioUrl(videoId, quality)
-            if (url != null) {
-                cache[key] = CachedStream(url, System.currentTimeMillis() + CACHE_TTL_MS)
-                scope.launch { warmConnection(url) }
-                val elapsed = System.currentTimeMillis() - startedAt
-                StreamResolverStatus.lastResolver = "InnerTube"
-                StreamResolverStatus.lastResolveMs = elapsed
-                AppLog.i(TAG, "resolved via InnerTube in $elapsed ms")
-                return@withContext url
+            withTimeout(OVERALL_TIMEOUT_MS) { outcome.await() }
+        } catch (timeout: TimeoutCancellationException) {
+            AppLog.w(TAG, "Stream resolution timed out after $OVERALL_TIMEOUT_MS ms")
+            throw (lastError.get() ?: IllegalStateException("Stream resolution timed out"))
+        } finally {
+            firstJob.cancel()
+            secondJob.cancel()
+        }
+    }
+
+    /** One resolver attempt, recorded against its rolling stats. */
+    private suspend fun attempt(kind: ResolverKind, videoId: String, quality: StreamQuality): Resolution =
+        withContext(Dispatchers.IO) {
+            val t0 = System.currentTimeMillis()
+            try {
+                val url = when (kind) {
+                    ResolverKind.NEWPIPE -> extract(videoId, quality)
+                    ResolverKind.INNERTUBE -> innerTubeAudioUrl(videoId, quality)
+                        ?: throw IllegalStateException("InnerTube returned no audio stream")
+                }
+                record(kind, System.currentTimeMillis() - t0, succeeded = true)
+                Resolution(kind, url)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                record(kind, System.currentTimeMillis() - t0, succeeded = false)
+                AppLog.w(TAG, "${kind.label} resolve failed", error)
+                throw error
             }
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (error: Throwable) {
-            lastError = error
         }
 
-        AppLog.e(TAG, "Could not resolve a playable stream", lastError)
-        throw lastError ?: IllegalStateException("No playable audio stream for this song")
+    /** Folds an outcome into the in-memory preference and persists it to DataStore. */
+    private fun record(kind: ResolverKind, latencyMs: Long, succeeded: Boolean) {
+        synchronized(statLock) {
+            if (kind == ResolverKind.NEWPIPE) {
+                newPipeStat = newPipeStat.updated(latencyMs, succeeded)
+            } else {
+                innerTubeStat = innerTubeStat.updated(latencyMs, succeeded)
+            }
+            preferNewPipe = if (newPipeStat.total == 0 && innerTubeStat.total == 0) {
+                true
+            } else {
+                newPipeStat.beats(innerTubeStat)
+            }
+        }
+        settingsRepo?.let { repo ->
+            scope.launch {
+                runCatching { repo.recordResolverResult(kind == ResolverKind.NEWPIPE, latencyMs, succeeded) }
+            }
+        }
     }
 
     /** NewPipe extraction. Runs off the caller's thread; throws [NewPipeUnavailableException] on linkage errors. */
@@ -260,8 +394,10 @@ class StreamResolver(
         const val TAG = "YouTube"
         const val WATCH_URL = "https://www.youtube.com/watch?v="
         const val USER_AGENT = YOUTUBE_USER_AGENT
-        const val ATTEMPTS = 2
-        const val RETRY_DELAY_MS = 600L
+        /** Start the competing resolver if the first has not answered in this long. */
+        const val HEDGE_DELAY_MS = 2_000L
+        /** Give up on the whole race after this long and let the caller skip. */
+        const val OVERALL_TIMEOUT_MS = 8_000L
         const val CACHE_TTL_MS = 55 * 60 * 1000L
         val lock = Any()
 
