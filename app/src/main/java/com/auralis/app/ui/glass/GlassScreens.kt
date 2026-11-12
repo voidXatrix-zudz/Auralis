@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
+import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.theme.GlassTokens
 import java.time.LocalTime
@@ -483,10 +484,21 @@ fun GlassLibraryScreen(
                     }
                 }
             }
-            2, 3 -> {
-                val values = remember(tracks, selected) {
-                    if (selected == 2) tracks.map { it.artist }.distinct().sorted() else tracks.flatMap { it.genres }.distinct().sorted()
+            2 -> {
+                val values = remember(tracks) { tracks.map { it.artist }.distinct().sorted() }
+                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(values) { value ->
+                        GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd)) {
+                            Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                ArtistAvatar(name = value, size = 40.dp)
+                                Text(value.ifBlank { "Unknown" }, Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
                 }
+            }
+            3 -> {
+                val values = remember(tracks) { tracks.flatMap { it.genres }.distinct().sorted() }
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(values) { value ->
                         GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd)) {

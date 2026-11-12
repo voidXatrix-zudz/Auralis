@@ -39,6 +39,7 @@ class YouTubeRepository(
     private val cardCache = LruCache<String, List<YtCard>>(SEARCH_CACHE_ENTRIES)
     private val browseCardCache = LruCache<String, List<YtCard>>(SEARCH_CACHE_ENTRIES)
     private val browseCache = LruCache<String, List<YtSong>>(SEARCH_CACHE_ENTRIES)
+    private val artistImageCache = LruCache<String, String>(SEARCH_CACHE_ENTRIES)
     private val radioTokens = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /**
@@ -118,6 +119,14 @@ class YouTubeRepository(
             if (cards.isNotEmpty()) browseCardCache.put(browseId, cards)
             cards
         }
+    }
+
+    /** The artist page header image (Part L); session-cached, null when the page has none. */
+    suspend fun artistImage(browseId: String): String? {
+        artistImageCache.get(browseId)?.let { return it.ifBlank { null } }
+        val image = once("artistimage:$browseId") { innerTube.artistImage(browseId).orEmpty() }
+        artistImageCache.put(browseId, image)
+        return image.ifBlank { null }
     }
 
     /** InnerTube "Up next" automix for a video id. The returned page also stores its continuation. */

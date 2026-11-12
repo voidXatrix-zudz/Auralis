@@ -106,6 +106,9 @@ data class HomeUiState(
     val collectionLoading: Boolean = false,
     val collectionSeedVideoId: String? = null,
     val collectionMore: Boolean = false,
+    /** Artist-page header (Part L): set only when the opened card is a YouTube artist. */
+    val collectionArtistBrowseId: String? = null,
+    val collectionArtistImageUrl: String? = null,
 )
 
 /** Sign-in gate state: which of "loading / signed out / signed in" the Clerk layer is in. */
@@ -756,7 +759,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             playYouTubeCard(card)
             return
         }
-        _home.update { it.copy(collectionTitle = card.title, collectionTracks = emptyList(), collectionLoading = true) }
+        _home.update {
+            it.copy(
+                collectionTitle = card.title,
+                collectionTracks = emptyList(),
+                collectionLoading = true,
+                // An artist card carries a channel id ("UC...") and no video id; albums/playlists do not.
+                collectionArtistBrowseId = card.browseId?.takeIf { id -> card.videoId == null && id.startsWith("UC") },
+                collectionArtistImageUrl = card.thumbnailUrl,
+            )
+        }
         viewModelScope.launch {
             val songs = if (card.browseId != null) {
                 runCatching { container.youtube.browseSongs(card.browseId) }.getOrDefault(emptyList())
@@ -770,7 +782,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun closeHomeCollection() {
-        _home.update { it.copy(collectionTitle = null, collectionTracks = emptyList(), collectionLoading = false) }
+        _home.update { it.copy(collectionTitle = null, collectionTracks = emptyList(), collectionLoading = false, collectionArtistBrowseId = null, collectionArtistImageUrl = null) }
     }
 
     private suspend fun runHomeRow(spec: HomeSectionSpec) {
@@ -1306,6 +1318,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
     }
+
+    /**
+     * Resolves a circular artist photo (Part L). [knownUrl] is used directly when the caller already
+     * has one; otherwise the browse id or a close Deezer name match is looked up off the main thread.
+     * Results (and 7-day negatives) are cached in Room so lists never block while scrolling.
+     */
+    suspend fun resolveArtistImage(name: String, browseId: String?, knownUrl: String?): String? =
+        runCatching { container.artistImages.resolve(name, browseId, knownUrl) }
+            .onFailure { AppLog.w("ArtistPhotos", "Couldn't resolve a photo for $name", it) }
+            .getOrNull()
 
     /** Upgrades a YouTube video thumbnail to real square album art; updates the UI and notification. */
     private fun ensureArtwork(trackId: String?) {
@@ -1937,6 +1959,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             runCatching {
                 container.lyrics.clearProviderCache()
                 container.database.providerCacheDao().clearKind("metadata")
+                container.artistImages.clearAll()
             }.onSuccess { _messages.trySend("Lyrics and metadata cache cleared") }
                 .onFailure { report("Couldn't clear the cache", it) }
         }

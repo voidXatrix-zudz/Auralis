@@ -15,7 +15,9 @@ import com.auralis.app.ui.components.AppDock
 import com.auralis.app.ui.components.DockMetrics
 import com.auralis.app.ui.components.DockScrollState
 import com.auralis.app.ui.components.DockStyle
+import com.auralis.app.ui.components.ArtistImageResolver
 import com.auralis.app.ui.components.DownloadActions
+import com.auralis.app.ui.components.LocalArtistImages
 import com.auralis.app.ui.components.LocalDownloadActions
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.components.rememberDockScrollState
@@ -304,6 +306,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             // Glass content draws edge-to-edge under the dock and reserves this inside its lists.
             LocalDockBottomInset provides if (dockStyle == DockStyle.GLASS) DockMetrics.GlassExpandedHeight + DockMetrics.GlassBottomMargin else 0.dp,
             LocalDownloadActions provides DownloadActions(downloadedIds, viewModel::downloadTrack, viewModel::deleteDownload),
+            LocalArtistImages provides ArtistImageResolver { name, browseId, knownUrl -> viewModel.resolveArtistImage(name, browseId, knownUrl) },
         ) {
         AuralisBackdrop(themeStyle = settings.themeStyle, artColor = currentTrack?.artColor, tier = profile.tier) {
             if (nowPlayingOpen && currentTrack != null) {

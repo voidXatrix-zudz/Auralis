@@ -13,7 +13,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part H — Settings redesign (both themes)
 - [x] Part I — Next/previous always plays
 - [x] Part J — Better artwork + lyrics matching
-- [ ] Part L — Artist photos
+- [x] Part L — Artist photos
 - [ ] Part M — Racing stream resolvers
 
 ## Notes
@@ -47,3 +47,8 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - Local art: `MusicScanner` now falls back to `folder.jpg` → `cover.jpg` → `folder.png` (SAF `DocumentFile` siblings and a cached MediaStore query) via `ArtworkStore.saveFolderArt`, after embedded then MediaStore album art; nothing is written into the audio file.
   - Lyrics: `LyricsMatcher` gains `isSlowedOrSped`; `Lyrics` carries `provider`, `confidence` and `outOfSync`; `LyricsRepository.parseWithProvider` scores the LRC header, and slowed/sped-up songs keep synced lyrics only when `[length:]` still matches (else `outOfSync`).
   - Per-song lyrics offset (−5 s…+5 s) saved in `provider_cache` kind `lyrics_offset`; `AppViewModel.adjustTrackLyricsOffset`/`resetTrackLyricsOffset`; applied on top of the global offset. Lyrics "…" menu gains earlier/later/reset; the source chip shows provider + confidence %, and an "may be out of sync" chip appears when flagged.
+- Part L: circular artist photos everywhere an artist is shown.
+  - New `artist_images` Room table (DB v9→v10 + `MIGRATION_9_10`) caches positives and 7-day negatives keyed by `yt:<browseId>` or `name:<normalised artist>`.
+  - `ArtistImageRepository` resolves in order: thumbnail already in hand → the artist-page header via `InnerTubeClient.artistImage(browseId)` (browse request) → Deezer public artist search (`picture_xl`) for artists without a YouTube id, only on a ≥0.75 name match. A `Semaphore(3)` gate keeps at most 3 lookups in flight; respects the Part H `fetchArtistPhotos`/`useDeezerForArtistPhotos` switches.
+  - New `ArtistAvatar` composable + `LocalArtistImages` CompositionLocal (root-provided `ArtistImageResolver { viewModel.resolveArtistImage(...) }`); an initial-on-`primaryContainer` circle shows until the photo loads or when none exists.
+  - Wired into Home artist cards, both Now Playing artist lines (small inline avatar), Library > Artists (Normal + Glass), and the artist collection sheet header (only when the opened card is a YouTube artist). "Clear lyrics & metadata cache" now also clears cached artist photos.

@@ -38,6 +38,7 @@ import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.HomeCategory
 import com.auralis.app.ui.HomeRow
 import com.auralis.app.ui.HomeUiState
+import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.theme.LocalThemeStyle
 
@@ -137,6 +138,8 @@ fun YouTubeHomeScreen(
     if (collectionTitle != null) {
         CollectionSheet(
             title = collectionTitle,
+            artistBrowseId = state.collectionArtistBrowseId,
+            artistImageUrl = state.collectionArtistImageUrl,
             tracks = state.collectionTracks,
             loading = state.collectionLoading,
             onPlayTrack = onPlayTrack,
@@ -390,10 +393,11 @@ private fun ArtistCard(card: YtCard, onOpen: (YtCard) -> Unit) {
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        ArtworkImage(
-            artUri = card.thumbnailUrl,
-            shape = CircleShape,
-            modifier = Modifier.size(112.dp),
+        ArtistAvatar(
+            name = card.title,
+            browseId = card.browseId,
+            imageUrl = card.thumbnailUrl,
+            size = 112.dp,
         )
         Text(
             card.title,
@@ -517,15 +521,34 @@ private fun CollectionSheet(
     onPlayTrack: (Track) -> Unit,
     onLike: (Track) -> Unit,
     onDismiss: () -> Unit,
+    artistBrowseId: String? = null,
+    artistImageUrl: String? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-        )
+        if (artistBrowseId != null) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ArtistAvatar(name = title, browseId = artistBrowseId, imageUrl = artistImageUrl, size = 56.dp)
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
+            }
+        } else {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            )
+        }
         when {
             loading && tracks.isEmpty() -> Box(
                 Modifier.fillMaxWidth().height(160.dp),

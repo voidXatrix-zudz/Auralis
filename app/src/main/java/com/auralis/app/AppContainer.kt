@@ -56,6 +56,15 @@ class AppContainer(context: Context) {
     val artworkResolver: com.auralis.app.data.artwork.ArtworkResolver by lazy {
         com.auralis.app.data.artwork.ArtworkResolver(database.providerCacheDao(), metadataRepository)
     }
+    /** Circular artist photos with Room cache (Part L). */
+    val artistImages: com.auralis.app.data.artists.ArtistImageRepository by lazy {
+        com.auralis.app.data.artists.ArtistImageRepository(
+            database.artistImageDao(),
+            settings,
+            youtube,
+            youtubeHttp,
+        )
+    }
     val metadata: MetadataEditor by lazy { MetadataEditor(appContext) }
     /** GitHub release checks, APK download and the package-installer hand-off. */
     val updates: UpdateManager by lazy { UpdateManager(appContext, settings) }

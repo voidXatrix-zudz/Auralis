@@ -129,6 +129,7 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.components.AudioInfoSheet
+import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.LocalDownloadActions
 import com.auralis.app.ui.components.PlayerBackgroundImage
 import com.auralis.app.ui.components.QualityBadgeContent
@@ -434,7 +435,10 @@ fun GlassNowPlayingScreen(
                                             },
                                     ) {
                                         Text(track.title.ifBlank { track.displayName }, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            ArtistAvatar(name = track.artist, size = 20.dp)
+                                            Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        }
                                         Text(track.album.ifBlank { "Unknown album" }, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     Spacer(Modifier.width(8.dp))

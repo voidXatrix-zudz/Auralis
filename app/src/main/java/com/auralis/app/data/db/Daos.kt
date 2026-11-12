@@ -417,3 +417,16 @@ interface ProviderCacheDao {
     @Query("DELETE FROM provider_cache")
     suspend fun clearAll()
 }
+
+/** Cached circular artist photos (Part L): positives and 7-day negatives, keyed by browse id or name. */
+@Dao
+interface ArtistImageDao {
+    @Upsert
+    suspend fun upsert(entry: ArtistImageEntity)
+
+    @Query("SELECT * FROM artist_images WHERE key = :key")
+    suspend fun get(key: String): ArtistImageEntity?
+
+    @Query("DELETE FROM artist_images")
+    suspend fun clearAll()
+}

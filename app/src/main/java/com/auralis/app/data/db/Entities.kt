@@ -368,3 +368,16 @@ data class ProviderCacheEntity(
     val found: Boolean,
     val updatedAt: Long,
 )
+
+/**
+ * Cached circular artist photo (Part L). [key] is "yt:<browseId>" when known, else
+ * "name:<normalised artist>". A row with a blank [url] is a 7-day negative marker so we do not
+ * re-query on every frame while scrolling.
+ */
+@Entity(tableName = "artist_images", indices = [Index("fetchedAt")])
+data class ArtistImageEntity(
+    @PrimaryKey val key: String,
+    val url: String,
+    val source: String,
+    val fetchedAt: Long,
+)

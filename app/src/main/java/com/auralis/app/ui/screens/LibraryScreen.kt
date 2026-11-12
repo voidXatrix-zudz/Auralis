@@ -22,6 +22,7 @@ import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
+import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.SectionTitle
 
 private val LibraryTabs = listOf("Songs", "Albums", "Artists", "Genres", "Favorites", "Playlists")
@@ -92,10 +93,19 @@ fun LibraryScreen(
                     }
                 }
             }
-            2, 3 -> {
-                val values = remember(tracks, selected) {
-                    if (selected == 2) tracks.map { it.artist }.distinct().sorted() else tracks.flatMap { it.genres }.distinct().sorted()
+            2 -> {
+                val values = remember(tracks) { tracks.map { it.artist }.distinct().sorted() }
+                LazyColumn(contentPadding = PaddingValues(16.dp)) {
+                    items(values) { artist ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            ArtistAvatar(name = artist, size = 44.dp)
+                            Text(artist, Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
+            }
+            3 -> {
+                val values = remember(tracks) { tracks.flatMap { it.genres }.distinct().sorted() }
                 LazyColumn(contentPadding = PaddingValues(16.dp)) { items(values) { Text(it, Modifier.fillMaxWidth().padding(vertical = 12.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface) } }
             }
             4 -> {

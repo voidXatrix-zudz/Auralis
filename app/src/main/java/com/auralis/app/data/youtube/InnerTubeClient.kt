@@ -227,6 +227,22 @@ class InnerTubeClient(
         out.distinctBy { it.videoId ?: it.browseId ?: it.title }
     }
 
+    /**
+     * The artist page header image (Part L), used when an artist card carries a browse id but no
+     * thumbnail. Reads the immersive/visual header renderer's largest thumbnail.
+     */
+    suspend fun artistImage(browseId: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            val root = browseRoot(browseId)
+            val header = root["header"]?.asObject() ?: return@runCatching null
+            val renderer = header["musicImmersiveHeaderRenderer"]?.asObject()
+                ?: header["musicVisualHeaderRenderer"]?.asObject()
+                ?: return@runCatching null
+            renderer.thumbnailArray()?.lastOrNull()?.asObject()?.get("url")?.asString()
+                ?.let(::normalizeArtworkUrl)
+        }.getOrNull()
+    }
+
     /** Display name and avatar for the signed-in account, if the account menu exposes them. */
     suspend fun accountInfo(): Pair<String, String>? = withContext(Dispatchers.IO) {
         runCatching {
