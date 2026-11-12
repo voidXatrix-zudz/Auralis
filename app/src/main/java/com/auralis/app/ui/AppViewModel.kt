@@ -14,6 +14,7 @@ import com.auralis.app.data.db.QueueItemEntity
 import com.auralis.app.data.db.SearchHistoryEntity
 import com.auralis.app.data.db.SpotifyImportEntity
 import com.auralis.app.data.db.SpotifyImportItemEntity
+import com.auralis.app.data.db.YouTubeSyncOpEntity
 import com.auralis.app.data.db.toDomain
 import com.auralis.app.data.db.toYouTubeLikeEntity
 import com.auralis.app.data.db.toYouTubeRecentEntity
@@ -233,6 +234,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private var lastRecordedTrackId: String? = null
     private var lastRecordedRemoteId: String? = null
     private var historyWatchedId: String? = null
+    /** Guards [flushYouTubeSync] so its queue replay never runs twice at once. */
+    private var syncFlushing = false
 
     init {
         // The updater runs one throttled check per launch; its user-facing messages reuse the
@@ -436,6 +439,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                             val count = container.database.youtubeDao().playCountOf(videoId) ?: 0
                             container.database.youtubeDao().upsertRecent(current.toYouTubeRecentEntity(count + 1))
                         }.onFailure { report("Couldn't save history", it) }
+                    }
+                    // Signed-in history sync: tell YouTube this really played. Fired on a background
+                    // job and fully swallowed so it can never block or break playback.
+                    if (settings.value.youtubeSyncHistory && container.youtubeAuth.snapshot()?.signedIn == true) {
+                        val watchedSeconds = state.positionMs / 1000L
+                        viewModelScope.launch {
+                            runCatching { container.youtube.reportPlayback(videoId, watchedSeconds) }
+                                .onFailure { AppLog.d("YouTube", "History report skipped: ${it.message}") }
+                        }
                     }
                 }
                 val remoteAhead = state.upNextIds.count { it.startsWith(YOUTUBE_TRACK_PREFIX) }
@@ -1042,6 +1054,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         refreshYouTubeHome()
         refreshYouTubeLibrary()
         _messages.trySend("Signed in to YouTube Music")
+        // Any playlist edits made while signed out/failed are now retryable.
+        flushYouTubeSync()
     }
 
     fun signOutYouTube() {
@@ -1077,7 +1091,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 if (wasLiked) container.database.youtubeDao().deleteLike(videoId)
                 else container.database.youtubeDao().upsertLike(track.toYouTubeLikeEntity())
             }.onFailure { report("Couldn't update likes", it) }
-            if (container.youtubeAuth.snapshot()?.signedIn == true) {
+            if (settings.value.youtubeSyncLikes && container.youtubeAuth.snapshot()?.signedIn == true) {
                 runCatching { container.youtube.setLiked(videoId, !wasLiked) }
                     .onFailure { AppLog.w("YouTube", "Like sync skipped", it) }
             }
@@ -1138,7 +1152,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun installUpdate() = container.updates.installDownloaded()
     fun openUpdatePage() = container.updates.openReleasePage()
     /** Called from MainActivity.onResume to finish an install after the permission screen. */
-    fun onAppResumed() = container.updates.onAppForeground()
+    fun onAppResumed() {
+        container.updates.onAppForeground()
+        // Coming back to the foreground is a good moment to push any queued playlist changes.
+        flushYouTubeSync()
+    }
 
     fun addFolder(uri: Uri) { viewModelScope.launch {
         container.sources.addTreeSource(uri).onSuccess { _messages.trySend("Added “${it.name}”"); scanLibrary() }
@@ -1334,9 +1352,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { runCatching { container.database.favoriteDao().toggle(track.id, System.currentTimeMillis()) }.onFailure { report("Couldn't update favorite", it) } }
     }
     fun createPlaylist(name: String) { viewModelScope.launch {
-        if (name.isBlank()) return@launch
-        runCatching { container.database.playlistDao().insert(PlaylistEntity(name=name.trim(),createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis())) }
-            .onSuccess { _messages.trySend("Playlist created") }.onFailure { report("Couldn't create playlist", it) }
+        val clean = name.trim()
+        if (clean.isBlank()) return@launch
+        val now = System.currentTimeMillis()
+        val localId = runCatching {
+            container.database.playlistDao().insert(PlaylistEntity(name = clean, createdAt = now, updatedAt = now))
+        }.onSuccess { _messages.trySend("Playlist created") }
+            .onFailure { report("Couldn't create playlist", it) }
+            .getOrNull() ?: return@launch
+        syncPlaylistCreate(localId, clean)
     } }
     fun renamePlaylist(playlistId: Long, name: String) {
         val clean = name.trim()
@@ -1344,12 +1368,18 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { container.database.playlistDao().rename(playlistId, clean, System.currentTimeMillis()) }
                 .onFailure { report("Couldn't rename playlist", it) }
+            syncPlaylistRename(playlistId, clean)
         }
     }
     fun deletePlaylist(playlistId: Long) {
         viewModelScope.launch {
+            val remote = runCatching { container.database.playlistDao().remoteIdOf(playlistId) }.getOrNull()
             runCatching { container.database.playlistDao().delete(playlistId) }
                 .onSuccess { _messages.trySend("Playlist deleted") }.onFailure { report("Couldn't delete playlist", it) }
+            if (!remote.isNullOrBlank() && settings.value.youtubeSyncPlaylists && youTubeSignedIn()) {
+                val ok = runCatching { container.youtube.deletePlaylist(remote) }.getOrDefault(false)
+                if (!ok) enqueueSync(kind = "DELETE", playlistId = 0L, remoteId = remote, videoId = null, title = null)
+            }
         }
     }
     fun addToPlaylist(playlistId: Long, track: Track) {
@@ -1364,7 +1394,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 dao.insertEntries(listOf(PlaylistEntryEntity(playlistId=playlistId,trackId=track.id,position=position)))
             }
             dao.touch(playlistId,System.currentTimeMillis())
-        }.onSuccess { _messages.trySend("Added to playlist") }.onFailure { report("Couldn't add song to playlist", it) } }
+        }.onSuccess { _messages.trySend("Added to playlist") }.onFailure { report("Couldn't add song to playlist", it) }
+            // Only streamed songs exist on YouTube; local-only songs are skipped.
+            if (track.isRemote) syncPlaylistAdd(playlistId, track)
+        }
     }
     fun removePlaylistItem(playlistId: Long, item: PlaylistItem) {
         viewModelScope.launch { runCatching {
@@ -1376,7 +1409,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 dao.removeEntry(playlistId, item.track.id)
             }
             dao.touch(playlistId, System.currentTimeMillis())
-        }.onFailure { report("Couldn't remove song from playlist", it) } }
+        }.onFailure { report("Couldn't remove song from playlist", it) }
+            if (item.remote) syncPlaylistRemove(playlistId, item)
+        }
     }
     /** Moves one entry by [delta] slots (+1 down, -1 up) and rewrites both tables' positions. */
     fun movePlaylistItem(playlistId: Long, item: PlaylistItem, delta: Int) {
@@ -1391,6 +1426,127 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 if (entry.remote) dao.setYtPosition(entry.entryId, position) else dao.setPosition(entry.entryId, position)
             }
         }.onFailure { report("Couldn't reorder the playlist", it) } }
+    }
+
+    // ---- YouTube Music account sync (Part E) ------------------------------------------------
+
+    private fun youTubeSignedIn(): Boolean = container.youtubeAuth.snapshot()?.signedIn == true
+
+    /**
+     * Mirrors a freshly created local playlist to the account. Only does work when playlist sync is
+     * enabled and a YouTube session exists; a transient failure is queued for [flushYouTubeSync].
+     */
+    private suspend fun syncPlaylistCreate(localId: Long, title: String) {
+        if (!settings.value.youtubeSyncPlaylists || !youTubeSignedIn()) return
+        val remote = runCatching { container.youtube.createPlaylist(title) }.getOrNull()
+        if (!remote.isNullOrBlank()) {
+            runCatching { container.database.playlistDao().setRemoteId(localId, remote) }
+                .onFailure { AppLog.w("YouTube", "Couldn't store the remote playlist id", it) }
+        } else {
+            enqueueSync("CREATE", localId, null, null, title)
+        }
+    }
+
+    private suspend fun syncPlaylistRename(playlistId: Long, title: String) {
+        if (!settings.value.youtubeSyncPlaylists || !youTubeSignedIn()) return
+        val remote = runCatching { container.database.playlistDao().remoteIdOf(playlistId) }.getOrNull() ?: return
+        if (remote.isBlank()) return
+        val ok = runCatching { container.youtube.renamePlaylist(remote, title) }.getOrDefault(false)
+        if (!ok) enqueueSync("RENAME", playlistId, remote, null, title)
+    }
+
+    private suspend fun syncPlaylistAdd(playlistId: Long, track: Track) {
+        if (!settings.value.youtubeSyncPlaylists || !youTubeSignedIn()) return
+        val remote = runCatching { container.database.playlistDao().remoteIdOf(playlistId) }.getOrNull() ?: return
+        if (remote.isBlank()) return
+        val videoId = track.remoteId ?: track.id.removePrefix(YOUTUBE_TRACK_PREFIX)
+        if (videoId.isBlank()) return
+        val ok = runCatching { container.youtube.addPlaylistVideo(remote, videoId) }.getOrDefault(false)
+        if (!ok) enqueueSync("ADD_VIDEO", playlistId, remote, videoId, null)
+    }
+
+    private suspend fun syncPlaylistRemove(playlistId: Long, item: PlaylistItem) {
+        if (!settings.value.youtubeSyncPlaylists || !youTubeSignedIn()) return
+        val remote = runCatching { container.database.playlistDao().remoteIdOf(playlistId) }.getOrNull() ?: return
+        if (remote.isBlank()) return
+        val videoId = item.track.remoteId ?: item.track.id.removePrefix(YOUTUBE_TRACK_PREFIX)
+        if (videoId.isBlank()) return
+        val ok = runCatching { container.youtube.removePlaylistVideo(remote, videoId) }.getOrDefault(false)
+        if (!ok) enqueueSync("REMOVE_VIDEO", playlistId, remote, videoId, null)
+    }
+
+    private fun enqueueSync(kind: String, playlistId: Long, remoteId: String?, videoId: String?, title: String?) {
+        viewModelScope.launch {
+            runCatching {
+                container.database.youtubeSyncDao().insert(
+                    YouTubeSyncOpEntity(
+                        kind = kind,
+                        playlistId = playlistId,
+                        remoteId = remoteId,
+                        videoId = videoId,
+                        title = title,
+                        createdAt = System.currentTimeMillis(),
+                    ),
+                )
+            }.onFailure { AppLog.w("YouTube", "Couldn't queue a playlist change", it) }
+        }
+    }
+
+    /**
+     * Replays queued playlist changes in order. Stops at the first still-failing op so ordering is
+     * preserved. Safe to call often (sign-in, resume, after an edit); a re-entrancy guard keeps it
+     * to a single run at a time.
+     */
+    fun flushYouTubeSync() {
+        if (syncFlushing) return
+        if (!settings.value.youtubeSyncPlaylists || !youTubeSignedIn()) return
+        syncFlushing = true
+        viewModelScope.launch {
+            try {
+                val dao = container.database.youtubeSyncDao()
+                val ops = runCatching { dao.getAll() }.getOrDefault(emptyList())
+                for (op in ops) {
+                    val done = runCatching { applySyncOp(op) }.getOrDefault(false)
+                    if (!done) break
+                    runCatching { dao.delete(op.id) }
+                }
+            } finally {
+                syncFlushing = false
+            }
+        }
+    }
+
+    /** Applies one queued op. Returns false when it failed and should stay queued for a retry. */
+    private suspend fun applySyncOp(op: YouTubeSyncOpEntity): Boolean {
+        val playlists = container.database.playlistDao()
+        return when (op.kind) {
+            "CREATE" -> {
+                val title = op.title ?: return true
+                val remote = container.youtube.createPlaylist(title) ?: return false
+                playlists.setRemoteId(op.playlistId, remote)
+                true
+            }
+            "RENAME" -> {
+                val remote = op.remoteId ?: playlists.remoteIdOf(op.playlistId) ?: return true
+                val title = op.title ?: return true
+                container.youtube.renamePlaylist(remote, title)
+            }
+            "DELETE" -> {
+                val remote = op.remoteId ?: return true
+                container.youtube.deletePlaylist(remote)
+            }
+            "ADD_VIDEO" -> {
+                val remote = op.remoteId ?: playlists.remoteIdOf(op.playlistId) ?: return true
+                val videoId = op.videoId ?: return true
+                container.youtube.addPlaylistVideo(remote, videoId)
+            }
+            "REMOVE_VIDEO" -> {
+                val remote = op.remoteId ?: playlists.remoteIdOf(op.playlistId) ?: return true
+                val videoId = op.videoId ?: return true
+                container.youtube.removePlaylistVideo(remote, videoId)
+            }
+            else -> true
+        }
     }
 
     // ---- Spotify (Exportify) CSV import ----

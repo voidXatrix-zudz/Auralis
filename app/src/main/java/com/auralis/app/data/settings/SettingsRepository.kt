@@ -67,6 +67,9 @@ private object Keys {
     val skippedUpdateTag = stringPreferencesKey("skipped_update_tag")
     val youtubeIntegration = booleanPreferencesKey("youtube_integration")
     val youtubeConnectPromptDismissed = booleanPreferencesKey("youtube_connect_prompt_dismissed")
+    val youtubeSyncHistory = booleanPreferencesKey("youtube_sync_history")
+    val youtubeSyncLikes = booleanPreferencesKey("youtube_sync_likes")
+    val youtubeSyncPlaylists = booleanPreferencesKey("youtube_sync_playlists")
 }
 
 /** Persists [AppSettings] in Preferences DataStore. Unknown or corrupt values fall back to defaults. */
@@ -124,6 +127,9 @@ class SettingsRepository(private val context: Context) {
             skippedUpdateTag = this[Keys.skippedUpdateTag] ?: d.skippedUpdateTag,
             youtubeIntegration = this[Keys.youtubeIntegration] ?: d.youtubeIntegration,
             youtubeConnectPromptDismissed = this[Keys.youtubeConnectPromptDismissed] ?: d.youtubeConnectPromptDismissed,
+            youtubeSyncHistory = this[Keys.youtubeSyncHistory] ?: d.youtubeSyncHistory,
+            youtubeSyncLikes = this[Keys.youtubeSyncLikes] ?: d.youtubeSyncLikes,
+            youtubeSyncPlaylists = this[Keys.youtubeSyncPlaylists] ?: d.youtubeSyncPlaylists,
         )
     }
 
@@ -168,6 +174,9 @@ class SettingsRepository(private val context: Context) {
         this[Keys.skippedUpdateTag] = s.skippedUpdateTag
         this[Keys.youtubeIntegration] = s.youtubeIntegration
         this[Keys.youtubeConnectPromptDismissed] = s.youtubeConnectPromptDismissed
+        this[Keys.youtubeSyncHistory] = s.youtubeSyncHistory
+        this[Keys.youtubeSyncLikes] = s.youtubeSyncLikes
+        this[Keys.youtubeSyncPlaylists] = s.youtubeSyncPlaylists
     }
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =

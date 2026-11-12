@@ -58,4 +58,10 @@ data class AppSettings(
     val youtubeIntegration: Boolean = false,
     /** Set when the one-time post-sign-in "Connect YouTube Music" prompt was dismissed for good. */
     val youtubeConnectPromptDismissed: Boolean = false,
+    /** Sync in-app plays to the YouTube Music account history. Default on once signed in. */
+    val youtubeSyncHistory: Boolean = true,
+    /** Mirror likes to the YouTube Music account. Default on once signed in. */
+    val youtubeSyncLikes: Boolean = true,
+    /** Mirror local playlists to the YouTube Music account. Default on once signed in. */
+    val youtubeSyncPlaylists: Boolean = true,
 )

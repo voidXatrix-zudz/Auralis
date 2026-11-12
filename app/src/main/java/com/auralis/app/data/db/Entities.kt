@@ -92,6 +92,8 @@ data class PlaylistEntity(
     val name: String,
     val createdAt: Long,
     val updatedAt: Long,
+    /** The YouTube Music playlist id this local playlist mirrors once synced; null when local-only. */
+    val remoteId: String? = null,
 )
 
 @Entity(
@@ -146,6 +148,26 @@ data class PlaylistYtEntryEntity(
     val durationMs: Long,
     val thumbnailUrl: String?,
     val position: Int,
+)
+
+/**
+ * One queued YouTube account mutation that could not be applied immediately (offline, or a request
+ * that failed). Replayed in creation order by the sync queue once the account is reachable again.
+ */
+@Entity(tableName = "youtube_sync_ops", indices = [Index("createdAt")])
+data class YouTubeSyncOpEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** CREATE, RENAME, DELETE, ADD_VIDEO or REMOVE_VIDEO. */
+    val kind: String,
+    /** The local playlist row this change belongs to; 0 when it no longer exists (e.g. DELETE). */
+    val playlistId: Long,
+    /** The remote playlist id, when it was already known at queue time. */
+    val remoteId: String?,
+    /** The YouTube video id for ADD_VIDEO/REMOVE_VIDEO. */
+    val videoId: String?,
+    /** The playlist title for CREATE/RENAME. */
+    val title: String?,
+    val createdAt: Long,
 )
 
 @Entity(

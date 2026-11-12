@@ -260,6 +260,115 @@ class InnerTubeClient(
         }.getOrDefault(false)
     }
 
+    // ---- Account playlist mutations (private by default) -----------------------------------
+
+    /** Creates a private playlist titled [title] and returns its (VL-stripped) id, or null. */
+    suspend fun createPlaylist(title: String): String? = withContext(Dispatchers.IO) {
+        if (auth() == null) return@withContext null
+        runCatching {
+            val payload = buildJsonObject {
+                put("context", clientContext())
+                put("title", title)
+                put("privacyStatus", "PRIVATE")
+            }.toString()
+            postJson(PLAYLIST_CREATE_URL, payload)["playlistId"]?.asString()
+                ?.takeIf { it.isNotBlank() }?.removePrefix("VL")
+        }.onFailure { AppLog.w(TAG, "Playlist create skipped", it) }.getOrNull()
+    }
+
+    /** Renames an existing account playlist. */
+    suspend fun renamePlaylist(playlistId: String, title: String): Boolean =
+        editPlaylist(playlistId, listOf(buildJsonObject {
+            put("action", "ACTION_SET_PLAYLIST_NAME")
+            put("playlistName", title)
+        }))
+
+    /** Adds a video to an existing account playlist. */
+    suspend fun addPlaylistVideo(playlistId: String, videoId: String): Boolean =
+        editPlaylist(playlistId, listOf(buildJsonObject {
+            put("action", "ACTION_ADD_VIDEO")
+            put("addedVideoId", videoId)
+        }))
+
+    /** Removes a video from an existing account playlist. */
+    suspend fun removePlaylistVideo(playlistId: String, videoId: String): Boolean =
+        editPlaylist(playlistId, listOf(buildJsonObject {
+            put("action", "ACTION_REMOVE_VIDEO")
+            put("removedVideoId", videoId)
+        }))
+
+    private suspend fun editPlaylist(playlistId: String, actions: List<JsonObject>): Boolean =
+        withContext(Dispatchers.IO) {
+            if (auth() == null) return@withContext false
+            runCatching {
+                val payload = buildJsonObject {
+                    put("context", clientContext())
+                    put("playlistId", playlistId.removePrefix("VL"))
+                    put("actions", JsonArray(actions))
+                }.toString()
+                postJson(BROWSE_EDIT_PLAYLIST_URL, payload)
+                true
+            }.onFailure { AppLog.w(TAG, "Playlist edit skipped", it) }.getOrDefault(false)
+        }
+
+    /** Deletes an existing account playlist. */
+    suspend fun deletePlaylist(playlistId: String): Boolean = withContext(Dispatchers.IO) {
+        if (auth() == null) return@withContext false
+        runCatching {
+            val payload = buildJsonObject {
+                put("context", clientContext())
+                put("playlistId", playlistId.removePrefix("VL"))
+            }.toString()
+            postJson(PLAYLIST_DELETE_URL, payload)
+            true
+        }.onFailure { AppLog.w(TAG, "Playlist delete skipped", it) }.getOrDefault(false)
+    }
+
+    // ---- Playback history reporting (best-effort, never throws) ----------------------------
+
+    /**
+     * Tells YouTube a signed-in song really played, so it lands in the account history. The
+     * tracking URLs come from the InnerTube `player` response and require a client-generated `cpn`;
+     * any failure is swallowed because playback must never depend on this.
+     */
+    suspend fun reportPlayback(videoId: String, watchedSeconds: Long): Boolean = withContext(Dispatchers.IO) {
+        if (auth() == null) return@withContext false
+        runCatching {
+            val payload = buildJsonObject {
+                put("context", clientContext())
+                put("videoId", videoId)
+                put("contentCheckOk", true)
+                put("racyCheckOk", true)
+            }.toString()
+            val tracking = postJson(PLAYER_URL, payload)["playbackTracking"]?.asObject()
+                ?: return@runCatching false
+            val playbackUrl = tracking["videostatsPlaybackUrl"]?.asObject()?.get("baseUrl")?.asString()
+            val watchtimeUrl = tracking["videostatsWatchtimeUrl"]?.asObject()?.get("baseUrl")?.asString()
+            val cpn = randomCpn()
+            val seconds = watchedSeconds.coerceAtLeast(HISTORY_MIN_SECONDS)
+            playbackUrl?.let { getBlank(trackingUrl(it, cpn, null)) }
+            watchtimeUrl?.let { getBlank(trackingUrl(it, cpn, seconds)) }
+            !playbackUrl.isNullOrBlank() || !watchtimeUrl.isNullOrBlank()
+        }.onFailure { AppLog.d(TAG, "Playback reporting skipped: ${it.message}") }.getOrDefault(false)
+    }
+
+    private fun trackingUrl(base: String, cpn: String, cmtSeconds: Long?): String {
+        val separator = if (base.contains('?')) '&' else '?'
+        val withCpn = "$base${separator}cpn=$cpn&ver=2&fmt=1"
+        return if (cmtSeconds != null) "$withCpn&cmt=$cmtSeconds" else withCpn
+    }
+
+    private fun getBlank(url: String) {
+        val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).authed().build()
+        http.newCall(request).execute().use { it.body?.close() }
+    }
+
+    private fun randomCpn(): String {
+        val alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        val random = java.security.SecureRandom()
+        return buildString { repeat(16) { append(alphabet[random.nextInt(alphabet.length)]) } }
+    }
+
     private fun browseRoot(browseId: String): JsonObject {
         val payload = buildJsonObject {
             put("context", clientContext())
@@ -728,6 +837,10 @@ class InnerTubeClient(
         const val ACCOUNT_MENU_URL = "https://music.youtube.com/youtubei/v1/account/account_menu?prettyPrint=false"
         const val LIKE_URL = "https://music.youtube.com/youtubei/v1/like/like?prettyPrint=false"
         const val UNLIKE_URL = "https://music.youtube.com/youtubei/v1/like/removelike?prettyPrint=false"
+        const val PLAYLIST_CREATE_URL = "https://music.youtube.com/youtubei/v1/playlist/create?prettyPrint=false"
+        const val PLAYLIST_DELETE_URL = "https://music.youtube.com/youtubei/v1/playlist/delete?prettyPrint=false"
+        const val BROWSE_EDIT_PLAYLIST_URL = "https://music.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false"
+        const val PLAYER_URL = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false"
         const val ORIGIN = "https://music.youtube.com"
         const val WARM_UP_URL = "https://music.youtube.com/generate_204"
         const val CLIENT_NAME = "WEB_REMIX"
@@ -737,6 +850,7 @@ class InnerTubeClient(
         const val DEFAULT_HL = "en"
         const val SONGS_ONLY_PARAMS = "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"
         const val MAX_SUGGESTIONS = 8
+        const val HISTORY_MIN_SECONDS = 30L
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
         val DURATION_PATTERN = Regex("^\\d{1,3}(?::\\d{1,2}){1,2}$")
         val RADIO_CONTINUATION_KEYS = listOf(

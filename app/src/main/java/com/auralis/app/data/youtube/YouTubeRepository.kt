@@ -219,6 +219,31 @@ class YouTubeRepository(
 
     suspend fun setLiked(videoId: String, liked: Boolean): Boolean = innerTube.setLiked(videoId, liked)
 
+    // ---- Account playlist mutations + playback history (Part E) -----------------------------
+
+    suspend fun createPlaylist(title: String): String? = innerTube.createPlaylist(title)
+
+    suspend fun renamePlaylist(playlistId: String, title: String): Boolean =
+        innerTube.renamePlaylist(playlistId, title)
+
+    suspend fun deletePlaylist(playlistId: String): Boolean = innerTube.deletePlaylist(playlistId)
+
+    suspend fun addPlaylistVideo(playlistId: String, videoId: String): Boolean {
+        val ok = innerTube.addPlaylistVideo(playlistId, videoId)
+        if (ok) browseCache.remove("VL$playlistId")
+        return ok
+    }
+
+    suspend fun removePlaylistVideo(playlistId: String, videoId: String): Boolean {
+        val ok = innerTube.removePlaylistVideo(playlistId, videoId)
+        if (ok) browseCache.remove("VL$playlistId")
+        return ok
+    }
+
+    /** Best-effort account history ping; never throws and never blocks playback. */
+    suspend fun reportPlayback(videoId: String, watchedSeconds: Long): Boolean =
+        innerTube.reportPlayback(videoId, watchedSeconds)
+
     private companion object {
         const val TAG = "YouTube"
         const val SEARCH_CACHE_ENTRIES = 24

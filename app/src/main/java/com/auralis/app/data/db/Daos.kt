@@ -109,6 +109,13 @@ interface PlaylistDao {
     @Query("UPDATE playlists SET name = :name, updatedAt = :now WHERE id = :id")
     suspend fun rename(id: Long, name: String, now: Long)
 
+    /** The remote YouTube playlist id mirroring a local playlist, or null when it is local-only. */
+    @Query("SELECT remoteId FROM playlists WHERE id = :id")
+    suspend fun remoteIdOf(id: Long): String?
+
+    @Query("UPDATE playlists SET remoteId = :remoteId WHERE id = :id")
+    suspend fun setRemoteId(id: Long, remoteId: String?)
+
     @Query("UPDATE playlists SET updatedAt = :now WHERE id = :id")
     suspend fun touch(id: Long, now: Long)
 
@@ -161,6 +168,22 @@ interface PlaylistDao {
 
     @Query("UPDATE playlist_yt_entries SET position = :position WHERE entryId = :entryId")
     suspend fun setYtPosition(entryId: Long, position: Int)
+}
+
+/** Durable queue of YouTube account mutations awaiting retry while offline. */
+@Dao
+interface YouTubeSyncDao {
+    @Insert
+    suspend fun insert(op: YouTubeSyncOpEntity): Long
+
+    @Query("SELECT * FROM youtube_sync_ops ORDER BY createdAt, id")
+    suspend fun getAll(): List<YouTubeSyncOpEntity>
+
+    @Query("DELETE FROM youtube_sync_ops WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM youtube_sync_ops")
+    suspend fun clear()
 }
 
 @Dao

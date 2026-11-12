@@ -26,8 +26,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SpotifyImportEntity::class,
         SpotifyImportItemEntity::class,
         YtMatchCacheEntity::class,
+        YouTubeSyncOpEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class AuralisDatabase : RoomDatabase() {
@@ -43,6 +44,7 @@ abstract class AuralisDatabase : RoomDatabase() {
     abstract fun youtubeDao(): YouTubeDao
     abstract fun downloadDao(): DownloadDao
     abstract fun spotifyDao(): SpotifyDao
+    abstract fun youtubeSyncDao(): YouTubeSyncDao
 
     companion object {
         /** Adds the play-event log without touching the existing library, queues or settings. */
@@ -218,9 +220,30 @@ abstract class AuralisDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds the remote YouTube playlist id and the offline sync queue; existing data untouched. */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `playlists` ADD COLUMN `remoteId` TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `youtube_sync_ops` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `playlistId` INTEGER NOT NULL,
+                        `remoteId` TEXT,
+                        `videoId` TEXT,
+                        `title` TEXT,
+                        `createdAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_youtube_sync_ops_createdAt` ON `youtube_sync_ops` (`createdAt`)")
+            }
+        }
+
         fun create(context: Context): AuralisDatabase =
             Room.databaseBuilder(context.applicationContext, AuralisDatabase::class.java, "auralis.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                 .build()
     }
 }
