@@ -68,6 +68,7 @@ import com.auralis.app.domain.model.Track
 import com.auralis.app.logging.AppLog
 import com.auralis.app.logging.LogEntry
 import com.auralis.app.playback.AudioEffectsEngine
+import com.auralis.app.data.youtube.StreamResolverStatus
 import com.auralis.app.ui.components.ScreenPadding
 import com.auralis.app.ui.components.SectionTitle
 import kotlinx.coroutines.Dispatchers
@@ -540,6 +541,20 @@ private fun collectChecks(
         if (online) DiagnosticLevel.OK else DiagnosticLevel.WARN,
         if (online) "Internet is available for online lyrics."
         else "Offline — only local lyrics are available.",
+    )
+
+    val resolver = StreamResolverStatus.lastResolver
+    checks += DiagnosticCheck(
+        "Stream resolver",
+        if (StreamResolverStatus.newPipeAvailable) DiagnosticLevel.OK else DiagnosticLevel.WARN,
+        if (!StreamResolverStatus.newPipeAvailable) {
+            "NewPipeExtractor is unavailable on this Android version (API ${Build.VERSION.SDK_INT}); " +
+                "streams resolve via InnerTube instead."
+        } else if (resolver == "—") {
+            "NewPipeExtractor is ready; no stream resolved yet this session."
+        } else {
+            "Last stream resolved via $resolver in ${StreamResolverStatus.lastResolveMs} ms."
+        },
     )
 
     return checks

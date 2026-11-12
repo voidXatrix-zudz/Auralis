@@ -8,8 +8,13 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part D — Clerk hand-off to YouTube Music
 - [x] Part E — Sync to YouTube account (history/likes/playlists)
 - [x] Part F — Download tag embedding
+- [x] Part N — Android 12 NoSuchMethodError crash (desugaring + resolver fallback)
 - [ ] Part G — Lyrics + metadata providers
 - [ ] Part H — Settings redesign (both themes)
+- [ ] Part I — Next/previous always plays
+- [ ] Part J — Better artwork + lyrics matching
+- [ ] Part L — Artist photos
+- [ ] Part M — Racing stream resolvers
 
 ## Notes
 - Part A: single allowed `adb logcat -d AndroidRuntime:E *:S` returned nothing (no device attached); cause found by code reading.
@@ -18,3 +23,6 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - `POST_NOTIFICATIONS` is requested non-blockingly on Android 13+ (`MainActivity`); downloads still work when denied.
   - `DownloadWorker` reuses the shared `playbackHttp` client instead of building its own.
   - `doWork()` already caught all throwables; verified it returns retry/failure only.
+- Part N: core library desugaring enabled (`desugar_jdk_libs_nio` 2.1.5) so `URLDecoder.decode(String, Charset)` exists on API 26+.
+  - `StreamResolver` catches `Throwable` (rethrows `CancellationException`), marks NewPipe unavailable on `LinkageError`, and falls back to the new `InnerTubePlayer` (ANDROID_VR → IOS → ANDROID_MUSIC).
+  - Logs "resolved via <name> in <ms>"; `StreamResolverStatus` adds API level + active resolver to Logs diagnostics.

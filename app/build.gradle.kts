@@ -71,6 +71,9 @@ android {
     }
 
     compileOptions {
+        // Backports java.nio.file and URLDecoder.decode(String, Charset) to API 26+ so
+        // NewPipeExtractor's Utils.decodeUrlUtf8 does not throw NoSuchMethodError on Android 12.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -133,6 +136,8 @@ dependencies {
 
     implementation(libs.datastore.preferences)
     implementation(libs.work.runtime.ktx)
+
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

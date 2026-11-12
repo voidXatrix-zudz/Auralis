@@ -2,6 +2,7 @@ package com.auralis.app.data.youtube
 
 import com.auralis.app.logging.AppLog
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -19,17 +20,37 @@ import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.StreamInfo
 
 /**
- * Resolves a YouTube video id to a directly playable audio URL through NewPipeExtractor.
- *
- * URLs are signed and expire, so they are cached in memory for [CACHE_TTL_MS]. Several callers may
- * ask for the same video at once (tap pre-fetch + Media3's data source); extraction runs once and
- * every caller awaits the same [Deferred]. Extraction lives in its own scope, so cancelling a
- * prefetch never cancels the resolution the player is waiting on.
- *
- * The lightest audio-only progressive stream is selected: it starts fastest and uses the least
- * bandwidth, which matters on mobile data.
+ * Live status of the stream resolution stack, surfaced in the Logs screen diagnostics so a bug
+ * report can tell at a glance which resolver is in use and whether NewPipe is usable on the device.
  */
-class StreamResolver(private val http: OkHttpClient) {
+object StreamResolverStatus {
+    @Volatile var lastResolver: String = "—"
+    @Volatile var lastResolveMs: Long = 0L
+    @Volatile var newPipeAvailable: Boolean = true
+}
+
+/**
+ * Thrown internally when NewPipeExtractor cannot run on this device (a [LinkageError] such as the
+ * Android 12 `URLDecoder.decode(String, Charset)` [NoSuchMethodError]); the resolver then switches
+ * to InnerTube for the rest of the session.
+ */
+private class NewPipeUnavailableException(cause: Throwable) : RuntimeException(cause)
+
+/**
+ * Resolves a YouTube video id to a directly playable audio URL.
+ *
+ * Primary path: NewPipeExtractor. Fallback path: [InnerTubePlayer] (ANDROID_VR/IOS/ANDROID_MUSIC),
+ * used when NewPipe throws a [LinkageError]/[NoSuchMethodError] — older runtimes missing Java 10+
+ * methods it relies on. Every failure is caught (only [CancellationException] is rethrown) so a
+ * malformed response or a runtime linkage error can never escape on ExoPlayer's loader/playback
+ * threads and kill the app.
+ *
+ * URLs are signed and expire, so they are cached in memory for [CACHE_TTL_MS].
+ */
+class StreamResolver(
+    private val http: OkHttpClient,
+    private val innerTubePlayer: InnerTubePlayer = InnerTubePlayer(http),
+) {
     private val downloader = NewPipeDownloader(http)
     private val cache = ConcurrentHashMap<String, CachedStream>()
     private val inFlight = HashMap<String, Deferred<String>>()
@@ -66,6 +87,7 @@ class StreamResolver(private val http: OkHttpClient) {
     private suspend fun extractWithRetry(videoId: String): String = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
         var lastError: Throwable? = null
+
         repeat(ATTEMPTS) { attempt ->
             try {
                 val url = extract(videoId)
@@ -73,25 +95,55 @@ class StreamResolver(private val http: OkHttpClient) {
                 // Keep the audio host warm: PlaybackService uses the same OkHttp client, so this
                 // 2-byte range request leaves a pooled connection ready for the first real read.
                 scope.launch { warmConnection(url) }
-                AppLog.i(
-                    TAG,
-                    "Resolved lightest audio stream in ${System.currentTimeMillis() - startedAt} ms " +
-                        "on attempt ${attempt + 1}",
-                )
+                val elapsed = System.currentTimeMillis() - startedAt
+                StreamResolverStatus.lastResolver = "NewPipeExtractor"
+                StreamResolverStatus.lastResolveMs = elapsed
+                AppLog.i(TAG, "resolved via NewPipeExtractor in $elapsed ms (attempt ${attempt + 1})")
                 return@withContext url
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (unavailable: NewPipeUnavailableException) {
+                // NewPipe is unusable for this session; do not burn the retry budget on it.
+                lastError = unavailable.cause
+                AppLog.w(TAG, "NewPipeExtractor unavailable; falling back to InnerTube", unavailable.cause)
             } catch (error: Throwable) {
                 lastError = error
                 AppLog.w(TAG, "Stream resolution attempt ${attempt + 1} failed", error)
                 if (attempt < ATTEMPTS - 1) delay(RETRY_DELAY_MS)
             }
         }
+
+        // Fallback: resolve through InnerTube directly.
+        try {
+            val url = innerTubeAudioUrl(videoId)
+            if (url != null) {
+                cache[videoId] = CachedStream(url, System.currentTimeMillis() + CACHE_TTL_MS)
+                scope.launch { warmConnection(url) }
+                val elapsed = System.currentTimeMillis() - startedAt
+                StreamResolverStatus.lastResolver = "InnerTube"
+                StreamResolverStatus.lastResolveMs = elapsed
+                AppLog.i(TAG, "resolved via InnerTube in $elapsed ms")
+                return@withContext url
+            }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (error: Throwable) {
+            lastError = error
+        }
+
         AppLog.e(TAG, "Could not resolve a playable stream", lastError)
         throw lastError ?: IllegalStateException("No playable audio stream for this song")
     }
 
+    /** NewPipe extraction. Runs off the caller's thread; throws [NewPipeUnavailableException] on linkage errors. */
     private fun extract(videoId: String): String {
         ensureInitialized()
-        val info = StreamInfo.getInfo(ServiceList.YouTube, "$WATCH_URL$videoId")
+        val info = try {
+            StreamInfo.getInfo(ServiceList.YouTube, "$WATCH_URL$videoId")
+        } catch (linkage: LinkageError) {
+            StreamResolverStatus.newPipeAvailable = false
+            throw NewPipeUnavailableException(linkage)
+        }
         val progressive = info.audioStreams.filter {
             // Progressive HTTP URLs only; DASH/manifest entries cannot be handed to Media3 as-is.
             it.content.startsWith("http", ignoreCase = true)
@@ -103,21 +155,46 @@ class StreamResolver(private val http: OkHttpClient) {
             ?: throw IllegalStateException("This song has no audio-only stream available")
     }
 
+    /** InnerTube fallback: prefer Opus, otherwise the lowest-bitrate AAC that resolves. */
+    private suspend fun innerTubeAudioUrl(videoId: String): String? {
+        val formats = innerTubePlayer.audioFormats(videoId)
+        if (formats.isEmpty()) return null
+        val opus = formats.filter { it.isOpus }.minByOrNull { it.bitrate }
+        return (opus ?: formats.minByOrNull { it.bitrate })?.url
+    }
+
     private fun extractBest(videoId: String): ResolvedAudio {
-        ensureInitialized()
-        val info = StreamInfo.getInfo(ServiceList.YouTube, "$WATCH_URL$videoId")
-        val progressive = info.audioStreams.filter { it.content.startsWith("http", ignoreCase = true) }
-        if (progressive.isEmpty()) throw IllegalStateException("This song has no audio-only stream available")
-        val opus = progressive.firstOrNull { it.format?.name?.contains("OPUS", ignoreCase = true) == true }
-        val chosen = opus ?: progressive.first()
-        val url = chosen.content.takeIf { it.isNotBlank() }
+        if (StreamResolverStatus.newPipeAvailable) {
+            try {
+                ensureInitialized()
+                val info = StreamInfo.getInfo(ServiceList.YouTube, "$WATCH_URL$videoId")
+                val progressive = info.audioStreams.filter { it.content.startsWith("http", ignoreCase = true) }
+                val opus = progressive.firstOrNull { it.format?.name?.contains("OPUS", ignoreCase = true) == true }
+                val chosen = opus ?: progressive.firstOrNull()
+                val url = chosen?.content?.takeIf { it.isNotBlank() }
+                if (url != null) {
+                    return ResolvedAudio(
+                        url = url,
+                        format = if (opus != null) "Opus" else "AAC",
+                        extension = if (opus != null) "opus" else "m4a",
+                    )
+                }
+            } catch (linkage: LinkageError) {
+                StreamResolverStatus.newPipeAvailable = false
+                AppLog.w(TAG, "NewPipeExtractor unavailable for download; using InnerTube", linkage)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                AppLog.w(TAG, "NewPipe download resolution failed; trying InnerTube", error)
+            }
+        }
+        // InnerTube: Opus itags are 249/250/251; AAC is 139/140.
+        val formats = runBlocking { innerTubePlayer.audioFormats(videoId) }
+        val opus = formats.filter { it.isOpus }.maxByOrNull { it.bitrate }
+        if (opus != null) return ResolvedAudio(opus.url, "Opus", "opus")
+        val aac = formats.maxByOrNull { it.bitrate }
             ?: throw IllegalStateException("This song has no audio-only stream available")
-        val isOpus = opus != null
-        return ResolvedAudio(
-            url = url,
-            format = if (isOpus) "Opus" else "AAC",
-            extension = if (isOpus) "opus" else "m4a",
-        )
+        return ResolvedAudio(aac.url, "AAC", "m4a")
     }
 
     /**

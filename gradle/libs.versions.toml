@@ -26,6 +26,10 @@ kotlinxSerialization = "1.8.1"
 newPipeExtractor = "v0.27.1"
 # Clerk authentication (native API + prebuilt auth). Requires a publishable key to be useful.
 clerk = "1.4.1"
+# Core library desugaring. The nio variant backports java.nio.file and (critically)
+# URLDecoder.decode(String, Charset), which NewPipeExtractor calls and which only exists
+# natively on API 33+, so it crashed on Android 12 (API 31).
+desugarJdkLibs = "2.1.5"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -68,6 +72,7 @@ okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 newpipe-extractor = { module = "com.github.TeamNewPipe:NewPipeExtractor", version.ref = "newPipeExtractor" }
 clerk-android-api = { module = "com.clerk:clerk-android-api", version.ref = "clerk" }
+desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs_nio", version.ref = "desugarJdkLibs" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
