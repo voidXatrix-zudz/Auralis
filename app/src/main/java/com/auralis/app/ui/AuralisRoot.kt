@@ -33,6 +33,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
@@ -49,6 +50,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -56,6 +58,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -159,6 +162,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val youtubeHistory by viewModel.youtubeHistory.collectAsStateWithLifecycle()
     // Sign-in gate + the personalised Home feed.
     val auth by viewModel.auth.collectAsStateWithLifecycle()
+    // One-time "Connect YouTube Music" prompt shown right after a Clerk sign-in.
+    val youtubeConnectPrompt by viewModel.youtubeConnectPrompt.collectAsStateWithLifecycle()
+    val youtubeConnectEmail by viewModel.youtubeConnectEmail.collectAsStateWithLifecycle()
     // Heart state reads the YouTube like table for remote tracks, local favorites otherwise.
     val mergedFavorites by remember(favorites, youtubeLikedIds) {
         derivedStateOf { favorites + youtubeLikedIds.map { YOUTUBE_TRACK_PREFIX + it } }
@@ -590,15 +596,61 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 )
             }
 
+            if (youtubeConnectPrompt) {
+                ConnectYouTubePrompt(
+                    email = youtubeConnectEmail,
+                    onConnect = {
+                        viewModel.dismissYouTubeConnectPrompt(dontAskAgain = false)
+                        youtubeLoginOpen = true
+                    },
+                    onNotNow = { viewModel.dismissYouTubeConnectPrompt(dontAskAgain = false) },
+                    onDontAskAgain = { viewModel.dismissYouTubeConnectPrompt(dontAskAgain = true) },
+                )
+            }
+
             if (youtubeLoginOpen) {
                 com.auralis.app.ui.screens.YouTubeLoginDialog(
                     onSession = viewModel::saveYouTubeSession,
                     onDismiss = { youtubeLoginOpen = false },
+                    loginHint = youtubeConnectEmail ?: auth.account?.email,
                 )
             }
         }
         }
     }
+}
+
+/** One-time post-sign-in prompt offering the YouTube Music hand-off (Part D). */
+@Composable
+private fun ConnectYouTubePrompt(
+    email: String?,
+    onConnect: () -> Unit,
+    onNotNow: () -> Unit,
+    onDontAskAgain: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onNotNow,
+        title = { Text("Connect YouTube Music") },
+        text = {
+            Text(
+                buildString {
+                    append("Sign in to YouTube Music to see your liked songs, playlists and history in AURALIS.")
+                    if (!email.isNullOrBlank()) {
+                        append(" We'll prefill ")
+                        append(email)
+                        append(" on the Google sign-in page.")
+                    }
+                },
+            )
+        },
+        confirmButton = { TextButton(onClick = onConnect) { Text("Connect") } },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onNotNow) { Text("Not now") }
+                TextButton(onClick = onDontAskAgain) { Text("Don't ask again") }
+            }
+        },
+    )
 }
 
 /**

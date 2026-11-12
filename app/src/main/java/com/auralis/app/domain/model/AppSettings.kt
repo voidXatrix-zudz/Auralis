@@ -56,4 +56,6 @@ data class AppSettings(
     val skippedUpdateTag: String = "",
     /** Opt-in YouTube Music integration (account, Home feed, liked songs). Off by default. */
     val youtubeIntegration: Boolean = false,
+    /** Set when the one-time post-sign-in "Connect YouTube Music" prompt was dismissed for good. */
+    val youtubeConnectPromptDismissed: Boolean = false,
 )

@@ -177,6 +177,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         AuthUiState(configured = container.clerkAuth.configured, initializing = container.clerkAuth.configured),
     )
     val auth = _auth.asStateFlow()
+    /** True while the one-time "Connect YouTube Music" prompt (after a Clerk sign-in) is showing. */
+    private val _youtubeConnectPrompt = MutableStateFlow(false)
+    val youtubeConnectPrompt = _youtubeConnectPrompt.asStateFlow()
+    /** The email the prompt hands to the YouTube sign-in WebView as `login_hint`. */
+    private val _youtubeConnectEmail = MutableStateFlow<String?>(null)
+    val youtubeConnectEmail = _youtubeConnectEmail.asStateFlow()
     /** The in-flight email-code challenge, kept between "send code" and "verify code". */
     private var pendingEmail: EmailCodeChallenge? = null
     /** Recently played YouTube songs, mapped to [Track] for Continue Listening and recommendations. */
@@ -233,6 +239,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         // app snackbar channel so Settings and the dialog share one style.
         container.updates.start()
         viewModelScope.launch { container.updates.messages.collect { _messages.trySend(it) } }
+
+        // Clerk hand-off: the first time a Clerk (Google) user signs in, turn the YouTube Music
+        // integration on and offer a one-time "Connect YouTube Music" prompt carrying their email.
+        viewModelScope.launch {
+            _auth.map { it.signedIn }.distinctUntilChanged().collect { signedIn ->
+                if (signedIn) maybeOfferYouTubeConnect()
+            }
+        }
 
         viewModelScope.launch {
             val savedQueue = runCatching { container.database.queueDao().getAll() }
@@ -981,6 +995,35 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val seedVideoId: String? = null,
         val hasMore: Boolean = false,
     )
+
+    /**
+     * Offers the YouTube Music hand-off once, right after a Clerk sign-in: turns the integration
+     * switch on and shows the prompt. Skipped when Clerk is not configured, when YouTube is already
+     * signed in, when it was dismissed for good, or when the integration is already on.
+     */
+    private fun maybeOfferYouTubeConnect() {
+        if (!_auth.value.configured) return
+        if (container.youtubeAuth.snapshot()?.signedIn == true) return
+        if (settings.value.youtubeConnectPromptDismissed) return
+        if (settings.value.youtubeIntegration) return
+        _youtubeConnectEmail.value = _auth.value.account?.email?.takeIf { it.isNotBlank() }
+        viewModelScope.launch {
+            runCatching { container.settings.update { it.copy(youtubeIntegration = true) } }
+                .onFailure { report("Couldn't turn on YouTube Music", it) }
+        }
+        _youtubeConnectPrompt.value = true
+    }
+
+    /** Dismisses the hand-off prompt; [dontAskAgain] remembers the choice across launches. */
+    fun dismissYouTubeConnectPrompt(dontAskAgain: Boolean) {
+        _youtubeConnectPrompt.value = false
+        if (dontAskAgain) {
+            viewModelScope.launch {
+                runCatching { container.settings.update { it.copy(youtubeConnectPromptDismissed = true) } }
+                    .onFailure { report("Couldn't save that preference", it) }
+            }
+        }
+    }
 
     fun refreshYouTubeAccount() {
         val session = container.youtubeAuth.snapshot() ?: return

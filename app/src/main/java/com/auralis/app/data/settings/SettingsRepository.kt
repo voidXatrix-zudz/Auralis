@@ -66,6 +66,7 @@ private object Keys {
     val lastUpdateCheckAt = longPreferencesKey("last_update_check_at")
     val skippedUpdateTag = stringPreferencesKey("skipped_update_tag")
     val youtubeIntegration = booleanPreferencesKey("youtube_integration")
+    val youtubeConnectPromptDismissed = booleanPreferencesKey("youtube_connect_prompt_dismissed")
 }
 
 /** Persists [AppSettings] in Preferences DataStore. Unknown or corrupt values fall back to defaults. */
@@ -122,6 +123,7 @@ class SettingsRepository(private val context: Context) {
             lastUpdateCheckAt = (this[Keys.lastUpdateCheckAt] ?: d.lastUpdateCheckAt).coerceAtLeast(0L),
             skippedUpdateTag = this[Keys.skippedUpdateTag] ?: d.skippedUpdateTag,
             youtubeIntegration = this[Keys.youtubeIntegration] ?: d.youtubeIntegration,
+            youtubeConnectPromptDismissed = this[Keys.youtubeConnectPromptDismissed] ?: d.youtubeConnectPromptDismissed,
         )
     }
 
@@ -165,6 +167,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.lastUpdateCheckAt] = s.lastUpdateCheckAt
         this[Keys.skippedUpdateTag] = s.skippedUpdateTag
         this[Keys.youtubeIntegration] = s.youtubeIntegration
+        this[Keys.youtubeConnectPromptDismissed] = s.youtubeConnectPromptDismissed
     }
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =

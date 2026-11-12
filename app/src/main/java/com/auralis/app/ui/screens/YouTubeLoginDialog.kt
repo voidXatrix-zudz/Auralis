@@ -45,6 +45,7 @@ private val SAPISID_PATTERN = Regex("(?:^|;\\s*)(?:__Secure-3PAPISID|SAPISID)=([
 fun YouTubeLoginDialog(
     onSession: (cookie: String, visitorData: String, dataSyncId: String) -> Unit,
     onDismiss: () -> Unit,
+    loginHint: String? = null,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
@@ -78,7 +79,7 @@ fun YouTubeLoginDialog(
                                 }
                             }
                         }
-                        loadUrl(LOGIN_URL)
+                        loadUrl(loginUrl(loginHint))
                     }
                 },
             )
@@ -89,3 +90,10 @@ fun YouTubeLoginDialog(
 
 private fun readField(json: String): String = runCatching { JSONObject(json).optString("v") }.getOrDefault("")
 private fun readFieldD(json: String): String = runCatching { JSONObject(json).optString("d") }.getOrDefault("")
+
+/** Google's ServiceLogin prefills the account chooser when a `login_hint` email is supplied. */
+private fun loginUrl(loginHint: String?): String {
+    val hint = loginHint?.trim().orEmpty()
+    if (hint.isEmpty()) return LOGIN_URL
+    return "$LOGIN_URL&login_hint=${android.net.Uri.encode(hint)}"
+}
