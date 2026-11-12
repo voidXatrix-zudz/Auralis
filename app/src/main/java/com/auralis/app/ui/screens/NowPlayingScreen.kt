@@ -102,6 +102,7 @@ fun NowPlayingScreen(
     onLoadLyrics: (Track) -> Unit = {},
     onImportLyrics: (Track, Uri) -> Unit = { _, _ -> },
     onSaveLyrics: (Track, String) -> Unit = { _, _ -> },
+    onTryAnotherLyricsSource: (Track) -> Unit = {},
     onSeekBy: (Long) -> Unit = {},
     doubleTapSeekSeconds: Int = 10,
     gesturesEnabled: Boolean = true,
@@ -134,6 +135,7 @@ fun NowPlayingScreen(
             lyrics = lyrics, lyricsLoading = lyricsLoading, lyricsAutoScroll = lyricsAutoScroll, lyricSizeSp = lyricSizeSp,
             lyricsOffsetMs = lyricsOffsetMs,
             onLoadLyrics = onLoadLyrics, onImportLyrics = onImportLyrics, onSaveLyrics = onSaveLyrics, onSeekBy = onSeekBy,
+            onTryAnotherLyricsSource = onTryAnotherLyricsSource,
             doubleTapSeekSeconds = doubleTapSeekSeconds, gesturesEnabled = gesturesEnabled,
             onOpenEqualizer = onOpenEqualizer, onOpenWrapped = onOpenWrapped,
             onOpenBackup = onOpenBackup, onEditMetadata = onEditMetadata, onOpenAudioAnalysis = onOpenAudioAnalysis,
@@ -239,6 +241,7 @@ fun NowPlayingScreen(
             onClose = { lyricsOpen = false },
             onImport = { lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*")) },
             onSaveText = { text -> onSaveLyrics(track, text) },
+            onTryAnotherSource = { onTryAnotherLyricsSource(track) },
         )
       } else {
         val photoBackground = settings.playerBackground

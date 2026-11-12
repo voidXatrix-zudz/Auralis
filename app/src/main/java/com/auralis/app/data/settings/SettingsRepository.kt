@@ -70,6 +70,14 @@ private object Keys {
     val youtubeSyncHistory = booleanPreferencesKey("youtube_sync_history")
     val youtubeSyncLikes = booleanPreferencesKey("youtube_sync_likes")
     val youtubeSyncPlaylists = booleanPreferencesKey("youtube_sync_playlists")
+    val lyricsProviderOrder = stringPreferencesKey("lyrics_provider_order")
+    val lyricsProvidersEnabled = stringPreferencesKey("lyrics_providers_enabled")
+    val metadataProvidersEnabled = stringPreferencesKey("metadata_providers_enabled")
+    val preferSyncedLyrics = booleanPreferencesKey("prefer_synced_lyrics")
+    val overwriteExistingTags = booleanPreferencesKey("overwrite_existing_tags")
+    val fetchArtistPhotos = booleanPreferencesKey("fetch_artist_photos")
+    val useDeezerForArtistPhotos = booleanPreferencesKey("use_deezer_artist_photos")
+    val lastFmApiKey = stringPreferencesKey("lastfm_api_key_enc")
 }
 
 /** Persists [AppSettings] in Preferences DataStore. Unknown or corrupt values fall back to defaults. */
@@ -130,6 +138,14 @@ class SettingsRepository(private val context: Context) {
             youtubeSyncHistory = this[Keys.youtubeSyncHistory] ?: d.youtubeSyncHistory,
             youtubeSyncLikes = this[Keys.youtubeSyncLikes] ?: d.youtubeSyncLikes,
             youtubeSyncPlaylists = this[Keys.youtubeSyncPlaylists] ?: d.youtubeSyncPlaylists,
+            lyricsProviderOrder = decodeList(this[Keys.lyricsProviderOrder], d.lyricsProviderOrder),
+            lyricsProvidersEnabled = decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled),
+            metadataProvidersEnabled = decodeSet(this[Keys.metadataProvidersEnabled], d.metadataProvidersEnabled),
+            preferSyncedLyrics = this[Keys.preferSyncedLyrics] ?: d.preferSyncedLyrics,
+            overwriteExistingTags = this[Keys.overwriteExistingTags] ?: d.overwriteExistingTags,
+            fetchArtistPhotos = this[Keys.fetchArtistPhotos] ?: d.fetchArtistPhotos,
+            useDeezerForArtistPhotos = this[Keys.useDeezerForArtistPhotos] ?: d.useDeezerForArtistPhotos,
+            lastFmApiKey = decrypt(this[Keys.lastFmApiKey]),
         )
     }
 
@@ -177,7 +193,28 @@ class SettingsRepository(private val context: Context) {
         this[Keys.youtubeSyncHistory] = s.youtubeSyncHistory
         this[Keys.youtubeSyncLikes] = s.youtubeSyncLikes
         this[Keys.youtubeSyncPlaylists] = s.youtubeSyncPlaylists
+        this[Keys.lyricsProviderOrder] = s.lyricsProviderOrder.joinToString(",")
+        this[Keys.lyricsProvidersEnabled] = s.lyricsProvidersEnabled.joinToString(",")
+        this[Keys.metadataProvidersEnabled] = s.metadataProvidersEnabled.joinToString(",")
+        this[Keys.preferSyncedLyrics] = s.preferSyncedLyrics
+        this[Keys.overwriteExistingTags] = s.overwriteExistingTags
+        this[Keys.fetchArtistPhotos] = s.fetchArtistPhotos
+        this[Keys.useDeezerForArtistPhotos] = s.useDeezerForArtistPhotos
+        this[Keys.lastFmApiKey] = encrypt(s.lastFmApiKey)
     }
+
+    private fun decodeList(raw: String?, default: List<String>): List<String> =
+        raw?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: default
+
+    private fun decodeSet(raw: String?, default: Set<String>): Set<String> =
+        raw?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: default
+
+    /** Encrypts/decrypts the Last.fm key through the Android Keystore; a failure degrades to plaintext-free "". */
+    private fun encrypt(value: String): String =
+        if (value.isBlank()) "" else runCatching { SecretStore.encrypt(context, value) }.getOrDefault("")
+
+    private fun decrypt(value: String?): String =
+        if (value.isNullOrBlank()) "" else runCatching { SecretStore.decrypt(context, value) }.getOrDefault("")
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
         name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: default

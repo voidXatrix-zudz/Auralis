@@ -163,6 +163,7 @@ fun GlassNowPlayingScreen(
     onLoadLyrics: (Track) -> Unit,
     onImportLyrics: (Track, Uri) -> Unit,
     onSaveLyrics: (Track, String) -> Unit,
+    onTryAnotherLyricsSource: (Track) -> Unit = {},
     onSeekBy: (Long) -> Unit,
     doubleTapSeekSeconds: Int,
     gesturesEnabled: Boolean,
@@ -322,6 +323,7 @@ fun GlassNowPlayingScreen(
                     onClose = { fullLyricsOpen = false },
                     onImport = { lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*")) },
                     onSaveText = { text -> onSaveLyrics(track, text) },
+                    onTryAnotherSource = { onTryAnotherLyricsSource(track) },
                 )
             }
             else -> {

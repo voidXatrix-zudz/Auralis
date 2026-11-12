@@ -64,4 +64,27 @@ data class AppSettings(
     val youtubeSyncLikes: Boolean = true,
     /** Mirror local playlists to the YouTube Music account. Default on once signed in. */
     val youtubeSyncPlaylists: Boolean = true,
-)
+    /** Lyrics providers in lookup order (ids; includes disabled ones so order survives toggles). */
+    val lyricsProviderOrder: List<String> = DEFAULT_LYRICS_PROVIDER_ORDER,
+    /** Enabled lyrics providers. Defaults chosen for reliability; the rest are opt-in. */
+    val lyricsProvidersEnabled: Set<String> = setOf("LRCLIB", "SimpMusic", "YouTubeMusic", "LyricsOvh"),
+    /** Enabled metadata providers. */
+    val metadataProvidersEnabled: Set<String> = setOf("MusicBrainz", "Deezer"),
+    /** When on, keep trying remaining providers for a synced result before accepting unsynced. */
+    val preferSyncedLyrics: Boolean = true,
+    /** When on, Auto-fix tags may overwrite existing (non-empty) tag fields. */
+    val overwriteExistingTags: Boolean = false,
+    /** Show artist photos throughout the UI (Part L). */
+    val fetchArtistPhotos: Boolean = true,
+    /** Use Deezer's public artist search for artist photos when no YouTube id is known (Part L). */
+    val useDeezerForArtistPhotos: Boolean = true,
+    /** Last.fm API key for genre tags (empty = provider disabled). Stored encrypted. */
+    val lastFmApiKey: String = "",
+) {
+    companion object {
+        /** Default lyrics provider lookup order, matching the Settings list. */
+        val DEFAULT_LYRICS_PROVIDER_ORDER: List<String> = listOf(
+            "LRCLIB", "SimpMusic", "NetEase", "KuGou", "BetterLyrics", "YouTubeMusic", "LyricsOvh",
+        )
+    }
+}

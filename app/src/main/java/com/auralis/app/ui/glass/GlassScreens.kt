@@ -427,6 +427,7 @@ fun GlassLibraryScreen(
     onImportSpotify: () -> Unit = {},
     spotifyImports: List<com.auralis.app.data.db.SpotifyImportEntity> = emptyList(),
     onOpenImport: (Long) -> Unit = {},
+    onAutoFixTags: () -> Unit = {},
 ) {
     var selected by remember { mutableIntStateOf(0) }
     var creating by remember { mutableStateOf(false) }
@@ -436,6 +437,7 @@ fun GlassLibraryScreen(
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             GlassHeader("Library", Modifier.weight(1f), "${tracks.size} songs")
+            GlassGhostButton("Fix tags", onAutoFixTags)
             GlassGhostButton("History", onOpenHistory)
         }
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

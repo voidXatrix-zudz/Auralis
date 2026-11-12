@@ -288,6 +288,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onLoadLyrics = viewModel::loadLyrics,
                     onImportLyrics = viewModel::importLyrics,
                     onSaveLyrics = viewModel::saveLyrics,
+                    onTryAnotherLyricsSource = viewModel::tryAnotherLyricsSource,
                     onBack = { nowPlayingOpen = false },
                     onPlayPause = viewModel::togglePlayback,
                     onPrevious = viewModel::previous,
@@ -416,15 +417,25 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     Destination.Logs -> LogsDiagnosticsScreen(settings, sources, currentTrack)
                                     is Destination.MetadataEditor -> {
                                         val destination = state.top as Destination.MetadataEditor
-                                        val track = tracks.firstOrNull { it.id == destination.trackId }
+                                        val track = trackById[destination.trackId]
                                         if (track == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                             Text("This song is not in the library anymore.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        } else MetadataEditorScreen(
-                                            track = track,
-                                            readTags = viewModel::readTags,
-                                            writeTags = viewModel::writeTags,
-                                            onSaved = { viewModel.back() },
-                                        )
+                                        } else {
+                                            val candidates = viewModel.metadataCandidates.collectAsStateWithLifecycle().value
+                                            val metadataLoading = viewModel.metadataLoading.collectAsStateWithLifecycle().value
+                                            MetadataEditorScreen(
+                                                track = track,
+                                                readTags = viewModel::readTags,
+                                                writeTags = viewModel::writeTags,
+                                                onSaved = { viewModel.clearMetadataCandidates(); viewModel.back() },
+                                                remote = track.isRemote,
+                                                metadataCandidates = candidates,
+                                                metadataLoading = metadataLoading,
+                                                onFetchMetadata = viewModel::fetchMetadata,
+                                                onClearCandidates = viewModel::clearMetadataCandidates,
+                                                onSaveRemoteMetadata = viewModel::saveRemoteMetadataOverride,
+                                            )
+                                        }
                                     }
                                     is Destination.AudioAnalysis -> {
                                         val destination = state.top as Destination.AudioAnalysis
@@ -494,6 +505,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             onImportSpotify = importSpotify,
                                             spotifyImports = spotifyImports,
                                             onOpenImport = { id -> viewModel.push(Destination.SpotifyImport(id)) },
+                                            onAutoFixTags = viewModel::autoFixTags,
                                         )
                                         Tab.EQUALIZER -> EqualizerScreen(settings, viewModel::updateSettings)
                                         Tab.SETTINGS -> SettingsScreen(

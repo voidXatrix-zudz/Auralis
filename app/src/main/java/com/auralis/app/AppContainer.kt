@@ -38,7 +38,20 @@ class AppContainer(context: Context) {
     /** Automatic new-song detection: ContentObserver + on-resume/periodic incremental diffs. */
     val autoScanner: LibraryAutoScanner by lazy { LibraryAutoScanner(appContext, scanner, settings) }
     val playback: PlaybackController by lazy { PlaybackController(appContext) }
-    val lyrics: LyricsRepository by lazy { LyricsRepository(appContext, database.lyricsDao(), database.sourceDao()) }
+    val lyrics: LyricsRepository by lazy {
+        LyricsRepository(
+            appContext,
+            database.lyricsDao(),
+            database.sourceDao(),
+            database.providerCacheDao(),
+            settings,
+            youtubeHttp,
+        )
+    }
+    /** Online metadata providers (MusicBrainz, Deezer, iTunes, Last.fm); enabled set read per call. */
+    val metadataRepository: com.auralis.app.data.metadata.MetadataRepository by lazy {
+        com.auralis.app.data.metadata.MetadataRepository(youtubeHttp, settings, BuildConfig.VERSION_NAME)
+    }
     val metadata: MetadataEditor by lazy { MetadataEditor(appContext) }
     /** GitHub release checks, APK download and the package-installer hand-off. */
     val updates: UpdateManager by lazy { UpdateManager(appContext, settings) }

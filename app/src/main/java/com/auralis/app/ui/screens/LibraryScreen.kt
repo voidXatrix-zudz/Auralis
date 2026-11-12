@@ -49,9 +49,10 @@ fun LibraryScreen(
     onImportSpotify: () -> Unit = {},
     spotifyImports: List<com.auralis.app.data.db.SpotifyImportEntity> = emptyList(),
     onOpenImport: (Long) -> Unit = {},
+    onAutoFixTags: () -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassLibraryScreen(tracks, favorites, sources, playlists, currentId, onAddMusic, onScan, onPlay, onFavorite, onCreatePlaylist, onAddToPlaylist, modifier, onQueue, onPlayAlbum, onQueueAlbum, onQueuePlaylist, scanning, onPlayNext, onOpenSettings, youtubeEnabled, youtubeLiked, youtubePlaylists, onPlayYouTubeTrack, onOpenYouTubePlaylist, onRefreshYouTubeLibrary, downloads, onOpenHistory, onOpenPlaylist, onImportSpotify, spotifyImports, onOpenImport)
+        GlassLibraryScreen(tracks, favorites, sources, playlists, currentId, onAddMusic, onScan, onPlay, onFavorite, onCreatePlaylist, onAddToPlaylist, modifier, onQueue, onPlayAlbum, onQueueAlbum, onQueuePlaylist, scanning, onPlayNext, onOpenSettings, youtubeEnabled, youtubeLiked, youtubePlaylists, onPlayYouTubeTrack, onOpenYouTubePlaylist, onRefreshYouTubeLibrary, downloads, onOpenHistory, onOpenPlaylist, onImportSpotify, spotifyImports, onOpenImport, onAutoFixTags)
         return
     }
     var selected by remember { mutableIntStateOf(0) }
@@ -62,6 +63,7 @@ fun LibraryScreen(
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.weight(1f))
+            TextButton(onClick = onAutoFixTags) { Text("Auto-fix tags") }
             TextButton(onClick = onOpenHistory) { Text("History") }
         }
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

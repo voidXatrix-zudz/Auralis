@@ -345,3 +345,26 @@ data class YtMatchCacheEntity(
     val thumbnailUrl: String?,
     val cachedAt: Long,
 )
+
+/**
+ * Per-provider result cache shared by the lyrics and metadata pipelines.
+ *
+ * [kind] separates the two ("lyrics" / "metadata"). [found] false stores a negative result so a
+ * provider that returned nothing is not contacted again for [NEGATIVE_TTL_MS]; the lookup still
+ * honours the provider's own switch. [payload] is the provider's raw text (LRC/plain for lyrics,
+ * compact JSON for metadata).
+ */
+@Entity(
+    tableName = "provider_cache",
+    primaryKeys = ["kind", "trackId", "provider"],
+    indices = [Index("updatedAt")],
+)
+data class ProviderCacheEntity(
+    val kind: String,
+    /** The track id for lyrics, or a normalised "title|artist" key for metadata. */
+    val trackId: String,
+    val provider: String,
+    val payload: String,
+    val found: Boolean,
+    val updatedAt: Long,
+)

@@ -389,3 +389,28 @@ interface SpotifyDao {
     @Upsert
     suspend fun putMatch(entry: YtMatchCacheEntity)
 }
+
+/** Shared lyrics/metadata provider cache (winners and negative results). */
+@Dao
+interface ProviderCacheDao {
+    @Upsert
+    suspend fun upsert(entry: ProviderCacheEntity)
+
+    @Query("SELECT * FROM provider_cache WHERE kind = :kind AND trackId = :trackId AND provider = :provider")
+    suspend fun get(kind: String, trackId: String, provider: String): ProviderCacheEntity?
+
+    @Query("SELECT * FROM provider_cache WHERE kind = :kind AND trackId = :trackId ORDER BY updatedAt DESC")
+    suspend fun forKey(kind: String, trackId: String): List<ProviderCacheEntity>
+
+    @Query("DELETE FROM provider_cache WHERE kind = :kind")
+    suspend fun clearKind(kind: String)
+
+    @Query("DELETE FROM provider_cache WHERE kind = :kind AND trackId = :trackId")
+    suspend fun deleteKey(kind: String, trackId: String)
+
+    @Query("DELETE FROM provider_cache WHERE found = 0")
+    suspend fun clearNegative()
+
+    @Query("DELETE FROM provider_cache")
+    suspend fun clearAll()
+}

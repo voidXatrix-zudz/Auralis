@@ -36,6 +36,8 @@ data class Lyrics(
     val raw: String,
     val synced: List<LrcLine>?,
     val plain: String?,
+    /** Name of the online provider that supplied these lyrics (e.g. "LRCLIB", "NetEase"), or null for local sources. */
+    val provider: String? = null,
 )
 
 /** A music file in the library. Mirrors the Track model of the AURALIS web reference. */

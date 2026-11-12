@@ -56,6 +56,7 @@ import androidx.compose.material.icons.rounded.FileOpen
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -160,6 +161,7 @@ fun LiquidLyricsScreen(
     lyricsOffsetMs: Int = 0,
     isFavorite: Boolean = false,
     onToggleFavorite: () -> Unit = {},
+    onTryAnotherSource: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onClose)
@@ -395,6 +397,11 @@ fun LiquidLyricsScreen(
                         )
                         DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
                             DropdownMenuItem(
+                                text = { Text("Try another source") },
+                                leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
+                                onClick = { moreOpen = false; onTryAnotherSource() },
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Paste lyrics") },
                                 leadingIcon = { Icon(Icons.Rounded.ContentPaste, null) },
                                 onClick = { moreOpen = false; pasteOpen = true },
@@ -533,7 +540,7 @@ private fun SourceChip(lyrics: Lyrics?) {
         LyricsSource.USER -> "Manual"
         LyricsSource.EMBEDDED -> "Embedded"
         LyricsSource.LRC -> "LRC file"
-        LyricsSource.LRCLIB -> "LRCLIB"
+        LyricsSource.LRCLIB -> lyrics.provider ?: "Online"
     }
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f),

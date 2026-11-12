@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import com.auralis.app.data.db.PlayEventEntity
 import com.auralis.app.data.metadata.TagData
 import com.auralis.app.domain.audio.EqPresets
@@ -381,6 +382,12 @@ fun MetadataEditorScreen(
     writeTags: suspend (Track, TagData) -> Result<Unit>,
     onSaved: () -> Unit,
     modifier: Modifier = Modifier,
+    remote: Boolean = false,
+    metadataCandidates: List<com.auralis.app.data.metadata.MetadataCandidate> = emptyList(),
+    metadataLoading: Boolean = false,
+    onFetchMetadata: (Track) -> Unit = {},
+    onClearCandidates: () -> Unit = {},
+    onSaveRemoteMetadata: (Track, com.auralis.app.data.metadata.MetadataCandidate) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -437,7 +444,31 @@ fun MetadataEditorScreen(
 
     LaunchedEffect(track.id) {
         loading = true
-        readTags(track).onSuccess { applyLoaded(it); tag = it; loading = false }.onFailure { error = it.localizedMessage ?: "Could not read tags"; loading = false }
+        if (remote) {
+            tag = TagData()
+            loading = false
+        } else {
+            readTags(track).onSuccess { applyLoaded(it); tag = it; loading = false }
+                .onFailure { error = it.localizedMessage ?: "Could not read tags"; loading = false }
+        }
+    }
+
+    fun applyCandidate(candidate: com.auralis.app.data.metadata.MetadataCandidate) {
+        if (candidate.title.isNotBlank()) title = candidate.title
+        if (candidate.artists.isNotBlank()) artist = candidate.artists
+        if (candidate.album.isNotBlank()) album = candidate.album
+        if (candidate.albumArtist.isNotBlank()) albumArtist = candidate.albumArtist
+        if (candidate.genre.isNotBlank()) genre = candidate.genre
+        candidate.year?.let { year = it.toString() }
+        candidate.trackNumber?.let { trackNo = it.toString() }
+        // Download the cover into the editor so Save embeds it (local) — off the main thread.
+        val cover = candidate.coverUrl
+        if (!cover.isNullOrBlank()) scope.launch {
+            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { java.net.URL(cover).openStream().use { it.readBytes() } }.getOrNull()
+            }
+            if (bytes != null && bytes.size <= 12 * 1024 * 1024) { artwork = bytes; removeArtwork = false }
+        }
     }
 
     if (loading) Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -445,6 +476,37 @@ fun MetadataEditorScreen(
     else Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Edit tags", style = MaterialTheme.typography.headlineSmall)
         Text(track.displayName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        // "Fetch metadata": candidates from MusicBrainz/Deezer/iTunes (Last.fm adds genre).
+        OutlinedButton(onClick = { onFetchMetadata(track) }, enabled = !metadataLoading, modifier = Modifier.fillMaxWidth()) {
+            if (metadataLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            else Icon(Icons.Rounded.CloudDownload, null)
+            Text(if (metadataCandidates.isEmpty()) "Fetch metadata" else "Search again", Modifier.padding(start = 8.dp))
+        }
+        if (metadataCandidates.isNotEmpty()) {
+            Text("Tap a match to fill the fields" + if (remote) ", then Save." else ".", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            metadataCandidates.forEach { candidate ->
+                MetadataCandidateRow(candidate) {
+                    if (remote) { onSaveRemoteMetadata(track, candidate); onSaved() }
+                    else applyCandidate(candidate)
+                }
+            }
+            TextButton(onClick = onClearCandidates) { Text("Hide matches") }
+        }
+
+        if (remote) {
+            Text(
+                "YouTube songs keep an in-app metadata override (used in the player and notification); the stream is never modified.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (metadataCandidates.isEmpty()) {
+                Text("Fetch metadata to pick a match, or close this screen.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(24.dp))
+            return@Column
+        }
+
         val preview = remember(artwork) { artwork?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull() } }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.size(88.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
@@ -473,6 +535,48 @@ fun MetadataEditorScreen(
         }
         Text("The original file is backed up in app cache and restored if the write fails. Rescan afterwards to refresh the library.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun MetadataCandidateRow(
+    candidate: com.auralis.app.data.metadata.MetadataCandidate,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                if (!candidate.coverUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = candidate.coverUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    )
+                } else {
+                    Icon(Icons.Rounded.Album, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(candidate.title.ifBlank { "Unknown title" }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val subtitle = listOfNotNull(
+                    candidate.artists.takeIf { it.isNotBlank() },
+                    candidate.album.takeIf { it.isNotBlank() },
+                    candidate.year?.toString(),
+                ).joinToString(" · ")
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(candidate.source + if (candidate.genre.isNotBlank()) " · ${candidate.genre}" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
 }
 

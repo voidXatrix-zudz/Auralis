@@ -1797,6 +1797,106 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** "Try another source": skip the provider that supplied the current lyrics and re-query. */
+    fun tryAnotherLyricsSource(track: Track) {
+        viewModelScope.launch {
+            _lyricsLoading.value = true
+            val currentProvider = _lyrics.value?.provider
+            val result = runCatching { container.lyrics.tryAnother(track, currentProvider) }
+                .onFailure { report("Couldn't fetch lyrics from another source", it) }
+                .getOrNull()
+            if (loadedLyricsTrackId != track.id) return@launch
+            if (result != null) {
+                _lyrics.value = result
+                val label = result.provider ?: "another source"
+                _messages.trySend("Lyrics from $label")
+            } else {
+                _messages.trySend("No other provider has lyrics for this song")
+            }
+            _lyricsLoading.value = false
+        }
+    }
+
+    // ---- Online metadata (Part G) ----------------------------------------------------------
+
+    private val _metadataCandidates = MutableStateFlow<List<com.auralis.app.data.metadata.MetadataCandidate>>(emptyList())
+    val metadataCandidates = _metadataCandidates.asStateFlow()
+    private val _metadataLoading = MutableStateFlow(false)
+    val metadataLoading = _metadataLoading.asStateFlow()
+
+    /** "Fetch metadata": fills the candidate list from the enabled providers. */
+    fun fetchMetadata(track: Track) {
+        viewModelScope.launch {
+            _metadataLoading.value = true
+            _metadataCandidates.value = emptyList()
+            val results = runCatching {
+                container.metadataRepository.search(
+                    title = track.title.ifBlank { track.displayName.substringBeforeLast('.') },
+                    artist = track.artist,
+                    album = track.album.takeIf { it.isNotBlank() },
+                    durationMs = track.durationMs.takeIf { it > 0 },
+                )
+            }.onFailure { report("Metadata lookup failed", it) }.getOrDefault(emptyList())
+            _metadataCandidates.value = results
+            _metadataLoading.value = false
+            if (results.isEmpty()) _messages.trySend("No metadata matches found")
+        }
+    }
+
+    fun clearMetadataCandidates() {
+        _metadataCandidates.value = emptyList()
+    }
+
+    /** Persists a chosen candidate for a YouTube song as a Room override, applied to the UI + notification. */
+    fun saveRemoteMetadataOverride(track: Track, candidate: com.auralis.app.data.metadata.MetadataCandidate) {
+        viewModelScope.launch {
+            runCatching {
+                val dao = container.database.providerCacheDao()
+                dao.upsert(
+                    com.auralis.app.data.db.ProviderCacheEntity(
+                        kind = KIND_METADATA_OVERRIDE,
+                        trackId = track.id,
+                        provider = candidate.source,
+                        payload = candidate.toJson().toString(),
+                        found = true,
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+                val updated = track.copy(
+                    title = candidate.title.ifBlank { track.title },
+                    artist = candidate.artists.ifBlank { track.artist },
+                    albumArtist = candidate.albumArtist.ifBlank { track.albumArtist },
+                    album = candidate.album.ifBlank { track.album },
+                    artworkUrl = candidate.coverUrl ?: track.artworkUrl,
+                    year = candidate.year ?: track.year,
+                )
+                _remoteTracks.update { known -> known + (track.id to updated) }
+                _messages.trySend("Metadata saved")
+            }.onFailure { report("Couldn't save metadata", it) }
+        }
+    }
+
+    fun clearLyricsMetadataCache() {
+        viewModelScope.launch {
+            runCatching {
+                container.lyrics.clearProviderCache()
+                container.database.providerCacheDao().clearKind("metadata")
+            }.onSuccess { _messages.trySend("Lyrics and metadata cache cleared") }
+                .onFailure { report("Couldn't clear the cache", it) }
+        }
+    }
+
+    /** Called after a lyrics/metadata setting change: forget "none found" markers so it re-queries. */
+    fun onLyricsSettingsChanged() {
+        viewModelScope.launch { runCatching { container.lyrics.clearNegativeCache() } }
+    }
+
+    /** Library "Auto-fix tags": a WorkManager batch that fills empty tag fields from the providers. */
+    fun autoFixTags() {
+        com.auralis.app.data.metadata.AutoTagManager(container.appContext).start()
+        _messages.trySend("Fixing tags in the background")
+    }
+
     fun wrappedStats(year: Int, month: Int?): WrappedStats {
         val events = playEvents.value.map { PlayEvent(it.trackId, it.playedAt, it.durationMs) }
         return ListeningStats.compute(tracks.value, events, year, month)
@@ -1879,6 +1979,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
     private companion object {
         const val TAG = "AuralisViewModel"
+        const val KIND_METADATA_OVERRIDE = "metadata_override"
         const val SEARCH_DEBOUNCE_MS = 300L
         const val RADIO_INITIAL_SIZE = 15
         const val RADIO_REFILL_SIZE = 12

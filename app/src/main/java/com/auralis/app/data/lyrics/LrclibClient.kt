@@ -27,12 +27,26 @@ sealed interface LrclibResult {
  * failures are swallowed and reported as `null` so playback and the lyrics screen never block.
  */
 class LrclibClient {
-    suspend fun lookup(track: Track): LrclibResult? = runInterruptible(Dispatchers.IO) {
+    suspend fun lookup(track: Track): LrclibResult? {
         val title = metadataTitle(track)
+        if (title.isBlank()) return LrclibResult.NotFound
+        return lookup(
+            title = title,
+            artist = cleanField(track.artist),
+            album = cleanField(track.album),
+            durationSeconds = (track.durationMs / 1000L).toInt().takeIf { it > 0 },
+        )
+    }
+
+    /** Field-based lookup, so the provider chain can reuse LRCLIB without building a [Track]. */
+    suspend fun lookup(
+        title: String,
+        artist: String?,
+        album: String?,
+        durationSeconds: Int?,
+    ): LrclibResult? = runInterruptible(Dispatchers.IO) {
         if (title.isBlank()) return@runInterruptible LrclibResult.NotFound
-        val artist = cleanField(track.artist)
-        val album = cleanField(track.album)
-        val seconds = (track.durationMs / 1000L).toInt().takeIf { it > 0 }
+        val seconds = durationSeconds
 
         val exact = buildList {
             add("track_name" to title)

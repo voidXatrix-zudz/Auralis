@@ -9,13 +9,18 @@ import android.util.LruCache
 import androidx.documentfile.provider.DocumentFile
 import com.auralis.app.data.db.LyricsDao
 import com.auralis.app.data.db.LyricsEntity
+import com.auralis.app.data.db.ProviderCacheDao
+import com.auralis.app.data.db.ProviderCacheEntity
 import com.auralis.app.data.db.SourceDao
+import com.auralis.app.data.settings.SettingsRepository
 import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.Track
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import java.io.File
 
 /**
@@ -32,10 +37,24 @@ class LyricsRepository(
     private val context: Context,
     private val lyricsDao: LyricsDao,
     private val sourceDao: SourceDao,
-    private val lrclib: LrclibClient = LrclibClient(),
+    private val providerCacheDao: ProviderCacheDao? = null,
+    private val settings: SettingsRepository? = null,
+    http: OkHttpClient = OkHttpClient(),
 ) {
     /** Parsed lyrics kept in memory (current track + prefetched queue neighbours). */
     private val parsedCache = LruCache<String, Lyrics>(24)
+
+    /** Enabled by id; built once. Provider order/enabled state is read per lookup from settings. */
+    private val providerHttp = ProviderHttp(http)
+    private val providers: Map<String, LyricsProvider> = listOf(
+        LrclibProvider(),
+        SimpMusicProvider(providerHttp),
+        NetEaseProvider(providerHttp),
+        KuGouProvider(providerHttp),
+        BetterLyricsProvider(providerHttp),
+        YouTubeMusicLyricsProvider(providerHttp),
+        LyricsOvhProvider(providerHttp),
+    ).associateBy { it.id }
 
     /** Non-blocking lookup used by the screen to show prefetched/cached lyrics instantly. */
     fun cached(trackId: String): Lyrics? = parsedCache.get(trackId)
@@ -49,8 +68,10 @@ class LyricsRepository(
         track: Track,
         allowDiscovery: Boolean = true,
         allowNetwork: Boolean = true,
+        skipProviders: Set<String> = emptySet(),
+        ignoreMemoryCache: Boolean = false,
     ): Lyrics? = withContext(Dispatchers.IO) {
-        parsedCache.get(track.id)?.let { return@withContext it }
+        if (!ignoreMemoryCache) parsedCache.get(track.id)?.let { return@withContext it }
         val stored = runCatching { lyricsDao.forTrack(track.id) }.getOrDefault(emptyList())
 
         // 1. Manual lyrics always win and are never replaced by automatic discovery.
@@ -83,31 +104,79 @@ class LyricsRepository(
             return@withContext parseRaw(track.id, discovered.first, LyricsSource.LRC)
         }
 
-        // 4. LRCLIB: a cached row wins (a blank row means "checked, nothing found"), so the API is
-        //    only contacted when this song has no lyrics anywhere yet.
-        stored.firstOrNull { it.source == LyricsSource.LRCLIB.name }?.let { cached ->
-            if (cached.raw.isBlank()) return@withContext null
-            return@withContext parseAndCache(track.id, cached)
-        }
+        // 4. Online providers, in the user's enabled order (LRCLIB first by default). A positive
+        //    cache row short-circuits; a fresh negative row means "checked, nothing found here" and
+        //    the provider is skipped until it expires. A failed provider is never negative-cached.
         if (!allowNetwork) return@withContext null
-        when (val online = runCatching { lrclib.lookup(track) }.getOrNull()) {
-            // Request failed (offline, rate limit): retry on a later visit, do not cache a miss.
-            null -> null
-            LrclibResult.NotFound -> {
-                cache(track, LyricsSource.LRCLIB, "")
-                null
-            }
-            is LrclibResult.Found -> {
-                val raw = online.synced ?: online.plain.orEmpty()
-                if (raw.isBlank()) {
-                    cache(track, LyricsSource.LRCLIB, "")
-                    null
+        val current = runCatching { settings?.settings?.first() }.getOrNull()
+        val order = (current?.lyricsProviderOrder ?: com.auralis.app.domain.model.AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER)
+            .filter { it in (current?.lyricsProvidersEnabled ?: com.auralis.app.domain.model.AppSettings().lyricsProvidersEnabled) }
+            .filterNot { it in skipProviders }
+        val preferSynced = current?.preferSyncedLyrics ?: true
+        var firstUnsynced: Lyrics? = null
+        for (providerId in order) {
+            val cachedRow = runCatching { providerCacheDao?.get(KIND_LYRICS, track.id, providerId) }.getOrNull()
+            if (cachedRow != null) {
+                if (!cachedRow.found) {
+                    if (System.currentTimeMillis() - cachedRow.updatedAt < NEGATIVE_TTL_MS) continue
                 } else {
-                    cache(track, LyricsSource.LRCLIB, raw)
-                    parseRaw(track.id, raw, LyricsSource.LRCLIB)
+                    val parsed = parseWithProvider(track.id, cachedRow.payload, providerId)
+                    if (parsed.synced != null) return@withContext parsed
+                    if (firstUnsynced == null) firstUnsynced = parsed
+                    if (!preferSynced) return@withContext parsed
+                    continue
                 }
             }
+            val provider = providers[providerId] ?: continue
+            val result = runCatching {
+                provider.search(
+                    title = okayTitle(track),
+                    artist = track.artist,
+                    album = track.album.takeIf { it.isNotBlank() },
+                    durationMs = track.durationMs.takeIf { it > 0 },
+                    videoId = if (track.isRemote) (track.remoteId ?: track.id.removePrefix("yt:")) else null,
+                )
+            }.onFailure { Log.w(TAG, "Lyrics provider $providerId failed", it) }.getOrNull() ?: continue
+            val raw = result.raw
+            if (raw == null) {
+                cacheProvider(track.id, providerId, "", found = false)
+                continue
+            }
+            cacheProvider(track.id, providerId, raw, found = true)
+            val parsed = parseWithProvider(track.id, raw, providerId)
+            if (parsed.synced != null) return@withContext parsed
+            if (firstUnsynced == null) firstUnsynced = parsed
+            if (!preferSynced) return@withContext parsed
         }
+        return@withContext firstUnsynced
+    }
+
+    /**
+     * "Try another source": ignores the in-memory winner and skips [currentProvider], returning the
+     * next provider that has anything, or null when the user has exhausted the enabled list.
+     */
+    suspend fun tryAnother(track: Track, currentProvider: String?): Lyrics? = withContext(Dispatchers.IO) {
+        val skip = setOfNotNull(currentProvider)
+        val result = load(
+            track = track,
+            allowDiscovery = false,
+            allowNetwork = true,
+            skipProviders = skip,
+            ignoreMemoryCache = true,
+        )
+        if (result != null) parsedCache.put(track.id, result)
+        result
+    }
+
+    /** Deletes every cached provider winner and "none found" marker (Settings: clear cache). */
+    suspend fun clearProviderCache() = withContext(Dispatchers.IO) {
+        runCatching { providerCacheDao?.clearKind(KIND_LYRICS) }
+        parsedCache.evictAll()
+    }
+
+    /** Clears only the negative ("none found") markers so a settings change re-queries everything. */
+    suspend fun clearNegativeCache() = withContext(Dispatchers.IO) {
+        runCatching { providerCacheDao?.clearNegative() }
     }
 
     suspend fun import(track: Track, uri: Uri): Lyrics = withContext(Dispatchers.IO) {
@@ -136,6 +205,7 @@ class LyricsRepository(
         runCatching { lyricsDao.delete(track.id, LyricsSource.EMBEDDED.name) }
         runCatching { lyricsDao.delete(track.id, LyricsSource.LRC.name) }
         runCatching { lyricsDao.delete(track.id, LyricsSource.LRCLIB.name) }
+        runCatching { providerCacheDao?.deleteKey(KIND_LYRICS, track.id) }
         parsedCache.remove(track.id)
     }
 
@@ -358,9 +428,36 @@ class LyricsRepository(
         return parsed
     }
 
+    /** Parses online lyrics and tags the result with the provider name (for the source chip). */
+    private suspend fun parseWithProvider(trackId: String, raw: String, provider: String): Lyrics {
+        val parsed = parseRaw(trackId, raw, LyricsSource.LRCLIB).copy(provider = provider)
+        parsedCache.put(trackId, parsed)
+        return parsed
+    }
+
+    private fun okayTitle(track: Track): String = metadataTitle(track)
+
+    private suspend fun cacheProvider(trackId: String, provider: String, payload: String, found: Boolean) {
+        runCatching {
+            providerCacheDao?.upsert(
+                ProviderCacheEntity(
+                    kind = KIND_LYRICS,
+                    trackId = trackId,
+                    provider = provider,
+                    payload = payload,
+                    found = found,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+        }.onFailure { Log.w(TAG, "Could not cache $provider lyrics for $trackId", it) }
+    }
+
     private companion object {
         const val TAG = "AuralisLyrics"
+        const val KIND_LYRICS = "lyrics"
         const val MAX_LYRICS_BYTES = 512 * 1024
         const val MIN_MATCH_SCORE = 50
+        /** A "none found" marker is re-queried after this long. */
+        const val NEGATIVE_TTL_MS = 7L * 24 * 60 * 60 * 1000
     }
 }
