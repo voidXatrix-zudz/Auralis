@@ -15,6 +15,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part J — Better artwork + lyrics matching
 - [x] Part L — Artist photos
 - [x] Part M — Racing stream resolvers
+- [x] Part P — Fast chunked downloads
 
 ## Notes
 - Part A: single allowed `adb logcat -d AndroidRuntime:E *:S` returned nothing (no device attached); cause found by code reading.

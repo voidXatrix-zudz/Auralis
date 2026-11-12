@@ -136,31 +136,39 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) : CoroutineW
             val resolved = container.youtube.resolveBestAudio(videoId)
             val dir = File(applicationContext.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "AURALIS").apply { mkdirs() }
             val base = sanitize(if (artist.isBlank()) title else "$artist - $title")
-            val target = uniqueFile(dir, base, resolved.extension)
-
-            withContext(Dispatchers.IO) {
-                http.newCall(Request.Builder().url(resolved.url).header("User-Agent", UA).build()).execute().use { response ->
-                    if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
-                    val body = response.body ?: throw IllegalStateException("Empty audio response")
-                    val total = body.contentLength()
-                    body.byteStream().use { input ->
-                        target.outputStream().use { output ->
-                            val buffer = ByteArray(64 * 1024)
-                            var copied = 0L
-                            while (true) {
-                                val read = input.read(buffer)
-                                if (read <= 0) break
-                                output.write(buffer, 0, read)
-                                copied += read
-                                if (total > 0) runCatching {
-                                    setProgress(workDataOf("p" to (copied.toFloat() / total)))
-                                    setForegroundAsync(foreground(title, videoId, copied.toFloat() / total)).get()
-                                }
-                            }
-                        }
-                    }
-                }
+            // Deterministic part file keyed by video id so a cancelled/failed attempt can resume.
+            val part = File(dir, ".$videoId.part")
+            val outcome = withContext(Dispatchers.IO) {
+                ChunkedDownloader(http, UA).download(
+                    urls = resolved.candidates.ifEmpty { listOf(resolved.url) },
+                    part = part,
+                    onProgress = { done, total ->
+                        val fraction = if (total > 0L) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+                        runCatching { setProgress(workDataOf("p" to fraction)) }
+                        runCatching { setForegroundAsync(foreground(title, videoId, fraction)).get() }
+                    },
+                    // A 403/410 means the signed URL expired: re-resolve through the racing resolver.
+                    reResolve = {
+                        runCatching { container.youtube.resolveBestAudio(videoId) }
+                            .map { it.candidates.ifEmpty { listOf(it.url) } }
+                            .getOrDefault(emptyList())
+                    },
+                )
             }
+            val target = uniqueFile(dir, base, resolved.extension)
+            if (!part.renameTo(target)) {
+                part.copyTo(target, overwrite = true)
+                part.delete()
+            }
+            File(dir, ".$videoId.part.state").delete()
+            val megabytes = outcome.bytes / (1024.0 * 1024.0)
+            val seconds = outcome.elapsedMs / 1000.0
+            val speed = if (outcome.elapsedMs > 0L) megabytes / seconds else 0.0
+            AppLog.i(
+                "Downloads",
+                "download $title: ${"%.1f".format(megabytes)} MB in ${"%.1f".format(seconds)} s " +
+                    "(${"%.1f".format(speed)} MB/s)",
+            )
 
             val artBytes = thumb?.takeIf { it.isNotBlank() }?.let { url -> downloadArtBytes(url) }
             val art = artBytes?.let { bytes -> writeArt(dir, base, bytes) }

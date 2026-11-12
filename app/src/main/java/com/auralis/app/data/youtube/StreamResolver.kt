@@ -318,21 +318,22 @@ class StreamResolver(
     }
 
     private fun extractBest(videoId: String): ResolvedAudio {
+        // Collect every audio URL we can, tagged by container, then prefer the least-throttled one.
+        val opusUrls = ArrayList<String>()
+        val aacUrls = ArrayList<String>()
         if (StreamResolverStatus.newPipeAvailable) {
             try {
                 ensureInitialized()
                 val info = StreamInfo.getInfo(ServiceList.YouTube, "$WATCH_URL$videoId")
-                val progressive = info.audioStreams.filter { it.content.startsWith("http", ignoreCase = true) }
-                val opus = progressive.firstOrNull { it.format?.name?.contains("OPUS", ignoreCase = true) == true }
-                val chosen = opus ?: progressive.firstOrNull()
-                val url = chosen?.content?.takeIf { it.isNotBlank() }
-                if (url != null) {
-                    return ResolvedAudio(
-                        url = url,
-                        format = if (opus != null) "Opus" else "AAC",
-                        extension = if (opus != null) "opus" else "m4a",
-                    )
-                }
+                info.audioStreams
+                    .filter { it.content.startsWith("http", ignoreCase = true) }
+                    .forEach { stream ->
+                        if (stream.format?.name?.contains("OPUS", ignoreCase = true) == true) {
+                            opusUrls += stream.content
+                        } else {
+                            aacUrls += stream.content
+                        }
+                    }
             } catch (linkage: LinkageError) {
                 StreamResolverStatus.newPipeAvailable = false
                 AppLog.w(TAG, "NewPipeExtractor unavailable for download; using InnerTube", linkage)
@@ -342,13 +343,29 @@ class StreamResolver(
                 AppLog.w(TAG, "NewPipe download resolution failed; trying InnerTube", error)
             }
         }
-        // InnerTube: Opus itags are 249/250/251; AAC is 139/140.
+        // InnerTube formats come from non-web clients (ANDROID_VR/IOS/ANDROID_MUSIC), which YouTube
+        // throttles far less; keep them for the front of the candidate list.
         val formats = runBlocking { innerTubePlayer.audioFormats(videoId) }
-        val opus = formats.filter { it.isOpus }.maxByOrNull { it.bitrate }
-        if (opus != null) return ResolvedAudio(opus.url, "Opus", "opus")
-        val aac = formats.maxByOrNull { it.bitrate }
-            ?: throw IllegalStateException("This song has no audio-only stream available")
-        return ResolvedAudio(aac.url, "AAC", "m4a")
+        val innerTubeUrls = formats.mapTo(HashSet()) { it.url }
+        formats.forEach { if (it.isOpus) opusUrls += it.url else aacUrls += it.url }
+
+        val useOpus = opusUrls.isNotEmpty()
+        val pool = (if (useOpus) opusUrls else aacUrls).distinct()
+        if (pool.isEmpty()) throw IllegalStateException("This song has no audio-only stream available")
+        // ratebypass=yes disables throttling outright; otherwise a non-web InnerTube URL is preferred.
+        val ordered = pool.sortedBy { url ->
+            when {
+                url.contains("ratebypass=yes", ignoreCase = true) -> 0
+                url in innerTubeUrls -> 1
+                else -> 2
+            }
+        }
+        return ResolvedAudio(
+            url = ordered.first(),
+            format = if (useOpus) "Opus" else "AAC",
+            extension = if (useOpus) "opus" else "m4a",
+            candidates = ordered,
+        )
     }
 
     /**
@@ -407,4 +424,10 @@ class StreamResolver(
 }
 
 /** A downloadable audio stream with its best-effort container format. */
-data class ResolvedAudio(val url: String, val format: String, val extension: String)
+data class ResolvedAudio(
+    val url: String,
+    val format: String,
+    val extension: String,
+    /** Additional playable URLs for the same audio, best (least throttled) first. */
+    val candidates: List<String> = emptyList(),
+)
