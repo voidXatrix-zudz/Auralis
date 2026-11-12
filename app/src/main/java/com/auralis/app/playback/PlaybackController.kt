@@ -221,7 +221,9 @@ class PlaybackController(private val context: Context) {
         player?.let { safely { p -> p.clearMediaItems() } } ?: updatePendingState()
     }
     fun toggle() = safely { if (it.isPlaying) it.pause() else it.play() }
-    fun next() = safely { if (it.hasNextMediaItem()) it.seekToNextMediaItem() }
+
+    /** User skip to the next song: always starts playback, even if the previous song was paused. */
+    fun next() = safely { if (it.hasNextMediaItem()) { it.seekToNextMediaItem(); it.play() } }
 
     /**
      * Standard music-player behavior: past three seconds, "previous" restarts the current song;
@@ -235,6 +237,8 @@ class PlaybackController(private val context: Context) {
         } else {
             it.seekTo(0L)
         }
+        // A user skip always begins playing, whether the previous song was playing or paused.
+        it.play()
     }
     fun seekTo(positionMs: Long) = safely { it.seekTo(positionMs.coerceAtLeast(0)) }
     fun seekBy(deltaMs: Long) = safely { it.seekTo((it.currentPosition + deltaMs).coerceIn(0L, it.duration.takeIf { d -> d > 0 } ?: Long.MAX_VALUE)) }

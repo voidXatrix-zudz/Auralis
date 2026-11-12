@@ -65,6 +65,10 @@ class PlaybackService : MediaLibraryService() {
     private var settings = AppSettings()
     private var pendingOutputResume = false
     private var outputCallbackRegistered = false
+    /** Set while a user-initiated skip is resolving; cleared once playback actually starts or on pause. */
+    private var autoPlayOnReady = false
+    /** Consecutive "stream failed → skipped to next" attempts, to avoid an infinite failure loop. */
+    private var skipRetries = 0
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
@@ -140,6 +144,8 @@ class PlaybackService : MediaLibraryService() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying) {
+                    // A skip's play landed; the latch is no longer needed.
+                    autoPlayOnReady = false
                     // Some devices only expose a valid session id once the first frame is rendered,
                     // so make sure the effects are attached even if the change callback was missed.
                     AudioEffectsEngine.attach(ownedPlayer.audioSessionId, settings)
@@ -148,6 +154,35 @@ class PlaybackService : MediaLibraryService() {
                 } else {
                     crossfade?.reset()
                     stopTicker()
+                }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    skipRetries = 0
+                    // Lazy resolution finished: honour a pending user skip by starting playback
+                    // unless the user paused it in the meantime (which clears the latch).
+                    if (autoPlayOnReady) {
+                        autoPlayOnReady = false
+                        ownedPlayer.play()
+                    }
+                }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // A remote stream can fail to resolve (expired/blocked URL, network change). Instead
+                // of stopping, skip to the following song and keep playing; log the reason. Give up
+                // after a few failures in a row so we never spin forever.
+                if (skipRetries >= MAX_SKIP_RETRIES || !ownedPlayer.hasNextMediaItem()) {
+                    AppLog.e("Playback", "Stream failed and there is no further song to try", error)
+                    return
+                }
+                skipRetries++
+                AppLog.w("Playback", "Stream failed; skipping to the next song", error)
+                autoPlayOnReady = true
+                runCatching {
+                    ownedPlayer.seekToNextMediaItem()
+                    ownedPlayer.play()
                 }
             }
         })
@@ -421,7 +456,7 @@ class PlaybackService : MediaLibraryService() {
      * "previous restarts after three seconds" rule on the service side. This covers the
      * notification, lock screen, Bluetooth and Android Auto, not just the in-app buttons.
      */
-    private class TransportPlayer(player: Player) : ForwardingPlayer(player) {
+    private inner class TransportPlayer(player: Player) : ForwardingPlayer(player) {
         override fun getAvailableCommands(): Player.Commands =
             super.getAvailableCommands().buildUpon()
                 .addAll(
@@ -432,16 +467,47 @@ class PlaybackService : MediaLibraryService() {
                 )
                 .build()
 
+        // Every user skip (in-app, mini-player, notification, lock screen, Bluetooth/headset, Android
+        // Auto) starts playback, even if the previous song was paused. A skip to a not-yet-resolved
+        // remote stream is honoured by the STATE_READY latch in the service's player listener.
+        private fun beginUserSkip() {
+            autoPlayOnReady = true
+            play()
+        }
+
+        override fun seekToNext() {
+            beginUserSkip()
+            super.seekToNext()
+        }
+
+        override fun seekToNextMediaItem() {
+            beginUserSkip()
+            super.seekToNextMediaItem()
+        }
+
         override fun seekToPrevious() {
+            beginUserSkip()
             if (currentPosition > PREVIOUS_RESTART_MS) seekTo(0L) else super.seekToPrevious()
         }
 
         override fun seekToPreviousMediaItem() {
+            beginUserSkip()
             if (currentPosition > PREVIOUS_RESTART_MS || !hasPreviousMediaItem()) {
                 seekTo(0L)
             } else {
                 super.seekToPreviousMediaItem()
             }
+        }
+
+        // A user pause while a skip is still resolving wins: drop the pending auto-play.
+        override fun pause() {
+            autoPlayOnReady = false
+            super.pause()
+        }
+
+        override fun setPlayWhenReady(playWhenReady: Boolean) {
+            if (!playWhenReady) autoPlayOnReady = false
+            super.setPlayWhenReady(playWhenReady)
         }
     }
 
@@ -455,6 +521,8 @@ class PlaybackService : MediaLibraryService() {
         private const val PLAYBACK_BUFFER_MS = 500
         private const val PLAYBACK_REBUFFER_MS = 1_000
         private const val PREVIOUS_RESTART_MS = 3_000L
+        /** How many consecutive failed streams to auto-skip past before giving up. */
+        private const val MAX_SKIP_RETRIES = 3
         private const val TAG = "AuralisService"
         private const val ROOT = "auralis_root"
         private const val LIBRARY = "auralis_library"

@@ -11,7 +11,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part N — Android 12 NoSuchMethodError crash (desugaring + resolver fallback)
 - [x] Part G — Lyrics + metadata providers
 - [x] Part H — Settings redesign (both themes)
-- [ ] Part I — Next/previous always plays
+- [x] Part I — Next/previous always plays
 - [ ] Part J — Better artwork + lyrics matching
 - [ ] Part L — Artist photos
 - [ ] Part M — Racing stream resolvers
@@ -37,3 +37,8 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - Quality flows through `StreamResolver` cache key, `YouTubeRepository.resolveStreamBlocking/prefetchStream`, `NetworkQuality.effective`, `PlaybackService.resolveRemoteUri`; prefetch gated by `NetworkQuality.allowPrefetch`.
   - `reduceBlurAndEffects` forces `blurEnabled=false`/`ambientMotionEnabled=false` in the root `CompositionLocalProvider`.
   - Storage: cache-size radio, "Clear cache" w/ live size, "Remove all downloads" (red + confirm); ViewModel `clearCache`/`removeAllDownloads`/`moveLyricsProvider`.
+- Part I: every user skip starts playback.
+  - `PlaybackService.TransportPlayer` (the session player all controllers route through) sets an `autoPlayOnReady` latch and calls `play()` on `seekToNext*`/`seekToPrevious*`, so buttons, mini-player, notification, lock screen, Bluetooth/headset and Android Auto all resume from paused.
+  - The service's player listener calls `play()` on `STATE_READY` if the latch is still set (lazy stream resolve), clears the latch on `onIsPlayingChanged`/user pause (`TransportPlayer.pause`/`setPlayWhenReady(false)`).
+  - `onPlayerError` skips to the next song and keeps playing (max 3 in a row, logged) instead of stopping.
+  - `PlaybackController.next()/previous()` also call `play()`; prefetch of the next URL was already in place, and the resolver cache is keyed by video id + quality, so a skip reuses it.
