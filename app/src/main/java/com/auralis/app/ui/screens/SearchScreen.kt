@@ -4,28 +4,42 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassSearchScreen
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
 
+/**
+ * One Search screen, two sources. [Local] keeps the library matching rules; [YouTube] forwards
+ * the typed query to the ViewModel (debounced) and renders streamed results in the same row.
+ */
 @Composable
 fun SearchScreen(
     tracks: List<Track>,
@@ -39,12 +53,23 @@ fun SearchScreen(
     onQueue: (Track) -> Unit = {},
     sources: List<MusicSource> = emptyList(),
     onPlayNext: (Track) -> Unit = onQueue,
+    youtubeResults: List<Track> = emptyList(),
+    youtubeLoading: Boolean = false,
+    youtubeError: String? = null,
+    youtubeResolvingId: String? = null,
+    onSearchYouTube: (String) -> Unit = {},
+    onPlayYouTube: (Track) -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassSearchScreen(tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, modifier, onQueue, sources, onPlayNext)
+        GlassSearchScreen(
+            tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, modifier,
+            onQueue, sources, onPlayNext, youtubeResults, youtubeLoading, youtubeError,
+            youtubeResolvingId, onSearchYouTube, onPlayYouTube,
+        )
         return
     }
     var query by rememberSaveable { mutableStateOf("") }
+    var youtube by rememberSaveable { mutableStateOf(false) }
     val normalizedQuery = query.trim()
     val sourceNames = remember(sources) { sources.associate { it.id to it.name } }
     // Filter only when the query or library actually changes.
@@ -61,17 +86,68 @@ fun SearchScreen(
         }
     }
 
+    // The ViewModel owns the 300 ms debounce + flatMapLatest cancellation; forward each keystroke.
+    LaunchedEffect(youtube, normalizedQuery) {
+        if (youtube && normalizedQuery.isNotBlank()) {
+            onSearchYouTube(normalizedQuery)
+        }
+    }
+
     Column(modifier.fillMaxSize().padding(top = 8.dp)) {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Songs, artists, albums, folders") },
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = "Search library") },
+            placeholder = { Text(if (youtube) "Search YouTube Music" else "Songs, artists, albums, folders") },
+            leadingIcon = {
+                Icon(Icons.Rounded.Search, contentDescription = if (youtube) "Search YouTube" else "Search library")
+            },
             singleLine = true,
             shape = CircleShape,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         )
-        if (normalizedQuery.isNotBlank()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(selected = !youtube, onClick = { youtube = false }, label = { Text("Local") })
+            FilterChip(selected = youtube, onClick = { youtube = true }, label = { Text("YouTube") })
+        }
+
+        if (youtube) {
+            when {
+                normalizedQuery.isBlank() -> SearchHint(
+                    title = "Search YouTube Music",
+                    body = "Find songs by title or artist. Results stream over the internet.",
+                )
+                youtubeLoading -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                youtubeError != null -> Column(
+                    Modifier.weight(1f).fillMaxWidth().padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(youtubeError, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = { onSearchYouTube(normalizedQuery) }) { Text("Try again") }
+                }
+                youtubeResults.isEmpty() -> SearchHint(
+                    title = "No YouTube results",
+                    body = "Nothing matches “$normalizedQuery”. Try a different spelling.",
+                )
+                else -> TrackRows(
+                    tracks = youtubeResults,
+                    favorites = favorites,
+                    currentId = currentId,
+                    onPlay = onPlayYouTube,
+                    onFavorite = {},
+                    playlists = emptyList(),
+                    onAddToPlaylist = { _, _ -> },
+                    modifier = Modifier.weight(1f),
+                    onQueue = {},
+                    onPlayNext = {},
+                    resolvingId = youtubeResolvingId,
+                )
+            }
+        } else if (normalizedQuery.isNotBlank()) {
             TrackRows(
                 tracks = found,
                 favorites = favorites,
@@ -85,5 +161,22 @@ fun SearchScreen(
                 onPlayNext = onPlayNext,
             )
         }
+    }
+}
+
+@Composable
+private fun SearchHint(title: String, body: String) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 56.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(
+            body,
+            modifier = Modifier.padding(top = 6.dp),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

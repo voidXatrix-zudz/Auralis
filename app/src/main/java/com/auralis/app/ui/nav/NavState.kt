@@ -9,8 +9,11 @@ sealed interface Destination {
     data object Equalizer : Destination
     data object Wrapped : Destination
     data object Backup : Destination
+    data object History : Destination
     data class MetadataEditor(val trackId: String) : Destination
     data class AudioAnalysis(val trackId: String) : Destination
+    data class PlaylistDetail(val playlistId: Long) : Destination
+    data class SpotifyImport(val importId: Long) : Destination
     data object Logs : Destination
 }
 

@@ -29,11 +29,13 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -312,8 +315,15 @@ fun GlassSearchScreen(
     onPlay: (Track) -> Unit, onFavorite: (Track) -> Unit,
     playlists: List<PlaylistEntity>, onAddToPlaylist: (Long, Track) -> Unit,
     modifier: Modifier, onQueue: (Track) -> Unit, sources: List<MusicSource>, onPlayNext: (Track) -> Unit,
+    youtubeResults: List<Track> = emptyList(),
+    youtubeLoading: Boolean = false,
+    youtubeError: String? = null,
+    youtubeResolvingId: String? = null,
+    onSearchYouTube: (String) -> Unit = {},
+    onPlayYouTube: (Track) -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf("") }
+    var youtube by rememberSaveable { mutableStateOf(false) }
     val q = query.trim()
     val sourceNames = remember(sources) { sources.associate { it.id to it.name } }
     // Same matching rules as the Normal search screen; recomputed only for a new query/library.
@@ -329,22 +339,69 @@ fun GlassSearchScreen(
                 sourceNames[track.sourceId]?.contains(q, ignoreCase = true) == true
         }
     }
+    // Search debounce/cancellation lives in the ViewModel; forward every keystroke.
+    LaunchedEffect(youtube, q) {
+        if (youtube && q.isNotBlank()) {
+            onSearchYouTube(q)
+        }
+    }
     Column(modifier.fillMaxSize()) {
         GlassHeader("Search", Modifier.padding(horizontal = 16.dp))
         GlassSearchField(
             value = query,
             onValueChange = { query = it },
-            placeholder = "Songs, artists, albums, folders",
-            leading = { Icon(Icons.Rounded.Search, contentDescription = "Search library") },
+            placeholder = if (youtube) "Search YouTube Music" else "Songs, artists, albums, folders",
+            leading = { Icon(Icons.Rounded.Search, contentDescription = if (youtube) "Search YouTube" else "Search library") },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            GlassChip("Local", !youtube, { youtube = false })
+            GlassChip("YouTube", youtube, { youtube = true })
+        }
         Spacer(Modifier.height(12.dp))
-        when {
-            q.isBlank() -> GlassEmptyState("Find anything", "Search by title, artist, album, genre or folder.", Modifier.weight(1f))
-            found.isEmpty() -> GlassEmptyState("No results", "Nothing matches “$q”.", Modifier.weight(1f))
-            else -> {
-                Text("${found.size} results", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                GlassTrackRows(found, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+        if (youtube) {
+            when {
+                q.isBlank() -> GlassEmptyState(
+                    "Search YouTube Music",
+                    "Find songs by title or artist. Results stream over the internet.",
+                    Modifier.weight(1f),
+                )
+                youtubeLoading -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                youtubeError != null -> GlassEmptyState("YouTube unavailable", youtubeError, Modifier.weight(1f)) {
+                    TextButton(onClick = { onSearchYouTube(q) }) { Text("Try again") }
+                }
+                youtubeResults.isEmpty() -> GlassEmptyState(
+                    "No results",
+                    "Nothing matches “$q”. Try a different spelling.",
+                    Modifier.weight(1f),
+                )
+                else -> {
+                    Text(
+                        "${youtubeResults.size} results",
+                        Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    GlassTrackRows(
+                        youtubeResults, favorites, currentId, onPlayYouTube, {}, emptyList(), { _, _ -> },
+                        Modifier.weight(1f), {}, {}, youtubeResolvingId,
+                    )
+                }
+            }
+        } else {
+            when {
+                q.isBlank() -> GlassEmptyState("Find anything", "Search by title, artist, album, genre or folder.", Modifier.weight(1f))
+                found.isEmpty() -> GlassEmptyState("No results", "Nothing matches “$q”.", Modifier.weight(1f))
+                else -> {
+                    Text("${found.size} results", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    GlassTrackRows(found, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                }
             }
         }
     }
@@ -358,14 +415,31 @@ fun GlassLibraryScreen(
     onQueue: (Track) -> Unit, onPlayAlbum: (List<Track>) -> Unit, onQueueAlbum: (List<Track>) -> Unit,
     onQueuePlaylist: (Long) -> Unit, scanning: Boolean, onPlayNext: (Track) -> Unit,
     onOpenSettings: () -> Unit = {},
+    youtubeEnabled: Boolean = false,
+    youtubeLiked: List<Track> = emptyList(),
+    youtubePlaylists: List<com.auralis.app.data.youtube.YtPlaylist> = emptyList(),
+    onPlayYouTubeTrack: (Track) -> Unit = onPlay,
+    onOpenYouTubePlaylist: (com.auralis.app.data.youtube.YtPlaylist) -> Unit = {},
+    onRefreshYouTubeLibrary: () -> Unit = {},
+    downloads: List<Track> = emptyList(),
+    onOpenHistory: () -> Unit = {},
+    onOpenPlaylist: (Long) -> Unit = {},
+    onImportSpotify: () -> Unit = {},
+    spotifyImports: List<com.auralis.app.data.db.SpotifyImportEntity> = emptyList(),
+    onOpenImport: (Long) -> Unit = {},
 ) {
     var selected by remember { mutableIntStateOf(0) }
     var creating by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
+    val tabs = remember(youtubeEnabled) { if (youtubeEnabled) GlassLibraryTabs + listOf("Liked Songs", "Downloads") else GlassLibraryTabs }
+    LaunchedEffect(youtubeEnabled) { if (youtubeEnabled) onRefreshYouTubeLibrary() }
     Column(modifier.fillMaxSize()) {
-        GlassHeader("Library", Modifier.padding(horizontal = 16.dp), "${tracks.size} songs")
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            GlassHeader("Library", Modifier.weight(1f), "${tracks.size} songs")
+            GlassGhostButton("History", onOpenHistory)
+        }
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(GlassLibraryTabs.size) { i -> GlassChip(GlassLibraryTabs[i], selected == i, { selected = i }) }
+            items(tabs.size) { i -> GlassChip(tabs[i], selected == i, { selected = i }) }
         }
         Spacer(Modifier.height(8.dp))
         when (selected) {
@@ -423,16 +497,79 @@ fun GlassLibraryScreen(
                 val favoriteTracks = remember(tracks, favorites) { tracks.filter { it.id in favorites } }
                 GlassTrackRows(favoriteTracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
             }
-            else -> {
+            5 -> {
                 Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     GlassPrimaryButton("Create playlist", { creating = true }, icon = Icons.Rounded.Add)
+                    GlassGhostButton("Import Spotify", onImportSpotify)
                     playlists.forEach { playlist ->
-                        GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onQueuePlaylist(playlist.id) }) {
+                        GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onOpenPlaylist(playlist.id) }) {
                             Row(Modifier.padding(start = 18.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(playlist.name, Modifier.weight(1f).padding(vertical = 14.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                                 GlassIconAction(Icons.Rounded.QueueMusic, "Add ${playlist.name} to queue", { onQueuePlaylist(playlist.id) }, tint = GlassTokens.Violet)
                             }
                         }
+                    }
+                    if (youtubeEnabled && youtubePlaylists.isNotEmpty()) {
+                        Text("YouTube Music playlists", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        youtubePlaylists.forEach { playlist ->
+                            GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onOpenYouTubePlaylist(playlist) }) {
+                                Text(
+                                    "${playlist.title} · ${playlist.trackCount}",
+                                    Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                    if (spotifyImports.isNotEmpty()) {
+                        Text("Spotify imports", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        spotifyImports.forEach { row ->
+                            GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onOpenImport(row.id) }) {
+                                Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                                    Text(row.fileName.removeSuffix(".csv"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        if (row.state == "RUNNING") "Matching ${row.processed}/${row.total}"
+                                        else "${row.matched} matched · ${row.review} to review · ${row.failed} failed",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = GlassTokens.SilverMuted,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            6 -> {
+                Column(Modifier.weight(1f).fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Liked Songs", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                        GlassGhostButton("Refresh", onRefreshYouTubeLibrary)
+                    }
+                    if (youtubeLiked.isEmpty()) {
+                        Text(
+                            "No liked YouTube songs yet.",
+                            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        GlassTrackRows(youtubeLiked, favorites, currentId, onPlayYouTubeTrack, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                    }
+                }
+            }
+            7 -> {
+                Column(Modifier.weight(1f).fillMaxWidth()) {
+                    Text("Downloaded", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    if (downloads.isEmpty()) {
+                        Text(
+                            "No downloads yet. Use “Download” on a YouTube song.",
+                            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        GlassTrackRows(downloads, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
                     }
                 }
             }

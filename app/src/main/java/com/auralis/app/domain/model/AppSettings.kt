@@ -54,4 +54,6 @@ data class AppSettings(
     val lastUpdateCheckAt: Long = 0L,
     /** Release tag the user skipped; automatic checks stay silent for that version. */
     val skippedUpdateTag: String = "",
+    /** Opt-in YouTube Music integration (account, Home feed, liked songs). Off by default. */
+    val youtubeIntegration: Boolean = false,
 )

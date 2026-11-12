@@ -14,6 +14,8 @@ import com.auralis.app.ui.components.AppDock
 import com.auralis.app.ui.components.DockMetrics
 import com.auralis.app.ui.components.DockScrollState
 import com.auralis.app.ui.components.DockStyle
+import com.auralis.app.ui.components.DownloadActions
+import com.auralis.app.ui.components.LocalDownloadActions
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.components.rememberDockScrollState
 
@@ -81,12 +83,16 @@ import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.nav.Tab
 import com.auralis.app.ui.screens.AboutScreen
+import com.auralis.app.data.youtube.YOUTUBE_TRACK_PREFIX
 import com.auralis.app.domain.model.Track
 import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.ui.components.PlayerBackgroundImage
 import com.auralis.app.ui.screens.HomeScreen
+import com.auralis.app.ui.screens.HistoryScreen
 import com.auralis.app.ui.screens.LibraryScreen
 import com.auralis.app.ui.screens.NowPlayingScreen
+import com.auralis.app.ui.screens.PlaylistDetailScreen
+import com.auralis.app.ui.screens.SpotifyImportScreen
 import com.auralis.app.ui.screens.SearchScreen
 import com.auralis.app.ui.screens.SettingsScreen
 import com.auralis.app.ui.screens.EqualizerScreen
@@ -117,6 +123,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val tracks by viewModel.tracks.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+    val playlistEntries by viewModel.playlistEntries.collectAsStateWithLifecycle()
+    val playlistYtEntries by viewModel.playlistYtEntries.collectAsStateWithLifecycle()
+    val spotifyImports by viewModel.spotifyImports.collectAsStateWithLifecycle()
     val scanning by viewModel.scanning.collectAsStateWithLifecycle()
     // Collect the playback state once, then expose only the slices this screen needs as derived
     // state. The position tick (every 500 ms) no longer recomposes the whole app shell.
@@ -134,9 +143,32 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val performanceReason by viewModel.performanceReason.collectAsStateWithLifecycle()
     // GitHub release state; drives the global dialog, the Settings row and the dock badge.
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    // YouTube source state: remote search results + the song currently being resolved.
+    val youtubeSearch by viewModel.youtubeSearch.collectAsStateWithLifecycle()
+    val youtubeResolvingId by viewModel.youtubeResolvingId.collectAsStateWithLifecycle()
+    val remoteTracks by viewModel.remoteTracks.collectAsStateWithLifecycle()
+    val home by viewModel.home.collectAsStateWithLifecycle()
+    val youtubeAuth by viewModel.youtubeAuth.collectAsStateWithLifecycle()
+    val youtubeLikedIds by viewModel.youtubeLikedIds.collectAsStateWithLifecycle()
+    val youtubeLikedTracks by viewModel.youtubeLikedTracks.collectAsStateWithLifecycle()
+    val youtubePlaylists by viewModel.youtubePlaylists.collectAsStateWithLifecycle()
+    val downloads by viewModel.downloads.collectAsStateWithLifecycle()
+    val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
+    val youtubeHistory by viewModel.youtubeHistory.collectAsStateWithLifecycle()
+    // Sign-in gate + the personalised Home feed.
+    val auth by viewModel.auth.collectAsStateWithLifecycle()
+    // Heart state reads the YouTube like table for remote tracks, local favorites otherwise.
+    val mergedFavorites by remember(favorites, youtubeLikedIds) {
+        derivedStateOf { favorites + youtubeLikedIds.map { YOUTUBE_TRACK_PREFIX + it } }
+    }
+    val likeTrack: (Track) -> Unit = remember(viewModel) {
+        { track -> if (track.id.startsWith(YOUTUBE_TRACK_PREFIX)) viewModel.toggleYouTubeLike(track) else viewModel.toggleFavorite(track) }
+    }
+    var youtubeLoginOpen by rememberSaveable { mutableStateOf(false) }
     var nowPlayingOpen by rememberSaveable { mutableStateOf(false) }
     // Build the id lookup once per library change; track lookups are O(1) instead of a scan per frame.
-    val trackById = remember(tracks) { tracks.associateBy { it.id } }
+    // Streamed tracks are merged in so Now Playing, lyrics, dock and the notification resolve them.
+    val trackById = remember(tracks, remoteTracks) { tracks.associateBy { it.id } + remoteTracks }
     val currentTrack = remember(trackById, playbackTrackId) { playbackTrackId?.let(trackById::get) }
     val queuedTracks = remember(queueIds, trackById) { queueIds.mapNotNull(trackById::get) }
     val upNextTracks = remember(upNextIds, trackById) { upNextIds.mapNotNull(trackById::get) }
@@ -170,6 +202,20 @@ fun AuralisRoot(viewModel: AppViewModel) {
         LyricsFontPreloader()
         SystemBarsAppearance(dark || settings.themeStyle == ThemeStyle.GLASSMORPHIC)
 
+        // Sign-in gate. Only active when a Clerk publishable key was configured at build time, so a
+        // keyless build behaves exactly like it did before authentication existed.
+        if (auth.configured && !auth.signedIn) {
+            com.auralis.app.ui.screens.LoginScreen(
+                auth = auth,
+                onGoogleSignIn = viewModel::signInWithGoogle,
+                onRequestCode = viewModel::requestEmailCode,
+                onVerifyCode = viewModel::verifyEmailCode,
+                onEditEmail = viewModel::editEmail,
+                onClearError = viewModel::clearAuthError,
+            )
+            return@AuralisTheme
+        }
+
         val snackbarHost = remember { SnackbarHostState() }
         LaunchedEffect(viewModel) {
             viewModel.messages.collect { snackbarHost.showSnackbar(it) }
@@ -198,6 +244,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 else if (!permissionRequestPending) { permissionRequestPending = true; scanPermission.launch(permission) }
             }
         }
+        val spotifyPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) viewModel.importSpotify(uris)
+        }
+        val importSpotify = remember(spotifyPicker) { { spotifyPicker.launch(arrayOf("*/*")) } }
 
         BackHandler(enabled = nowPlayingOpen || nav.stack.isNotEmpty()) { if (nowPlayingOpen) nowPlayingOpen = false else viewModel.back() }
 
@@ -210,6 +260,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             LocalPerformanceReason provides performanceReason,
             // Glass content draws edge-to-edge under the dock and reserves this inside its lists.
             LocalDockBottomInset provides if (dockStyle == DockStyle.GLASS) DockMetrics.GlassExpandedHeight + DockMetrics.GlassBottomMargin else 0.dp,
+            LocalDownloadActions provides DownloadActions(downloadedIds, viewModel::downloadTrack, viewModel::deleteDownload),
         ) {
         AuralisBackdrop(themeStyle = settings.themeStyle, artColor = currentTrack?.artColor, tier = profile.tier) {
             if (nowPlayingOpen && currentTrack != null) {
@@ -218,7 +269,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     queue = queuedTracks,
                     upNext = upNextTracks,
                     availableTracks = tracks,
-                    favorites = favorites,
+                    favorites = mergedFavorites,
                     playback = playbackState,
                     settings = settings,
                     lyrics = viewModel.lyrics.collectAsStateWithLifecycle().value,
@@ -239,7 +290,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     gesturesEnabled = settings.gestureSeekEnabled,
                     onShuffle = viewModel::toggleShuffle,
                     onRepeat = viewModel::cycleRepeat,
-                    onFavorite = viewModel::toggleFavorite,
+                    onFavorite = likeTrack,
                     onAddToQueue = viewModel::enqueue,
                     onRemoveFromQueue = { viewModel.removeQueueItem(it.id) },
                     onMoveQueueItem = { track, index -> viewModel.moveQueueItem(track.id, index) },
@@ -319,6 +370,14 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                         updateStatus = updateState.status,
                                         updateAvailableVersion = updateState.available?.version,
                                         onBack = viewModel::back,
+                                        youtubeSignedIn = youtubeAuth?.signedIn == true,
+                                        youtubeName = youtubeAuth?.name.orEmpty(),
+                                        onYouTubeSignIn = { youtubeLoginOpen = true },
+                                        onYouTubeSignOut = viewModel::signOutYouTube,
+                                        clerkSignedIn = auth.signedIn,
+                                        clerkName = auth.account?.displayName.orEmpty(),
+                                        clerkEmail = auth.account?.email.orEmpty(),
+                                        onClerkSignOut = viewModel::signOutClerk,
                                     )
                                     Destination.About -> AboutScreen()
                                     Destination.Equalizer -> EqualizerScreen(settings, viewModel::updateSettings)
@@ -327,6 +386,12 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                         WrappedScreen(events, viewModel::wrappedStats)
                                     }
                                     Destination.Backup -> BackupScreen(viewModel::exportBackup, viewModel::restoreBackup)
+                                    Destination.History -> HistoryScreen(
+                                        entries = youtubeHistory,
+                                        currentId = playbackTrackId,
+                                        onPlay = viewModel::playHistoryEntry,
+                                        onClear = viewModel::clearHistory,
+                                    )
                                     Destination.Logs -> LogsDiagnosticsScreen(settings, sources, currentTrack)
                                     is Destination.MetadataEditor -> {
                                         val destination = state.top as Destination.MetadataEditor
@@ -347,12 +412,48 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             Text("This song is not in the library anymore.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         } else AudioAnalysisScreen(track)
                                     }
+                                    is Destination.PlaylistDetail -> {
+                                        val destination = state.top as Destination.PlaylistDetail
+                                        PlaylistDetailScreen(
+                                            playlistName = playlists.firstOrNull { it.id == destination.playlistId }?.name ?: "Playlist",
+                                            items = viewModel.playlistItems(destination.playlistId),
+                                            currentId = playbackTrackId,
+                                            onPlayIndex = { index -> viewModel.playPlaylist(destination.playlistId, index) },
+                                            onRemove = { item -> viewModel.removePlaylistItem(destination.playlistId, item) },
+                                            onMove = { item, delta -> viewModel.movePlaylistItem(destination.playlistId, item, delta) },
+                                            onRename = { newName -> viewModel.renamePlaylist(destination.playlistId, newName) },
+                                            onDelete = { viewModel.deletePlaylist(destination.playlistId); viewModel.back() },
+                                        )
+                                    }
+                                    is Destination.SpotifyImport -> {
+                                        val destination = state.top as Destination.SpotifyImport
+                                        val review by viewModel.observeImportReview(destination.importId)
+                                            .collectAsStateWithLifecycle(initialValue = emptyList())
+                                        SpotifyImportScreen(
+                                            importRow = spotifyImports.firstOrNull { it.id == destination.importId },
+                                            reviewItems = review,
+                                            candidatesOf = viewModel::decodeCandidates,
+                                            onPick = { item, candidate -> viewModel.resolveImportItem(destination.importId, item.id, candidate) },
+                                            onSkip = { item -> viewModel.resolveImportItem(destination.importId, item.id, null) },
+                                            onRetry = { item -> viewModel.retryImportItem(destination.importId, item) },
+                                            onOpenPlaylist = { id -> viewModel.push(Destination.PlaylistDetail(id)) },
+                                        )
+                                    }
                                     null -> when (state.tab) {
-                                        Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = favorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = viewModel::toggleFavorite, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, settingsBadge = updateState.available != null)
-                                        Tab.SEARCH -> SearchScreen(tracks, favorites, playbackTrackId, { viewModel.play(it, tracks) }, viewModel::toggleFavorite, playlists, viewModel::addToPlaylist, onQueue = viewModel::enqueue, sources = sources, onPlayNext = viewModel::playNext)
+                                        Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = mergedFavorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = likeTrack, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, settingsBadge = updateState.available != null, youtubeEnabled = settings.youtubeIntegration, home = home, youtubeAvatarUrl = youtubeAuth?.avatarUrl?.ifBlank { null } ?: auth.account?.imageUrl, youtubeAccountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName, youtubeSignedIn = youtubeAuth?.signedIn == true, onOpenHome = { viewModel.loadHome() }, onRefreshHome = viewModel::refreshYouTubeHome, onSelectHomeCategory = viewModel::selectHomeCategory, onPlayYtTrack = viewModel::playYouTubeTrack, onOpenYtCard = viewModel::openHomeCard, onLikeYtTrack = viewModel::toggleYouTubeLike, onLoadMoreHomeRow = viewModel::loadMoreHomeRow, onCloseHomeCollection = viewModel::closeHomeCollection, onYouTubeSignIn = { youtubeLoginOpen = true }, onYouTubeSignOut = viewModel::signOutYouTube)
+                                        Tab.SEARCH -> SearchScreen(
+                                            tracks, mergedFavorites, playbackTrackId, { viewModel.play(it, tracks) }, likeTrack, playlists, viewModel::addToPlaylist,
+                                            onQueue = viewModel::enqueue, sources = sources, onPlayNext = viewModel::playNext,
+                                            youtubeResults = youtubeSearch.results,
+                                            youtubeLoading = youtubeSearch.loading,
+                                            youtubeError = youtubeSearch.error,
+                                            youtubeResolvingId = youtubeResolvingId,
+                                            onSearchYouTube = viewModel::searchYouTube,
+                                            onPlayYouTube = viewModel::playYouTube,
+                                        )
                                         Tab.LIBRARY -> LibraryScreen(
-                                            tracks, favorites, sources, playlists, playbackTrackId, addMusic, scan,
-                                            { viewModel.play(it, tracks) }, viewModel::toggleFavorite, viewModel::createPlaylist, viewModel::addToPlaylist,
+                                            tracks, mergedFavorites, sources, playlists, playbackTrackId, addMusic, scan,
+                                            { viewModel.play(it, tracks) }, likeTrack, viewModel::createPlaylist, viewModel::addToPlaylist,
                                             onQueue = viewModel::enqueue,
                                             onPlayNext = viewModel::playNext,
                                             onPlayAlbum = { album -> album.firstOrNull()?.let { viewModel.play(it, album) } },
@@ -360,6 +461,18 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             onQueuePlaylist = viewModel::enqueuePlaylist,
                                             scanning = scanning,
                                             onOpenSettings = { viewModel.push(Destination.Settings) },
+                                            youtubeEnabled = settings.youtubeIntegration,
+                                            youtubeLiked = youtubeLikedTracks,
+                                            youtubePlaylists = youtubePlaylists,
+                                            onPlayYouTubeTrack = viewModel::playYouTubeTrack,
+                                            onOpenYouTubePlaylist = viewModel::openYouTubePlaylist,
+                                            onRefreshYouTubeLibrary = viewModel::refreshYouTubeLibrary,
+                                            downloads = downloads,
+                                            onOpenHistory = { viewModel.push(Destination.History) },
+                                            onOpenPlaylist = { id -> viewModel.push(Destination.PlaylistDetail(id)) },
+                                            onImportSpotify = importSpotify,
+                                            spotifyImports = spotifyImports,
+                                            onOpenImport = { id -> viewModel.push(Destination.SpotifyImport(id)) },
                                         )
                                         Tab.EQUALIZER -> EqualizerScreen(settings, viewModel::updateSettings)
                                         Tab.SETTINGS -> SettingsScreen(
@@ -378,6 +491,14 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             updateStatus = updateState.status,
                                             updateAvailableVersion = updateState.available?.version,
                                             onBack = viewModel::back,
+                                            youtubeSignedIn = youtubeAuth?.signedIn == true,
+                                            youtubeName = youtubeAuth?.name.orEmpty(),
+                                            onYouTubeSignIn = { youtubeLoginOpen = true },
+                                            onYouTubeSignOut = viewModel::signOutYouTube,
+                                            clerkSignedIn = auth.signedIn,
+                                            clerkName = auth.account?.displayName.orEmpty(),
+                                            clerkEmail = auth.account?.email.orEmpty(),
+                                            onClerkSignOut = viewModel::signOutClerk,
                                         )
                                     }
                                 }
@@ -423,6 +544,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                         hazeState = hazeState,
                         onExpand = { if (dockStyle == DockStyle.GLASS) dockScroll.expand() },
                         showSettingsBadge = updateState.available != null,
+                        artworkUri = playbackState.artworkUri,
                     )
                 }
             }
@@ -449,6 +571,13 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onLater = viewModel::dismissUpdate,
                     onSkip = viewModel::skipUpdateVersion,
                     onOpenPage = viewModel::openUpdatePage,
+                )
+            }
+
+            if (youtubeLoginOpen) {
+                com.auralis.app.ui.screens.YouTubeLoginDialog(
+                    onSession = viewModel::saveYouTubeSession,
+                    onDismiss = { youtubeLoginOpen = false },
                 )
             }
         }

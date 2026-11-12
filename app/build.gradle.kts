@@ -9,16 +9,32 @@ val keystoreProperties = Properties().apply {
 }
 val hasReleaseKeystore = keystorePropertiesFile.exists()
 
+// Optional Clerk publishable key. Supply it in gradle.properties (CLERK_PUBLISHABLE_KEY=pk_test_…)
+// or in local.properties. Clerk publishable keys are safe to ship in the client, but keeping it out
+// of the repo (local.properties is gitignored) is the tidier default. When it is blank the app
+// builds and runs exactly as before with no sign-in gate.
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val clerkPublishableKey: String =
+    (project.findProperty("CLERK_PUBLISHABLE_KEY") as String?)
+        ?: localProperties.getProperty("CLERK_PUBLISHABLE_KEY")
+        ?: ""
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "com.auralis.app"
-    compileSdk = 35
+    // Clerk (and its okhttp 5 / androidx.browser 1.10 transitive deps) require API 36 to compile
+    // against. targetSdk stays at 35 so runtime behaviour is unchanged.
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.auralis.app"
@@ -28,6 +44,9 @@ android {
         // versionCode must always increase; versionName is what the updater compares.
         versionCode = 2
         versionName = "1.2.0"
+
+        // Blank when no key was supplied; ClerkAuthRepository skips auth in that case.
+        buildConfigField("String", "CLERK_PUBLISHABLE_KEY", "\"$clerkPublishableKey\"")
     }
 
     signingConfigs {
@@ -42,10 +61,6 @@ android {
     }
 
     buildTypes {
-        debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
-        }
         release {
             // Minification is enabled in Stage 7 once Room/Media3 keep rules are verified on device.
             isMinifyEnabled = false
@@ -92,9 +107,15 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.documentfile)
     implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.haze)
+    implementation(libs.okhttp)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.newpipe.extractor)
+    implementation(libs.clerk.android.api)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
+    implementation(libs.media3.datasource.okhttp)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

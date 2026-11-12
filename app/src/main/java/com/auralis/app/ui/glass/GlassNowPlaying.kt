@@ -56,6 +56,7 @@ import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Equalizer
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileOpen
@@ -126,6 +127,7 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.components.AudioInfoSheet
+import com.auralis.app.ui.components.LocalDownloadActions
 import com.auralis.app.ui.components.PlayerBackgroundImage
 import com.auralis.app.ui.components.QualityBadgeContent
 import com.auralis.app.ui.components.qualityBadgeContent
@@ -381,6 +383,7 @@ fun GlassNowPlayingScreen(
                                         ) { change, amount -> change.consume(); artworkDrag += amount }
                                     },
                                 radius = 34.dp,
+                                artUri = playback.artworkUri,
                             )
                             Spacer(Modifier.height(26.dp))
                             Column(
@@ -434,6 +437,17 @@ fun GlassNowPlayingScreen(
                                         tint = if (track.id in favorites) GlassTokens.Violet else colors.onSurface,
                                         size = 36.dp,
                                     )
+                                    if (track.isRemote) {
+                                        val dlx = LocalDownloadActions.current
+                                        val downloaded = (track.remoteId ?: track.id.removePrefix("yt:")) in dlx.downloadedIds
+                                        GlassIconButton(
+                                            Icons.Rounded.Download,
+                                            if (downloaded) "Delete download" else "Download",
+                                            { if (downloaded) dlx.onDeleteDownload(track) else dlx.onDownload(track) },
+                                            tint = if (downloaded) GlassTokens.Violet else colors.onSurface,
+                                            size = 36.dp,
+                                        )
+                                    }
                                     // The "..." options travel up with the header when lyrics open.
                                     if (lyricsOpen) {
                                         Box(Modifier.padding(start = 8.dp)) {

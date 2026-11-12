@@ -315,6 +315,7 @@ fun AppDock(
     onExpand: () -> Unit = {},
     /** Draws a small accent dot on the Settings slot while a release update is available. */
     showSettingsBadge: Boolean = false,
+    artworkUri: Any? = null,
 ) {
     val glass = LocalDockGlassStyle.current
     if (style == DockStyle.GLASS) {
@@ -332,6 +333,7 @@ fun AppDock(
             hazeState = hazeState,
             onExpand = onExpand,
             glass = glass,
+            artworkUri = artworkUri,
         )
         return
     }
@@ -428,6 +430,7 @@ fun AppDock(
                 onOpen = onOpenNowPlaying,
                 nextAlpha = nextAlpha,
                 nextProgress = (p * 2f).coerceIn(0f, 1f),
+                artworkUri = artworkUri,
             )
         },
     ) { measurables, constraints ->
@@ -745,6 +748,7 @@ private fun DockMiniPill(
     onOpen: () -> Unit,
     nextAlpha: Float,
     nextProgress: Float,
+    artworkUri: Any? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(50)
@@ -780,6 +784,7 @@ private fun DockMiniPill(
                 track = track,
                 modifier = Modifier.size(if (isGlass) DockDimens.MiniArtSize else 44.dp),
                 shape = RoundedCornerShape(12.dp),
+                artUri = artworkUri,
             )
             Column(
                 Modifier
@@ -1070,6 +1075,7 @@ private fun GlassDock(
     hazeState: HazeState?,
     onExpand: () -> Unit,
     glass: DockGlassStyle,
+    artworkUri: Any? = null,
 ) {
     val p = progress().coerceIn(0f, 1f)
     val dockHeight = DockMetrics.glassHeight(hasTrack, p)
@@ -1145,6 +1151,7 @@ private fun GlassDock(
                 onOpen = onOpenNowPlaying,
                 nextAlpha = (1f - p * 1.6f).coerceIn(0f, 1f),
                 nextProgress = (p * 2f).coerceIn(0f, 1f),
+                artworkUri = artworkUri,
             )
         },
     ) { measurables, constraints ->

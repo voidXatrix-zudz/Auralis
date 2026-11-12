@@ -1,6 +1,7 @@
 package com.auralis.app.ui
 
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -8,11 +9,26 @@ import com.auralis.app.AppContainer
 import com.auralis.app.data.db.PlayEventEntity
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.data.db.PlaylistEntryEntity
+import com.auralis.app.data.db.PlaylistYtEntryEntity
 import com.auralis.app.data.db.QueueItemEntity
+import com.auralis.app.data.db.SearchHistoryEntity
+import com.auralis.app.data.db.SpotifyImportEntity
+import com.auralis.app.data.db.SpotifyImportItemEntity
 import com.auralis.app.data.db.toDomain
+import com.auralis.app.data.db.toYouTubeLikeEntity
+import com.auralis.app.data.db.toYouTubeRecentEntity
 import com.auralis.app.data.metadata.TagData
 import com.auralis.app.data.settings.PlaybackSnapshot
 import com.auralis.app.data.update.UpdateUiState
+import com.auralis.app.data.auth.ClerkAccount
+import com.auralis.app.data.auth.EmailCodeChallenge
+import com.auralis.app.data.auth.toAccount
+import com.auralis.app.data.youtube.YOUTUBE_TRACK_PREFIX
+import com.auralis.app.data.youtube.YtCard
+import com.auralis.app.data.youtube.YtSong
+import com.auralis.app.data.youtube.YouTubeAuth
+import com.auralis.app.data.youtube.toTrack
+import com.auralis.app.data.youtube.toYouTubeLikeEntity as ytSongToLikeEntity
 import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Lyrics
@@ -29,10 +45,81 @@ import com.auralis.app.ui.nav.Tab
 import com.auralis.app.ui.performance.PerformanceController
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
+/** YouTube search state. Remote results are session-only; nothing is written to the library. */
+data class YouTubeSearchUiState(
+    val query: String = "",
+    val loading: Boolean = false,
+    val error: String? = null,
+    val results: List<Track> = emptyList(),
+)
+
+/** Home categories shown as the filter chips directly under the header. */
+enum class HomeCategory(val label: String) {
+    FOR_YOU("For You"),
+    TRENDING("Trending"),
+    NEW_RELEASES("New Releases"),
+    CHILL("Chill"),
+    WORKOUT("Workout"),
+    FOCUS("Focus"),
+}
+
+/**
+ * One horizontal Home row.
+ *
+ * Rows load independently: a failure in one never blanks the whole page, and a radio-seeded row can
+ * page more songs in on demand through its [seedVideoId].
+ */
+data class HomeRow(
+    val id: String,
+    val title: String,
+    val subtitle: String? = null,
+    val tracks: List<Track> = emptyList(),
+    val cards: List<YtCard> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+    /** Video id used to page more songs in through the InnerTube radio (null when not pageable). */
+    val seedVideoId: String? = null,
+    val hasMore: Boolean = false,
+)
+
+/**
+ * The entire Home feed. [rows] keeps insertion order so the UI renders the sections in the intended
+ * order without sorting. [collection*] drives the artist/collection sheet opened from a card tap.
+ */
+data class HomeUiState(
+    val category: HomeCategory = HomeCategory.FOR_YOU,
+    val rows: Map<String, HomeRow> = emptyMap(),
+    val refreshing: Boolean = false,
+    val collectionTitle: String? = null,
+    val collectionTracks: List<Track> = emptyList(),
+    val collectionLoading: Boolean = false,
+    val collectionSeedVideoId: String? = null,
+    val collectionMore: Boolean = false,
+)
+
+/** Sign-in gate state: which of "loading / signed out / signed in" the Clerk layer is in. */
+data class AuthUiState(
+    val configured: Boolean = false,
+    val initializing: Boolean = true,
+    val signedIn: Boolean = false,
+    val account: ClerkAccount? = null,
+    /** True once an email code was sent and the screen should ask for it. */
+    val awaitingCode: Boolean = false,
+    val email: String = "",
+    val busy: Boolean = false,
+    val error: String? = null,
+)
+
+@OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class AppViewModel(private val container: AppContainer) : ViewModel() {
     val settings: StateFlow<AppSettings> = container.settings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
     val sources: StateFlow<List<MusicSource>> = container.sources.observeSources().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -40,8 +127,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val favorites: StateFlow<Set<String>> = container.database.favoriteDao().observeIds().map { it.toSet() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
     val playlists = container.database.playlistDao().observePlaylists().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val playlistEntries = container.database.playlistDao().observeEntries().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val playlistYtEntries = container.database.playlistDao().observeYtEntries().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val spotifyImports = container.database.spotifyDao().observeImports().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val history = container.database.historyDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val playEvents = container.database.playEventDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** Recent YouTube search terms (newest first); a Home recommendation signal, kept hot for reads. */
+    val searchHistory: StateFlow<List<String>> = container.database.searchHistoryDao()
+        .observeRecent(20)
+        .map { rows -> rows.map { it.query } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val playback = container.playback.state
     /**
      * The single resolved visual workload for the whole app. Combines the persisted mode with
@@ -67,11 +161,72 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val messages: Flow<String> = _messages.receiveAsFlow()
     /** In-app updater: GitHub release check, APK download and install state. */
     val updateState: StateFlow<UpdateUiState> = container.updates.state
+    /** YouTube source: search results, in-flight lookup and per-row resolve state. */
+    private val _youtubeSearch = MutableStateFlow(YouTubeSearchUiState())
+    val youtubeSearch = _youtubeSearch.asStateFlow()
+    private val _youtubeResolvingId = MutableStateFlow<String?>(null)
+    val youtubeResolvingId = _youtubeResolvingId.asStateFlow()
+    /** Signed-in YouTube Music session; drives login UI and InnerTube auth headers. */
+    val youtubeAuth = container.youtubeAuth.auth
+    /** The Home discovery feed: rows load independently, cached in memory until refreshed. */
+    private val _home = MutableStateFlow(HomeUiState())
+    val home = _home.asStateFlow()
+    private var homeJob: Job? = null
+    /** Sign-in gate state (Clerk). Inert and "signed in" when no publishable key is configured. */
+    private val _auth = MutableStateFlow(
+        AuthUiState(configured = container.clerkAuth.configured, initializing = container.clerkAuth.configured),
+    )
+    val auth = _auth.asStateFlow()
+    /** The in-flight email-code challenge, kept between "send code" and "verify code". */
+    private var pendingEmail: EmailCodeChallenge? = null
+    /** Recently played YouTube songs, mapped to [Track] for Continue Listening and recommendations. */
+    val youtubeRecents: StateFlow<List<Track>> = container.database.youtubeDao().observeRecents(20)
+        .map { rows -> rows.map { it.toDomain() } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    /** Full play history (newest first) for the History screen, with play counts. */
+    val youtubeHistory: StateFlow<List<com.auralis.app.data.db.YouTubeRecentEntity>> =
+        container.database.youtubeDao().observeHistory()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** Liked YouTube video ids from Room, mirrored from the account and used for instant UI. */
+    val youtubeLikedIds: StateFlow<Set<String>> = container.database.youtubeDao().observeLikedIds()
+        .map { it.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+    /** Liked YouTube songs (Room mirror) as [Track]s for the Library "Liked Songs" list. */
+    val youtubeLikedTracks: StateFlow<List<Track>> = container.database.youtubeDao().observeLiked()
+        .map { rows -> rows.map { it.toDomain() } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val _youtubePlaylists = MutableStateFlow<List<com.auralis.app.data.youtube.YtPlaylist>>(emptyList())
+    val youtubePlaylists = _youtubePlaylists.asStateFlow()
+    /** Offline YouTube downloads, exposed as local playable tracks. */
+    val downloads: StateFlow<List<Track>> = container.database.downloadDao().observeAll()
+        .map { rows -> rows.map { it.toDomain() } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val downloadedIds: StateFlow<Set<String>> = container.database.downloadDao().observeAll()
+        .map { rows -> rows.map { it.videoId }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+    /**
+     * Resolved streamed tracks by id. Session-only by design: the library, favorites, stats and
+     * saved queue stay local; this map only lets Now Playing/dock/lyrics look the current song up.
+     */
+    private val _remoteTracks = MutableStateFlow<Map<String, Track>>(emptyMap())
+    val remoteTracks = _remoteTracks.asStateFlow()
+    private val youtubeQuery = MutableStateFlow("")
+    private val youtubeRequest = MutableStateFlow(0)
+    private var remoteQueueEpoch = 0
+    private var refillJob: Job? = null
+    private var refillKey: String? = null
+    private var radioSeedingTrackId: String? = null
+    private var searchPrefetchJob: Job? = null
+    private val prefetchedStreamIds = mutableSetOf<String>()
+    private var tapStartedAt = 0L
+    private var tapTrackId: String? = null
     private var loadedLyricsTrackId: String? = null
     private var prefetchedLyricsTrackId: String? = null
     private var lyricsPrefetchJob: Job? = null
     private var lyricsLoadJob: Job? = null
     private var lastRecordedTrackId: String? = null
+    private var lastRecordedRemoteId: String? = null
+    private var historyWatchedId: String? = null
 
     init {
         // The updater runs one throttled check per launch; its user-facing messages reuse the
@@ -114,7 +269,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.playback.state.map { state -> state.takeIf { it.connected }?.queueIds }
                 .filterNotNull().filter { it.isNotEmpty() }.distinctUntilChanged().collect { ids ->
-                    runCatching { container.database.queueDao().replaceAll(ids.mapIndexed { i, id -> QueueItemEntity(i, id, i) }) }
+                    // Remote (YouTube) ids have no library row and must never be persisted.
+                    val savable = localQueueIds(ids) ?: return@collect
+                    runCatching { container.database.queueDao().replaceAll(savable.mapIndexed { i, id -> QueueItemEntity(i, id, i) }) }
                         .onFailure { report("Couldn't save the playback queue", it) }
                 }
         }
@@ -158,7 +315,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     .map { state -> state.takeIf { it.connected }?.trackId }
                     .distinctUntilChanged(),
                 tracks,
-            ) { trackId, library -> trackId?.let { id -> library.firstOrNull { it.id == id } } }
+                _remoteTracks,
+            ) { trackId, library, remote ->
+                // Remote tracks are not in the DB, so resolve from the session map first.
+                trackId?.let { id -> remote[id] ?: library.firstOrNull { it.id == id } }
+            }
                 .filterNotNull()
                 .collect { track ->
                     if (track.id != lastTrackId) {
@@ -181,7 +342,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 } ?: return@collect
                 if (nextId == currentId || nextId == loadedLyricsTrackId) return@collect
                 if (nextId == prefetchedLyricsTrackId) return@collect
-                val next = tracks.value.firstOrNull { it.id == nextId } ?: return@collect
+                val next = _remoteTracks.value[nextId]
+                    ?: tracks.value.firstOrNull { it.id == nextId }
+                    ?: return@collect
                 prefetchedLyricsTrackId = next.id
                 lyricsPrefetchJob?.cancel()
                 lyricsPrefetchJob = viewModelScope.launch {
@@ -189,12 +352,740 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }
         }
+
+        // ONE search pipeline: 300 ms debounce + flatMapLatest cancels the previous query as soon
+        // as the user types again. The repository's LRU makes a repeated prefix instant.
+        viewModelScope.launch {
+            combine(youtubeQuery, youtubeRequest) { query, request -> query to request }
+                .debounce(SEARCH_DEBOUNCE_MS)
+                .distinctUntilChanged()
+                .flatMapLatest { (query, _) ->
+                    if (query.isBlank()) {
+                        flowOf(YouTubeSearchUiState())
+                    } else {
+                        flow {
+                            val startedAt = System.currentTimeMillis()
+                            emit(YouTubeSearchUiState(query = query, loading = true))
+                            var songs = container.youtube.search(query)
+                            if (songs.isEmpty()) {
+                                // A single corrective call, only when the literal query found nothing.
+                                val suggestion = runCatching {
+                                    container.youtube.suggestions(query)
+                                        .firstOrNull { it.isNotBlank() && !it.equals(query, true) }
+                                }.getOrNull()
+                                if (suggestion != null) {
+                                    val corrected = runCatching { container.youtube.search(suggestion) }
+                                        .getOrDefault(emptyList())
+                                    if (corrected.isNotEmpty()) songs = corrected
+                                }
+                            }
+                            val results = songs.map { it.toTrack() }
+                            AppLog.i(
+                                "Timing",
+                                "search request -> render ${System.currentTimeMillis() - startedAt} ms " +
+                                    "(${results.size} results)",
+                            )
+                            emit(YouTubeSearchUiState(query = query, results = results))
+                            if (results.isNotEmpty()) recordSearch(query)
+                            prefetchSearchResults(results)
+                        }.catch { error ->
+                            if (error is CancellationException) throw error
+                            AppLog.e("YouTube", "Search failed", error)
+                            _youtubeSearch.value = YouTubeSearchUiState(
+                                query = query,
+                                error = "YouTube search failed. Check your connection and try again.",
+                            )
+                        }
+                    }
+                }
+                .collect { _youtubeSearch.value = it }
+        }
+
+        // Refill the automix before it runs dry. The InnerTube radio call returns up to 50 items;
+        // we add only the ones not already queued so the timeline stays de-duplicated.
+        viewModelScope.launch {
+            container.playback.state.collect { state ->
+                val currentId = state.trackId ?: return@collect
+                if (!currentId.startsWith(YOUTUBE_TRACK_PREFIX)) return@collect
+                val current = _remoteTracks.value[currentId] ?: return@collect
+                val videoId = current.remoteId ?: return@collect
+                // History counts a play only after 30 s. The track is reset when it changes so a
+                // re-listen of the same song is counted again.
+                if (historyWatchedId != currentId) {
+                    historyWatchedId = currentId
+                    lastRecordedRemoteId = null
+                }
+                if (currentId != lastRecordedRemoteId && state.positionMs >= HISTORY_MIN_MS) {
+                    lastRecordedRemoteId = currentId
+                    viewModelScope.launch {
+                        runCatching {
+                            val count = container.database.youtubeDao().playCountOf(videoId) ?: 0
+                            container.database.youtubeDao().upsertRecent(current.toYouTubeRecentEntity(count + 1))
+                        }.onFailure { report("Couldn't save history", it) }
+                    }
+                }
+                val remoteAhead = state.upNextIds.count { it.startsWith(YOUTUBE_TRACK_PREFIX) }
+                if (remoteAhead >= MIN_RADIO_AHEAD) return@collect
+                // The play tap is already seeding the automix; let that finish before refilling.
+                if (radioSeedingTrackId != null) return@collect
+                if (refillJob?.isActive == true) return@collect
+                val key = "$currentId:$remoteAhead"
+                if (refillKey == key) return@collect
+                refillKey = key
+                refillJob = viewModelScope.launch {
+                    try {
+                        val queueIds = container.playback.state.value.queueIds
+                        val existing = queueIds.toSet()
+                        val seenVideoIds = queueIds.asSequence()
+                            .filter { it.startsWith(YOUTUBE_TRACK_PREFIX) }
+                            .map { it.removePrefix(YOUTUBE_TRACK_PREFIX) }
+                            .toSet()
+                        val fallbackVideoId = queueIds.lastOrNull()
+                            ?.takeIf { it.startsWith(YOUTUBE_TRACK_PREFIX) }
+                            ?.removePrefix(YOUTUBE_TRACK_PREFIX)
+                        val additions = container.youtube.radioNext(videoId, fallbackVideoId, seenVideoIds)
+                            .asSequence()
+                            .map { it.toTrack() }
+                            .filter { it.id != currentId && it.id !in existing }
+                            .distinctBy { it.id }
+                            .take(RADIO_REFILL_SIZE)
+                            .toList()
+                        if (additions.isNotEmpty()) {
+                            _remoteTracks.update { known -> known + additions.associateBy { it.id } }
+                            container.playback.addToQueue(additions)
+                            AppLog.i("YouTube", "Radio refilled with ${additions.size} tracks")
+                        }
+                    } catch (cancel: CancellationException) {
+                        throw cancel
+                    } catch (error: Throwable) {
+                        AppLog.w("YouTube", "Radio refill failed", error)
+                    }
+                }
+            }
+        }
+
+        // Resolve the current and next stream URLs while the current song plays, so a notification
+        // or lock-screen "next" starts from the memory cache instead of a cold extraction.
+        viewModelScope.launch {
+            container.playback.state
+                .map { state -> state.trackId to state.upNextIds.firstOrNull() }
+                .distinctUntilChanged()
+                .collect { (currentId, nextId) ->
+                    currentId?.let(::prefetchRemoteStream)
+                    nextId?.let(::prefetchRemoteStream)
+                }
+        }
+
+        // Measured end-to-end: time from the search-row tap to the first rendered audio frame.
+        viewModelScope.launch {
+            container.playback.state.collect { state ->
+                val pendingId = tapTrackId ?: return@collect
+                if (state.error != null) {
+                    tapTrackId = null
+                } else if (state.trackId == pendingId && state.playing) {
+                    AppLog.i(
+                        "Timing",
+                        "tap -> first audio ${System.currentTimeMillis() - tapStartedAt} ms",
+                    )
+                    tapTrackId = null
+                }
+            }
+        }
+
+        // Sign-in gate: derive the whole auth UI state from Clerk's initialization + user flows.
+        // The flows are cold no-ops when Clerk is not configured, so this is always safe to collect.
+        if (container.clerkAuth.configured) {
+            viewModelScope.launch {
+                combine(
+                    container.clerkAuth.isInitialized,
+                    container.clerkAuth.user,
+                    container.clerkAuth.initializationError,
+                ) { ready, user, error -> Triple(ready, user, error) }
+                    .collect { (ready, user, error) ->
+                        _auth.update { state ->
+                            state.copy(
+                                configured = true,
+                                // Stop the spinner once Clerk reports an error, otherwise an offline
+                                // first launch would sit on "Preparing your session..." forever.
+                                initializing = !ready && user == null && error == null,
+                                signedIn = user != null,
+                                account = user?.toAccount(),
+                                error = when {
+                                    user != null -> null
+                                    error != null && !ready -> "Couldn't reach the sign-in service. Check your connection."
+                                    else -> state.error
+                                },
+                                awaitingCode = if (user != null) false else state.awaitingCode,
+                            )
+                        }
+                    }
+            }
+        } else {
+            _auth.value = AuthUiState(configured = false, initializing = false, signedIn = true)
+        }
     }
 
     fun selectTab(tab: Tab) { _nav.update { it.selectTab(tab) } }
     fun push(destination: Destination) { _nav.update { it.push(destination) } }
     fun back() { _nav.update { it.pop() } }
     fun updateSettings(transform: (AppSettings) -> AppSettings) { viewModelScope.launch { runCatching { container.settings.update(transform) }.onFailure { report("Couldn't save settings", it) } } }
+
+    // ---- Clerk authentication -----------------------------------------------------------------
+
+    /** Starts Google sign-in through Clerk (browser OAuth; returns via the app's deep link). */
+    fun signInWithGoogle() {
+        if (_auth.value.busy) return
+        _auth.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            container.clerkAuth.signInWithGoogle()
+                .onSuccess { AppLog.i("Clerk", "Google sign-in completed") }
+                .onFailure { error ->
+                    _auth.update { it.copy(error = error.localizedMessage ?: "Google sign-in failed") }
+                }
+            _auth.update { it.copy(busy = false) }
+        }
+    }
+
+    /** Sends a one-time sign-in code to [email] and switches the screen to the code step. */
+    fun requestEmailCode(email: String) {
+        val clean = email.trim()
+        if (clean.isBlank() || !clean.contains('@')) {
+            _auth.update { it.copy(error = "Enter a valid email address") }
+            return
+        }
+        if (_auth.value.busy) return
+        _auth.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            container.clerkAuth.requestEmailCode(clean)
+                .onSuccess { challenge ->
+                    pendingEmail = challenge
+                    _auth.update { it.copy(busy = false, awaitingCode = true, email = clean) }
+                    _messages.trySend("We emailed a sign-in code to $clean")
+                }
+                .onFailure { error ->
+                    _auth.update { it.copy(busy = false, error = error.localizedMessage ?: "Couldn't send the code") }
+                }
+        }
+    }
+
+    /** Verifies the emailed code; on success Clerk starts a session and [auth] flips to signed-in. */
+    fun verifyEmailCode(code: String) {
+        val challenge = pendingEmail ?: return
+        val clean = code.trim()
+        if (clean.isBlank()) return
+        if (_auth.value.busy) return
+        _auth.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            container.clerkAuth.verifyEmailCode(challenge, clean)
+                .onSuccess {
+                    pendingEmail = null
+                    _auth.update { it.copy(busy = false, awaitingCode = false, email = "") }
+                }
+                .onFailure { error ->
+                    _auth.update { it.copy(busy = false, error = error.localizedMessage ?: "That code didn't work") }
+                }
+        }
+    }
+
+    /** Goes back from the code step to the email step (also drops the pending challenge). */
+    fun editEmail() {
+        pendingEmail = null
+        _auth.update { it.copy(awaitingCode = false, email = "", error = null) }
+    }
+
+    fun clearAuthError() { _auth.update { it.copy(error = null) } }
+
+    /** Signs out of Clerk. The sign-in screen returns, so the user can pick another account. */
+    fun signOutClerk() {
+        if (_auth.value.busy) return
+        _auth.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            container.clerkAuth.signOut()
+                .onSuccess { _messages.trySend("Signed out") }
+                .onFailure { error ->
+                    _auth.update { it.copy(error = error.localizedMessage ?: "Sign-out failed") }
+                }
+            _auth.update { it.copy(busy = false) }
+        }
+    }
+
+    // ---- Stage 1B: YouTube Music integration -------------------------------------------------
+
+    fun setYouTubeIntegration(enabled: Boolean) {
+        updateSettings { it.copy(youtubeIntegration = enabled) }
+        if (!enabled) {
+            _home.value = HomeUiState()
+            return
+        }
+        refreshYouTubeHome()
+        refreshYouTubeAccount()
+        refreshYouTubeLibrary()
+    }
+
+    /** Cached Room likes render immediately; the account refresh runs in the background. */
+    fun refreshYouTubeLibrary() {
+        if (settings.value.youtubeIntegration.not()) return
+        viewModelScope.launch {
+            runCatching { container.youtube.libraryPlaylists() }
+                .onSuccess { _youtubePlaylists.value = it }
+                .onFailure { AppLog.w("YouTube", "Account playlists skipped", it) }
+        }
+        if (container.youtubeAuth.snapshot()?.signedIn == true) loadLikedSongs()
+    }
+
+    fun openYouTubePlaylist(playlist: com.auralis.app.data.youtube.YtPlaylist) {
+        viewModelScope.launch {
+            runCatching { container.youtube.browseSongs(playlist.id) }
+                .onSuccess { songs ->
+                    val list = songs.map { it.toTrack() }
+                    if (list.isNotEmpty()) {
+                        _remoteTracks.update { known -> known + list.associateBy { it.id } }
+                        play(list.first(), list)
+                    }
+                }
+                .onFailure { report("Couldn't open ${playlist.title}", it) }
+        }
+    }
+
+    /** Re-runs the whole Home feed for the current category (pull-to-refresh, header button). */
+    fun refreshYouTubeHome() = loadHome(_home.value.category, force = true)
+
+    /**
+     * Loads the Home discovery feed for [category]. Every section runs in its own coroutine and is
+     * written back as soon as it lands, so the feed fills progressively and one failed section never
+     * blanks the page. A non-forced call with content already present is a no-op (the repository's
+     * LRUs make an accidental repeat cheap anyway).
+     *
+     * Recommendation signals (see [recommendationSeeds]): YouTube listening history (weighted by play
+     * count), recently played, favourite tracks' artists, the on-device library's artists and the
+     * user's search history. Deliberately public data + AURALIS activity only — a Google/Clerk
+     * sign-in does not grant the private YouTube Music personalised feed.
+     */
+    fun loadHome(category: HomeCategory = _home.value.category, force: Boolean = false) {
+        if (settings.value.youtubeIntegration.not()) return
+        val unchanged = _home.value.category == category
+        val hasContent = _home.value.rows.values.any { it.tracks.isNotEmpty() || it.cards.isNotEmpty() }
+        if (!force && unchanged && hasContent) return
+
+        val specs = homeSections(category)
+        _home.update { previous ->
+            previous.copy(
+                category = category,
+                refreshing = true,
+                rows = specs.associate { spec ->
+                    val existing = previous.rows[spec.id]
+                    val keep = if (unchanged) existing else null
+                    spec.id to (keep?.copy(title = spec.title, loading = false, error = null)
+                        ?: HomeRow(id = spec.id, title = spec.title, subtitle = spec.subtitle, loading = true))
+                },
+            )
+        }
+        homeJob?.cancel()
+        homeJob = viewModelScope.launch {
+            val jobs = specs.map { spec -> launch { runHomeRow(spec) } }
+            jobs.joinAll()
+            _home.update { it.copy(refreshing = false) }
+        }
+    }
+
+    /** Category chip tap: loads the section set for that filter. */
+    fun selectHomeCategory(category: HomeCategory) {
+        if (_home.value.category == category && _home.value.rows.values.any { it.tracks.isNotEmpty() || it.cards.isNotEmpty() }) return
+        loadHome(category, force = false)
+    }
+
+    /** Pages more songs into a radio-seeded row (Quick Picks / Daily Mix / Because You Listened). */
+    fun loadMoreHomeRow(rowId: String) {
+        val row = _home.value.rows[rowId] ?: return
+        val seed = row.seedVideoId ?: return
+        if (row.loading) return
+        _home.update { state ->
+            state.rows[rowId]?.let { state.copy(rows = state.rows + (rowId to it.copy(loading = true))) } ?: state
+        }
+        viewModelScope.launch {
+            val seen = row.tracks.mapNotNull { it.remoteId ?: it.id.removePrefix(YOUTUBE_TRACK_PREFIX) }.toSet()
+            val more = runCatching { container.youtube.radioNext(seed, row.tracks.lastOrNull()?.remoteId, seen) }
+                .getOrDefault(emptyList())
+                .map { it.toTrack() }
+            _home.update { state ->
+                val current = state.rows[rowId] ?: return@update state
+                val merged = (current.tracks + more).distinctBy { it.id }
+                state.copy(rows = state.rows + (rowId to current.copy(tracks = merged, loading = false, hasMore = more.isNotEmpty())))
+            }
+        }
+    }
+
+    /** A Home card tap: song cards play immediately; artist/collection cards open as a sheet. */
+    fun openHomeCard(card: YtCard) {
+        if (card.videoId != null) {
+            playYouTubeCard(card)
+            return
+        }
+        _home.update { it.copy(collectionTitle = card.title, collectionTracks = emptyList(), collectionLoading = true) }
+        viewModelScope.launch {
+            val songs = if (card.browseId != null) {
+                runCatching { container.youtube.browseSongs(card.browseId) }.getOrDefault(emptyList())
+            } else {
+                runCatching { container.youtube.search(card.title) }.getOrDefault(emptyList())
+            }
+            val results = songs.map { it.toTrack() }
+            _remoteTracks.update { known -> known + results.associateBy { it.id } }
+            _home.update { it.copy(collectionTracks = results, collectionLoading = false) }
+        }
+    }
+
+    fun closeHomeCollection() {
+        _home.update { it.copy(collectionTitle = null, collectionTracks = emptyList(), collectionLoading = false) }
+    }
+
+    private suspend fun runHomeRow(spec: HomeSectionSpec) {
+        val result = runCatching { spec.load() }
+        val section = result.getOrNull()
+        _home.update { state ->
+            val row = state.rows[spec.id] ?: return@update state
+            if (section == null) {
+                // Keep existing content on a failed refresh; only surface an error when the row is empty.
+                state.copy(
+                    rows = state.rows + (spec.id to row.copy(
+                        loading = false,
+                        error = if (row.tracks.isEmpty() && row.cards.isEmpty()) "Couldn't load this row" else null,
+                    )),
+                )
+            } else {
+                state.copy(
+                    rows = state.rows + (spec.id to row.copy(
+                        title = spec.title,
+                        subtitle = section.subtitle ?: spec.subtitle,
+                        tracks = section.tracks,
+                        cards = section.cards,
+                        loading = false,
+                        error = null,
+                        seedVideoId = section.seedVideoId,
+                        hasMore = section.hasMore,
+                    )),
+                )
+            }
+        }
+    }
+
+    // ---- Home section definitions ------------------------------------------------------------
+
+    /** Ordered section specs for a category. Each loads independently through the same repository. */
+    private fun homeSections(category: HomeCategory): List<HomeSectionSpec> = when (category) {
+        HomeCategory.FOR_YOU -> listOf(
+            HomeSectionSpec(SECTION_QUICK_PICKS, "Quick Picks") { loadQuickPicks() },
+            HomeSectionSpec(SECTION_TRENDING_IN, "Trending in India") { loadTrendingIndia() },
+            HomeSectionSpec(SECTION_MADE_FOR_YOU, "Made For You") { loadMadeForYou() },
+            HomeSectionSpec(SECTION_GLOBAL_HITS, "Global Top Hits") { loadGlobalTopHits() },
+            HomeSectionSpec(SECTION_CONTINUE, "Continue Listening") { loadContinueListening() },
+            HomeSectionSpec(SECTION_NEW_RELEASES, "New Releases") { loadNewReleases() },
+            HomeSectionSpec(SECTION_ARTISTS, "Popular Artists") { loadPopularArtists() },
+            HomeSectionSpec(SECTION_DAILY_MIX, "Daily Mix") { loadDailyMix() },
+            HomeSectionSpec(SECTION_BECAUSE_YOU, "Because You Listened") { loadBecauseYouListened() },
+            HomeSectionSpec(SECTION_DISCOVER_WEEKLY, "Discover Weekly") { loadDiscoverWeekly() },
+        )
+        HomeCategory.TRENDING -> listOf(
+            HomeSectionSpec(SECTION_TRENDING_IN, "Trending in India") { loadTrendingIndia() },
+            HomeSectionSpec(SECTION_GLOBAL_HITS, "Global Top Hits") { loadGlobalTopHits() },
+            HomeSectionSpec(SECTION_QUICK_PICKS, "Quick Picks") { loadQuickPicks() },
+            HomeSectionSpec(SECTION_NEW_RELEASES, "New Releases") { loadNewReleases() },
+        )
+        HomeCategory.NEW_RELEASES -> listOf(
+            HomeSectionSpec(SECTION_NEW_RELEASES, "New Releases") { loadNewReleases() },
+            HomeSectionSpec(SECTION_MADE_FOR_YOU, "Made For You") { loadMadeForYou() },
+            HomeSectionSpec(SECTION_DISCOVER_WEEKLY, "Discover Weekly") { loadDiscoverWeekly() },
+            HomeSectionSpec(SECTION_ARTISTS, "Popular Artists") { loadPopularArtists() },
+        )
+        HomeCategory.CHILL -> listOf(
+            HomeSectionSpec(SECTION_CHILL, "Chill") { loadMoodQuery("chill lofi songs") },
+            HomeSectionSpec(SECTION_DAILY_MIX, "Daily Mix") { loadDailyMix() },
+            HomeSectionSpec(SECTION_MADE_FOR_YOU, "Made For You") { loadMadeForYou() },
+            HomeSectionSpec(SECTION_CONTINUE, "Continue Listening") { loadContinueListening() },
+        )
+        HomeCategory.WORKOUT -> listOf(
+            HomeSectionSpec(SECTION_WORKOUT, "Workout") { loadMoodQuery("workout motivation songs") },
+            HomeSectionSpec(SECTION_GLOBAL_HITS, "Global Top Hits") { loadGlobalTopHits() },
+            HomeSectionSpec(SECTION_QUICK_PICKS, "Quick Picks") { loadQuickPicks() },
+        )
+        HomeCategory.FOCUS -> listOf(
+            HomeSectionSpec(SECTION_FOCUS, "Focus") { loadMoodQuery("focus instrumental study music") },
+            HomeSectionSpec(SECTION_DAILY_MIX, "Daily Mix") { loadDailyMix() },
+            HomeSectionSpec(SECTION_DISCOVER_WEEKLY, "Discover Weekly") { loadDiscoverWeekly() },
+        )
+    }
+
+    private suspend fun loadQuickPicks(): HomeSection {
+        val out = LinkedHashMap<String, Track>()
+        val seedVideo = frequentlyPlayedVideoIds().firstOrNull() ?: recentVideoIds().firstOrNull()
+        seedVideo?.let { id ->
+            runCatching { container.youtube.radio(id) }.getOrDefault(emptyList())
+                .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
+        }
+        for (seed in recommendationSeeds().take(3)) {
+            runCatching { container.youtube.search(seed) }.getOrDefault(emptyList())
+                .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
+            if (out.size >= HOME_ROW_SIZE) break
+        }
+        if (out.isEmpty()) out.putAll(fallbackPopular())
+        return HomeSection(
+            tracks = out.values.take(HOME_ROW_SIZE),
+            seedVideoId = seedVideo,
+            hasMore = seedVideo != null,
+        )
+    }
+
+    private suspend fun loadTrendingIndia(): HomeSection = loadChart(country = "India", gl = "IN", fallbackQuery = "trending india songs")
+
+    private suspend fun loadGlobalTopHits(): HomeSection = loadChart(country = "International", gl = "US", fallbackQuery = "global top hits")
+
+    /** Uses the public charts page: finds the country/global chart playlist, then browses its songs. */
+    private suspend fun loadChart(country: String, gl: String, fallbackQuery: String): HomeSection {
+        val cards = runCatching { container.youtube.browseCards(CHARTS_BROWSE_ID) }.getOrDefault(emptyList())
+        val chart = cards.firstOrNull { it.browseId?.startsWith("VL") == true && it.title.contains(country, true) }
+        val tracks = chart?.browseId?.let { id ->
+            runCatching { container.youtube.browseSongs(id) }.getOrDefault(emptyList()).map { it.toTrack() }
+        }.orEmpty()
+        if (tracks.isNotEmpty()) return HomeSection(tracks = tracks.take(HOME_ROW_SIZE))
+        val fallback = runCatching { container.youtube.search(fallbackQuery, gl) }.getOrDefault(emptyList()).map { it.toTrack() }
+        return HomeSection(tracks = fallback.take(HOME_ROW_SIZE))
+    }
+
+    private suspend fun loadMadeForYou(): HomeSection {
+        val out = LinkedHashMap<String, Track>()
+        for (seed in recommendationSeeds().take(4)) {
+            runCatching { container.youtube.search(seed) }.getOrDefault(emptyList())
+                .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
+            if (out.size >= HOME_ROW_SIZE) break
+        }
+        if (out.isEmpty()) out.putAll(fallbackPopular())
+        return HomeSection(tracks = out.values.take(HOME_ROW_SIZE))
+    }
+
+    /** Local-only: the most recent YouTube plays, so it renders instantly with no network call. */
+    private fun loadContinueListening(): HomeSection {
+        val tracks = youtubeRecents.value.filter { it.isRemote }.take(HOME_ROW_SIZE)
+        return HomeSection(tracks = tracks)
+    }
+
+    private suspend fun loadNewReleases(): HomeSection {
+        val out = LinkedHashMap<String, Track>()
+        runCatching { container.youtube.search("new music releases", "US") }.getOrDefault(emptyList())
+            .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
+        return HomeSection(tracks = out.values.take(HOME_ROW_SIZE))
+    }
+
+    private suspend fun loadPopularArtists(): HomeSection {
+        val cards = runCatching { container.youtube.browseCards(CHARTS_BROWSE_ID) }.getOrDefault(emptyList())
+        val artists = cards
+            .filter { it.videoId == null && it.browseId?.startsWith("UC") == true }
+            .distinctBy { it.browseId }
+            .take(ARTIST_ROW_SIZE)
+        if (artists.isNotEmpty()) return HomeSection(cards = artists)
+        val fallback = recommendationSeeds().take(ARTIST_ROW_SIZE).map { YtCard(it, "Artist", null) }
+        return HomeSection(cards = fallback)
+    }
+
+    private suspend fun loadDailyMix(): HomeSection {
+        val out = LinkedHashMap<String, Track>()
+        frequentlyPlayedVideoIds().take(2).forEach { id ->
+            runCatching { container.youtube.radio(id) }.getOrDefault(emptyList())
+                .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
+        }
+        for (seed in recommendationSeeds().take(3)) {
+            runCatching { container.youtube.search("$seed mix") }.getOrDefault(emptyList())
+                .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
+            if (out.size >= HOME_ROW_SIZE) break
+        }
+        if (out.isEmpty()) out.putAll(fallbackPopular())
+        val seedVideo = frequentlyPlayedVideoIds().firstOrNull()
+        return HomeSection(tracks = out.values.take(HOME_ROW_SIZE), seedVideoId = seedVideo, hasMore = seedVideo != null)
+    }
+
+    private suspend fun loadBecauseYouListened(): HomeSection {
+        val last = youtubeHistory.value.firstOrNull { it.videoId.isNotBlank() } ?: return HomeSection()
+        val tracks = runCatching { container.youtube.radio(last.videoId) }.getOrDefault(emptyList())
+            .filter { it.videoId != last.videoId }
+            .map { it.toTrack() }
+        return HomeSection(
+            tracks = tracks.take(HOME_ROW_SIZE),
+            subtitle = "Because you listened to ${last.title}",
+            seedVideoId = last.videoId,
+            hasMore = tracks.isNotEmpty(),
+        )
+    }
+
+    private suspend fun loadDiscoverWeekly(): HomeSection {
+        val recentArtists = youtubeRecents.value.map { it.artist }.toSet()
+        val all = recommendationSeeds()
+        val seeds = all.filterNot { it in recentArtists }.ifEmpty { all }
+        val out = LinkedHashMap<String, Track>()
+        for (seed in seeds.take(5)) {
+            runCatching { container.youtube.search("$seed mix") }.getOrDefault(emptyList())
+                .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
+            if (out.size >= HOME_ROW_SIZE) break
+        }
+        if (out.isEmpty()) out.putAll(fallbackPopular())
+        return HomeSection(tracks = out.values.take(HOME_ROW_SIZE))
+    }
+
+    private suspend fun loadMoodQuery(query: String): HomeSection {
+        val tracks = runCatching { container.youtube.search(query, "IN") }.getOrDefault(emptyList()).map { it.toTrack() }
+        return HomeSection(tracks = tracks.take(HOME_ROW_SIZE))
+    }
+
+    private suspend fun fallbackPopular(): Map<String, Track> {
+        val out = LinkedHashMap<String, Track>()
+        runCatching { container.youtube.search("popular songs", "US") }.getOrDefault(emptyList())
+            .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
+        return out
+    }
+
+    /** Top artists/genres across history (weighted by play count), favourites, library and search. */
+    private fun recommendationSeeds(): List<String> {
+        val counts = LinkedHashMap<String, Int>()
+        fun add(value: String?, weight: Int) {
+            val clean = value?.trim().orEmpty()
+            if (clean.isBlank() || clean.equals("Unknown artist", ignoreCase = true)) return
+            counts[clean] = (counts[clean] ?: 0) + weight
+        }
+        // Search history is the strongest explicit signal.
+        searchHistory.value.forEach { add(it, 6) }
+        val favIds = favorites.value
+        tracks.value.filter { it.id in favIds }.forEach { add(it.artist, 5) }
+        // Frequently + recently played YouTube songs (history carries play counts).
+        youtubeHistory.value.forEach { add(it.artist, 3 + it.playCount.coerceAtMost(5)) }
+        youtubeRecents.value.forEach { add(it.artist, 3) }
+        // Whole-library artists, weakly.
+        tracks.value.take(300).forEach { add(it.artist, 1) }
+        return counts.entries.sortedByDescending { it.value }.map { it.key }
+    }
+
+    private fun recentVideoIds(): List<String> =
+        youtubeHistory.value.map { it.videoId }.filter { it.isNotBlank() }.distinct()
+
+    private fun frequentlyPlayedVideoIds(): List<String> =
+        youtubeHistory.value.sortedByDescending { it.playCount }
+            .map { it.videoId }.filter { it.isNotBlank() }.distinct()
+
+    private data class HomeSectionSpec(
+        val id: String,
+        val title: String,
+        val subtitle: String? = null,
+        val load: suspend () -> HomeSection,
+    )
+
+    private data class HomeSection(
+        val tracks: List<Track> = emptyList(),
+        val cards: List<YtCard> = emptyList(),
+        val subtitle: String? = null,
+        val seedVideoId: String? = null,
+        val hasMore: Boolean = false,
+    )
+
+    fun refreshYouTubeAccount() {
+        val session = container.youtubeAuth.snapshot() ?: return
+        viewModelScope.launch {
+            runCatching { container.youtube.accountInfo() }
+                .onSuccess { info -> if (info != null) container.youtubeAuth.updateProfile(info.first, info.second) }
+                .onFailure { AppLog.w("YouTube", "Account lookup skipped", it) }
+        }
+    }
+
+    /** Called by the login WebView once SAPISID/VISITOR_DATA/DATASYNC_ID were read from music.youtube.com. */
+    fun saveYouTubeSession(cookie: String, visitorData: String, dataSyncId: String) {
+        container.youtubeAuth.save(YouTubeAuth(cookie = cookie, visitorData = visitorData, dataSyncId = dataSyncId))
+        container.youtube.invalidateHome()
+        refreshYouTubeAccount()
+        refreshYouTubeHome()
+        refreshYouTubeLibrary()
+        _messages.trySend("Signed in to YouTube Music")
+    }
+
+    fun signOutYouTube() {
+        container.youtubeAuth.clear()
+        container.youtube.invalidateHome()
+        _home.value = HomeUiState()
+        viewModelScope.launch { runCatching { container.database.youtubeDao().clearLikes() } }
+        _messages.trySend("Signed out of YouTube Music")
+    }
+
+    fun playYouTubeCard(card: com.auralis.app.data.youtube.YtCard) {
+        val videoId = card.videoId ?: return
+        val song = YtSong(
+            videoId = videoId,
+            title = card.title,
+            artist = card.subtitle,
+            album = "",
+            durationMs = card.durationMs,
+            thumbnailUrl = card.thumbnailUrl,
+        )
+        val track = song.toTrack()
+        _remoteTracks.update { known -> known + (track.id to track) }
+        play(track, listOf(track))
+    }
+
+    /** Instant Room mirror + best-effort account call; local-only when signed out. */
+    fun toggleYouTubeLike(track: Track) {
+        val videoId = track.remoteId ?: track.id.removePrefix(YOUTUBE_TRACK_PREFIX)
+        if (videoId.isBlank()) return
+        val wasLiked = youtubeLikedIds.value.contains(videoId)
+        viewModelScope.launch {
+            runCatching {
+                if (wasLiked) container.database.youtubeDao().deleteLike(videoId)
+                else container.database.youtubeDao().upsertLike(track.toYouTubeLikeEntity())
+            }.onFailure { report("Couldn't update likes", it) }
+            if (container.youtubeAuth.snapshot()?.signedIn == true) {
+                runCatching { container.youtube.setLiked(videoId, !wasLiked) }
+                    .onFailure { AppLog.w("YouTube", "Like sync skipped", it) }
+            }
+        }
+    }
+
+    fun playYouTubeTrack(track: Track) {
+        _remoteTracks.update { known -> known + (track.id to track) }
+        play(track, listOf(track))
+    }
+
+    fun downloadTrack(track: Track) {
+        val videoId = track.remoteId ?: track.id.removePrefix(YOUTUBE_TRACK_PREFIX)
+        if (videoId.isBlank()) return
+        container.downloads.enqueue(track)
+        _messages.trySend("Downloading “${track.title}”")
+    }
+
+    fun deleteDownload(track: Track) {
+        val videoId = track.remoteId ?: track.id.removePrefix(YOUTUBE_TRACK_PREFIX)
+        viewModelScope.launch { runCatching { container.downloads.delete(videoId) }.onFailure { report("Couldn't delete the download", it) } }
+    }
+
+    fun cancelDownload(track: Track) {
+        val videoId = track.remoteId ?: track.id.removePrefix(YOUTUBE_TRACK_PREFIX)
+        container.downloads.cancel(videoId)
+    }
+
+    /** Replays a History entry, resolving its stream on demand. */
+    fun playHistoryEntry(entry: com.auralis.app.data.db.YouTubeRecentEntity) {
+        playYouTubeTrack(entry.toDomain())
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch {
+            runCatching { container.database.youtubeDao().clearRecents() }
+                .onFailure { report("Couldn't clear history", it) }
+        }
+    }
+
+    fun loadLikedSongs() {
+        viewModelScope.launch {
+            runCatching { container.youtube.likedSongs() }
+                .onSuccess { songs ->
+                    val entries = songs.map { it.ytSongToLikeEntity() }
+                    runCatching { entries.forEach { container.database.youtubeDao().upsertLike(it) } }
+                    _messages.trySend("Synced ${entries.size} liked songs")
+                }
+                .onFailure { report("Couldn't load liked songs", it) }
+        }
+    }
 
     fun checkForUpdates() = container.updates.checkNow()
     fun dismissUpdate() = container.updates.later()
@@ -236,6 +1127,125 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val index = list.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
         container.playback.play(list, index)
     }
+
+    /**
+     * YouTube playback: resolve only the tapped song, then hand the URL to the existing Media3
+     * queue as a single remote item. Nothing is resolved for the rest of the result list.
+     */
+    /**
+     * A search-row tap replaces the queue immediately with the tapped song. The metadata (title,
+     * artist, artwork URI) is already on the MediaItem, so the player, dock and notification update
+     * in the same frame; PlaybackService resolves the signed URL on its background loader thread.
+     */
+    fun playYouTube(track: Track) {
+        val videoId = track.remoteId ?: return
+        val startedAt = System.currentTimeMillis()
+        tapStartedAt = startedAt
+        tapTrackId = track.id
+        _remoteTracks.update { it + (track.id to track) }
+
+        remoteQueueEpoch++
+        val epoch = remoteQueueEpoch
+        // The first automix fetch is the seeding call; do not let the refill watcher duplicate it.
+        refillJob?.cancel()
+        radioSeedingTrackId = track.id
+        container.playback.play(listOf(track), 0)
+        _youtubeResolvingId.value = track.id
+
+        // Warm the exact URL the player will open; the resolver de-duplicates the in-flight work.
+        viewModelScope.launch {
+            try {
+                container.youtube.resolveStream(videoId)
+                AppLog.i("Timing", "tap -> URL ${System.currentTimeMillis() - startedAt} ms")
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                AppLog.e("YouTube", "Could not resolve the tapped song", error)
+                _messages.trySend("Couldn't play this YouTube song: ${error.localizedMessage ?: "stream unavailable"}")
+            } finally {
+                if (_youtubeResolvingId.value == track.id) _youtubeResolvingId.value = null
+            }
+        }
+
+        // The InnerTube "next" automix supplies 10-15 similar tracks after the current one.
+        viewModelScope.launch {
+            try {
+                val radio = container.youtube.radio(videoId)
+                if (epoch != remoteQueueEpoch) return@launch
+                val additions = radio.asSequence()
+                    .filter { it.videoId != videoId }
+                    .map { it.toTrack() }
+                    .distinctBy { it.id }
+                    .take(RADIO_INITIAL_SIZE)
+                    .toList()
+                if (additions.isEmpty()) return@launch
+                _remoteTracks.update { known -> known + additions.associateBy { it.id } }
+                container.playback.addToQueue(additions)
+                AppLog.i("YouTube", "Queued ${additions.size} radio tracks")
+                prefetchRemoteStream(additions.firstOrNull()?.id)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                AppLog.w("YouTube", "Radio lookup failed", error)
+            } finally {
+                if (radioSeedingTrackId == track.id) radioSeedingTrackId = null
+            }
+        }
+    }
+
+    /** Feeds the 300 ms debounced search pipeline; a retry re-triggers the same literal query. */
+    fun searchYouTube(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) {
+            youtubeQuery.value = ""
+            _youtubeSearch.value = YouTubeSearchUiState()
+            return
+        }
+        if (youtubeQuery.value == trimmed) {
+            youtubeRequest.update { it + 1 }
+        } else {
+            youtubeQuery.value = trimmed
+        }
+    }
+
+    /** Tapping a taste chip on Home: run the search and jump straight to the Explore/Search tab. */
+    fun searchFromHome(query: String) {
+        if (query.isBlank()) return
+        searchYouTube(query)
+        selectTab(Tab.SEARCH)
+    }
+
+    /** Persists a successful search term; the newest 20 feed the Home recommendation seeds. */
+    private fun recordSearch(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return
+        viewModelScope.launch {
+            runCatching {
+                container.database.searchHistoryDao().upsert(SearchHistoryEntity(trimmed, System.currentTimeMillis()))
+            }.onFailure { AppLog.w("YouTube", "Search history not saved", it) }
+        }
+    }
+
+    /** Resolve the first results in the background so the first tap usually hits a warm URL. */
+    private fun prefetchSearchResults(results: List<Track>) {        searchPrefetchJob?.cancel()
+        searchPrefetchJob = viewModelScope.launch {
+            results.take(SEARCH_PREFETCH_COUNT).forEach { track ->
+                val videoId = track.remoteId ?: return@forEach
+                if (!prefetchedStreamIds.add(track.id)) return@forEach
+                runCatching { container.youtube.resolveStream(videoId) }
+            }
+        }
+    }
+
+    private fun prefetchRemoteStream(trackId: String?) {
+        if (trackId == null) return
+        val track = _remoteTracks.value[trackId] ?: return
+        val videoId = track.remoteId ?: return
+        if (!prefetchedStreamIds.add(trackId)) return
+        if (prefetchedStreamIds.size > PREFETCH_MEMORY_LIMIT) prefetchedStreamIds.clear()
+        container.youtube.prefetchStream(videoId)
+    }
+
     fun enqueue(track: Track) = enqueueAll(listOf(track))
     fun playNext(track: Track) { container.playback.playNext(track) }
     fun enqueueAll(items: List<Track>) {
@@ -249,31 +1259,256 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         container.playback.clearQueue()
         viewModelScope.launch { runCatching { container.database.queueDao().clear() }.onFailure { report("Couldn't clear the saved queue", it) } }
     }
-    fun enqueuePlaylist(playlistId: Long) {
-        viewModelScope.launch {
-            runCatching {
-                val entries = playlistEntries.value.filter { it.playlistId == playlistId }.sortedBy { it.position }
-                val byId = tracks.value.associateBy { it.id }
-                enqueueAll(entries.mapNotNull { byId[it.trackId] })
-            }.onFailure { report("Couldn't add this playlist to the queue", it) }
-        }
-    }
-    fun playPlaylist(playlistId: Long) {
-        val entries = playlistEntries.value.filter { it.playlistId == playlistId }.sortedBy { it.position }
+    /** Unified playlist entries: on-device tracks and streamed YouTube songs, in order. */
+    fun playlistItems(playlistId: Long): List<PlaylistItem> {
         val byId = tracks.value.associateBy { it.id }
-        val ordered = entries.mapNotNull { byId[it.trackId] }
-        ordered.firstOrNull()?.let { play(it, ordered) }
+        val local = playlistEntries.value.filter { it.playlistId == playlistId }
+            .sortedBy { it.position }
+            .mapNotNull { entry -> byId[entry.trackId]?.let { PlaylistItem(entry.entryId, false, it, entry.position) } }
+        val remote = playlistYtEntries.value.filter { it.playlistId == playlistId }
+            .sortedBy { it.position }
+            .map { entry -> PlaylistItem(entry.entryId, true, entry.toDomain(), entry.position) }
+        return (local + remote).sortedBy { it.position }
     }
-    fun toggleFavorite(track: Track) { viewModelScope.launch { runCatching { container.database.favoriteDao().toggle(track.id, System.currentTimeMillis()) }.onFailure { report("Couldn't update favorite", it) } } }
+
+    fun enqueuePlaylist(playlistId: Long) {
+        runCatching {
+            val ordered = playlistItems(playlistId).map { it.track }
+            if (ordered.isEmpty()) return@runCatching
+            _remoteTracks.update { known -> known + ordered.filter { it.isRemote }.associateBy { it.id } }
+            enqueueAll(ordered)
+        }.onFailure { report("Couldn't add this playlist to the queue", it) }
+    }
+
+    fun playPlaylist(playlistId: Long, startIndex: Int = 0) {
+        val ordered = playlistItems(playlistId).map { it.track }
+        if (ordered.isEmpty()) return
+        _remoteTracks.update { known -> known + ordered.filter { it.isRemote }.associateBy { it.id } }
+        play(ordered[startIndex.coerceIn(0, ordered.lastIndex)], ordered)
+    }
+    fun toggleFavorite(track: Track) {
+        if (track.isRemote) { _messages.trySend("Favorites are for library songs only"); return }
+        viewModelScope.launch { runCatching { container.database.favoriteDao().toggle(track.id, System.currentTimeMillis()) }.onFailure { report("Couldn't update favorite", it) } }
+    }
     fun createPlaylist(name: String) { viewModelScope.launch {
         if (name.isBlank()) return@launch
         runCatching { container.database.playlistDao().insert(PlaylistEntity(name=name.trim(),createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis())) }
             .onSuccess { _messages.trySend("Playlist created") }.onFailure { report("Couldn't create playlist", it) }
     } }
-    fun addToPlaylist(playlistId: Long, track: Track) { viewModelScope.launch { runCatching {
-        val dao=container.database.playlistDao();val position=dao.maxPosition(playlistId)+1
-        dao.insertEntries(listOf(PlaylistEntryEntity(playlistId=playlistId,trackId=track.id,position=position)));dao.touch(playlistId,System.currentTimeMillis())
-    }.onSuccess { _messages.trySend("Added to playlist") }.onFailure { report("Couldn't add song to playlist", it) } } }
+    fun renamePlaylist(playlistId: Long, name: String) {
+        val clean = name.trim()
+        if (clean.isBlank()) return
+        viewModelScope.launch {
+            runCatching { container.database.playlistDao().rename(playlistId, clean, System.currentTimeMillis()) }
+                .onFailure { report("Couldn't rename playlist", it) }
+        }
+    }
+    fun deletePlaylist(playlistId: Long) {
+        viewModelScope.launch {
+            runCatching { container.database.playlistDao().delete(playlistId) }
+                .onSuccess { _messages.trySend("Playlist deleted") }.onFailure { report("Couldn't delete playlist", it) }
+        }
+    }
+    fun addToPlaylist(playlistId: Long, track: Track) {
+        viewModelScope.launch { runCatching {
+            val dao=container.database.playlistDao()
+            val position = maxOf(dao.maxPosition(playlistId), dao.maxYtPosition(playlistId)) + 1
+            if (track.isRemote) {
+                val videoId = track.remoteId ?: track.id.removePrefix(YOUTUBE_TRACK_PREFIX)
+                if (videoId.isBlank()) return@runCatching
+                dao.insertYtEntries(listOf(PlaylistYtEntryEntity(playlistId=playlistId, videoId=videoId, title=track.title, artist=track.artist, album=track.album, durationMs=track.durationMs, thumbnailUrl=track.artworkUrl, position=position)))
+            } else {
+                dao.insertEntries(listOf(PlaylistEntryEntity(playlistId=playlistId,trackId=track.id,position=position)))
+            }
+            dao.touch(playlistId,System.currentTimeMillis())
+        }.onSuccess { _messages.trySend("Added to playlist") }.onFailure { report("Couldn't add song to playlist", it) } }
+    }
+    fun removePlaylistItem(playlistId: Long, item: PlaylistItem) {
+        viewModelScope.launch { runCatching {
+            val dao = container.database.playlistDao()
+            if (item.remote) {
+                val videoId = item.track.remoteId ?: item.track.id.removePrefix(YOUTUBE_TRACK_PREFIX)
+                dao.removeYtEntry(playlistId, videoId)
+            } else {
+                dao.removeEntry(playlistId, item.track.id)
+            }
+            dao.touch(playlistId, System.currentTimeMillis())
+        }.onFailure { report("Couldn't remove song from playlist", it) } }
+    }
+    /** Moves one entry by [delta] slots (+1 down, -1 up) and rewrites both tables' positions. */
+    fun movePlaylistItem(playlistId: Long, item: PlaylistItem, delta: Int) {
+        val current = playlistItems(playlistId)
+        val index = current.indexOfFirst { it.entryId == item.entryId && it.remote == item.remote }
+        val target = index + delta
+        if (index < 0 || target !in current.indices) return
+        val reordered = current.toMutableList().apply { add(target, removeAt(index)) }
+        viewModelScope.launch { runCatching {
+            val dao = container.database.playlistDao()
+            reordered.forEachIndexed { position, entry ->
+                if (entry.remote) dao.setYtPosition(entry.entryId, position) else dao.setPosition(entry.entryId, position)
+            }
+        }.onFailure { report("Couldn't reorder the playlist", it) } }
+    }
+
+    // ---- Spotify (Exportify) CSV import ----
+
+    fun observeImportReview(importId: Long): Flow<List<SpotifyImportItemEntity>> =
+        container.database.spotifyDao().observeNeedsReview(importId)
+
+    /** Copies each picked CSV into app storage, creates a playlist and starts a background import. */
+    fun importSpotify(uris: List<Uri>) {
+        if (!settings.value.youtubeIntegration) {
+            _messages.trySend("Turn on the YouTube integration to import Spotify playlists")
+            return
+        }
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            for (uri in uris) {
+                runCatching {
+                    val name = queryDisplayName(uri)
+                    val now = System.currentTimeMillis()
+                    val playlistId = container.database.playlistDao()
+                        .insert(PlaylistEntity(name = name, createdAt = now, updatedAt = now))
+                    val importId = container.database.spotifyDao().insertImport(
+                        SpotifyImportEntity(
+                            fileName = "$name.csv",
+                            createdAt = now,
+                            state = "RUNNING",
+                            total = 0,
+                            processed = 0,
+                            matched = 0,
+                            review = 0,
+                            failed = 0,
+                            playlistId = playlistId,
+                        ),
+                    )
+                    val path = withContext(Dispatchers.IO) {
+                        val dir = java.io.File(container.appContext.filesDir, "spotify_import").apply { mkdirs() }
+                        val target = java.io.File(dir, "$importId.csv")
+                        container.appContext.contentResolver.openInputStream(uri)?.use { input ->
+                            target.outputStream().use { input.copyTo(it) }
+                        }
+                        target.absolutePath
+                    }
+                    container.spotifyImport.enqueue(importId, playlistId, path, name)
+                }.onFailure { report("Couldn't start the Spotify import", it) }
+            }
+            _messages.trySend("Importing Spotify playlist…")
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String {
+        val name = runCatching {
+            container.appContext.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+            }
+        }.getOrNull()
+        return (name ?: uri.lastPathSegment ?: "Spotify playlist").removeSuffix(".csv").ifBlank { "Spotify playlist" }
+    }
+
+    fun decodeCandidates(item: SpotifyImportItemEntity): List<SpotifyCandidate> {
+        val json = item.candidates ?: return emptyList()
+        return runCatching {
+            val array = org.json.JSONArray(json)
+            (0 until array.length()).map { i ->
+                val o = array.getJSONObject(i)
+                SpotifyCandidate(
+                    videoId = o.optString("videoId"),
+                    title = o.optString("title"),
+                    artist = o.optString("artist"),
+                    album = o.optString("album"),
+                    durationMs = o.optLong("durationMs"),
+                    thumbnailUrl = o.optString("thumbnailUrl").takeIf { it.isNotBlank() },
+                    score = o.optDouble("score", 0.0),
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    /** Picks a candidate for a review item (or skips it when [candidate] is null) and fills the playlist. */
+    fun resolveImportItem(importId: Long, itemId: Long, candidate: SpotifyCandidate?) {
+        viewModelScope.launch {
+            runCatching {
+                val dao = container.database.spotifyDao()
+                if (candidate == null) {
+                    dao.resolveItem(itemId, "SKIPPED", null, null, null)
+                    return@runCatching
+                }
+                dao.resolveItem(itemId, "MATCHED", candidate.videoId, candidate.title, candidate.artist)
+                val playlistId = dao.getImport(importId)?.playlistId
+                if (playlistId != null) {
+                    val pd = container.database.playlistDao()
+                    val position = maxOf(pd.maxPosition(playlistId), pd.maxYtPosition(playlistId)) + 1
+                    pd.insertYtEntries(
+                        listOf(
+                            PlaylistYtEntryEntity(
+                                playlistId = playlistId,
+                                videoId = candidate.videoId,
+                                title = candidate.title,
+                                artist = candidate.artist,
+                                album = candidate.album,
+                                durationMs = candidate.durationMs,
+                                thumbnailUrl = candidate.thumbnailUrl,
+                                position = position,
+                            ),
+                        ),
+                    )
+                    pd.touch(playlistId, System.currentTimeMillis())
+                }
+            }.onFailure { report("Couldn't update this import item", it) }
+        }
+    }
+
+    /** Re-runs the YouTube Music search for one review item and refreshes its candidates. */
+    fun retryImportItem(importId: Long, item: SpotifyImportItemEntity) {
+        viewModelScope.launch {
+            runCatching {
+                val dao = container.database.spotifyDao()
+                val row = com.auralis.app.data.spotify.SpotifyRow(item.title, item.artist, item.album, item.durationMs)
+                val results = container.youtube.search(com.auralis.app.data.spotify.SpotifyMatcher.query(row))
+                val candidates = com.auralis.app.data.spotify.SpotifyMatcher.candidates(row, results)
+                val best = candidates.firstOrNull()
+                val status = when {
+                    best == null -> "FAILED"
+                    best.confident -> "MATCHED"
+                    else -> "REVIEW"
+                }
+                if (status == "MATCHED" && best != null) {
+                    resolveImportItem(
+                        importId,
+                        item.id,
+                        SpotifyCandidate(
+                            best.song.videoId,
+                            best.song.title,
+                            best.song.artist,
+                            best.song.album,
+                            best.song.durationMs,
+                            best.song.thumbnailUrl,
+                            best.score,
+                        ),
+                    )
+                } else {
+                    val json = org.json.JSONArray().apply {
+                        candidates.forEach { c ->
+                            put(
+                                org.json.JSONObject().apply {
+                                    put("videoId", c.song.videoId)
+                                    put("title", c.song.title)
+                                    put("artist", c.song.artist)
+                                    put("album", c.song.album)
+                                    put("durationMs", c.song.durationMs)
+                                    put("thumbnailUrl", c.song.thumbnailUrl ?: "")
+                                    put("score", c.score)
+                                },
+                            )
+                        }
+                    }.toString()
+                    dao.upsertItem(item.copy(status = status, candidates = json))
+                }
+            }.onFailure { report("Couldn't retry this match", it) }
+        }
+    }
 
     fun togglePlayback() = container.playback.toggle()
     fun next() = container.playback.next()
@@ -415,10 +1650,22 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     private fun persistCurrentQueue() {
         val ids = container.playback.state.value.queueIds
+        val savable = localQueueIds(ids) ?: return
         viewModelScope.launch { runCatching {
-            if (ids.isEmpty()) container.database.queueDao().clear()
-            else container.database.queueDao().replaceAll(ids.mapIndexed { i, id -> QueueItemEntity(i, id, i) })
+            if (savable.isEmpty()) container.database.queueDao().clear()
+            else container.database.queueDao().replaceAll(savable.mapIndexed { i, id -> QueueItemEntity(i, id, i) })
         }.onFailure { report("Couldn't save the playback queue", it) } }
+    }
+
+    /**
+     * Queue ids that exist in the library. Returns null while the library has not loaded yet so a
+     * cold start cannot wipe a valid saved queue. Streamed YouTube ids are always filtered out.
+     */
+    private fun localQueueIds(ids: List<String>): List<String>? {
+        val library = tracks.value
+        if (library.isEmpty()) return null
+        val local = library.mapTo(HashSet()) { it.id }
+        return ids.filter { it in local }
     }
 
     private fun report(label: String, error: Throwable) {
@@ -431,5 +1678,32 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(container) as T
     }
-    private companion object { const val TAG = "AuralisViewModel" }
+    private companion object {
+        const val TAG = "AuralisViewModel"
+        const val SEARCH_DEBOUNCE_MS = 300L
+        const val RADIO_INITIAL_SIZE = 15
+        const val RADIO_REFILL_SIZE = 12
+        const val MIN_RADIO_AHEAD = 3
+        const val SEARCH_PREFETCH_COUNT = 3
+        const val PREFETCH_MEMORY_LIMIT = 200
+        const val HISTORY_MIN_MS = 30_000L
+        /** YouTube Music charts landing page (public browse id); powers Trending and Popular Artists. */
+        const val CHARTS_BROWSE_ID = "FEmusic_charts"
+        const val HOME_ROW_SIZE = 20
+        const val ARTIST_ROW_SIZE = 12
+        // Stable section ids, kept across refreshes so a row's state updates in place.
+        const val SECTION_QUICK_PICKS = "quick_picks"
+        const val SECTION_TRENDING_IN = "trending_in"
+        const val SECTION_MADE_FOR_YOU = "made_for_you"
+        const val SECTION_GLOBAL_HITS = "global_hits"
+        const val SECTION_CONTINUE = "continue"
+        const val SECTION_NEW_RELEASES = "new_releases"
+        const val SECTION_ARTISTS = "artists"
+        const val SECTION_DAILY_MIX = "daily_mix"
+        const val SECTION_BECAUSE_YOU = "because_you"
+        const val SECTION_DISCOVER_WEEKLY = "discover_weekly"
+        const val SECTION_CHILL = "chill"
+        const val SECTION_WORKOUT = "workout"
+        const val SECTION_FOCUS = "focus"
+    }
 }

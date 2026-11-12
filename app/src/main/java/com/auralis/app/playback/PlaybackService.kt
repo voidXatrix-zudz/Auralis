@@ -12,11 +12,18 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
@@ -27,6 +34,10 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.auralis.app.AuralisApp
 import com.auralis.app.R
 import com.auralis.app.data.db.toDomain
+import com.auralis.app.data.youtube.YOUTUBE_PLAYBACK_SCHEME
+import com.auralis.app.data.youtube.YOUTUBE_USER_AGENT
+import com.auralis.app.data.youtube.normalizeArtworkUrl
+import com.auralis.app.data.youtube.videoIdFromPlaybackUri
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Track
 import com.auralis.app.logging.AppLog
@@ -85,11 +96,36 @@ class PlaybackService : MediaLibraryService() {
         val notificationProvider = DefaultMediaNotificationProvider(this)
         notificationProvider.setSmallIcon(R.drawable.ic_stat_auralis)
         setMediaNotificationProvider(notificationProvider)
-        val ownedPlayer = ExoPlayer.Builder(this).build().apply {
-            setAudioAttributes(AudioAttributes.DEFAULT, true)
-            setHandleAudioBecomingNoisy(true)
-            volume = settings.volume
+        // Remote queue items carry auralis-yt://<videoId>. The resolving source swaps in the signed
+        // URL on Media3's loading thread, so the queue can be built instantly and streams resolve
+        // just in time without blocking the UI.
+        // HTTP(S) audio goes through the ONE shared OkHttp client. That client's connection pool is
+        // already warmed by stream prefetching, so the first frame no longer pays DNS + TCP + TLS to
+        // the googlevideo host. content:// and file:// still use the default data sources.
+        val httpFactory = OkHttpDataSource.Factory((application as AuralisApp).container.playbackHttp)
+            .setUserAgent(YOUTUBE_USER_AGENT)
+        val resolvingFactory = ResolvingDataSource.Factory(
+            DefaultDataSource.Factory(this, httpFactory),
+        ) { dataSpec ->
+            resolveRemoteUri(dataSpec)
         }
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                PLAYBACK_BUFFER_MS,
+                PLAYBACK_REBUFFER_MS,
+            )
+            .build()
+        val ownedPlayer = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(resolvingFactory))
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                setAudioAttributes(AudioAttributes.DEFAULT, true)
+                setHandleAudioBecomingNoisy(true)
+                volume = settings.volume
+            }
         player = ownedPlayer
         crossfade = CrossfadeController(ownedPlayer)
         ownedPlayer.addListener(object : Player.Listener {
@@ -120,7 +156,7 @@ class PlaybackService : MediaLibraryService() {
         val sessionActivity = packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
             PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
-        val builder = MediaLibrarySession.Builder(this, ownedPlayer, libraryCallback)
+        val builder = MediaLibrarySession.Builder(this, TransportPlayer(ownedPlayer), libraryCallback)
         if (sessionActivity != null) builder.setSessionActivity(sessionActivity)
         try {
             session = builder.build()
@@ -354,8 +390,13 @@ class PlaybackService : MediaLibraryService() {
             .setAlbumTitle(track.album.ifBlank { "Unknown album" })
             .setIsBrowsable(false)
             .setIsPlayable(true)
-        val artwork = track.artKey?.let { File(filesDir, "artwork/$it.jpg").takeIf(File::isFile) }
-        if (artwork != null) metadata.setArtworkUri(Uri.fromFile(artwork))
+        val remoteArtwork = track.artworkUrl?.let(::normalizeArtworkUrl)
+        if (!remoteArtwork.isNullOrBlank()) {
+            metadata.setArtworkUri(Uri.parse(remoteArtwork))
+        } else {
+            val artwork = track.artKey?.let { File(filesDir, "artwork/$it.jpg").takeIf(File::isFile) }
+            if (artwork != null) metadata.setArtworkUri(Uri.fromFile(artwork))
+        }
         return MediaItem.Builder()
             .setMediaId(track.id)
             .setUri(Uri.parse(track.uri))
@@ -364,12 +405,55 @@ class PlaybackService : MediaLibraryService() {
             .build()
     }
 
+    /** Rewrites `auralis-yt://<videoId>` to the signed audio URL Media3 should actually open. */
+    private fun resolveRemoteUri(dataSpec: DataSpec): DataSpec {
+        val videoId = videoIdFromPlaybackUri(dataSpec.uri.toString())
+            ?: return dataSpec
+        val startedAt = System.currentTimeMillis()
+        val url = (application as AuralisApp).container.youtube.resolveStreamBlocking(videoId)
+        AppLog.i("Timing", "stream URL ready in ${System.currentTimeMillis() - startedAt} ms")
+        return dataSpec.withUri(Uri.parse(url))
+    }
+
+    /**
+     * Exposes next/previous to every MediaSession controller and applies the standard music
+     * "previous restarts after three seconds" rule on the service side. This covers the
+     * notification, lock screen, Bluetooth and Android Auto, not just the in-app buttons.
+     */
+    private class TransportPlayer(player: Player) : ForwardingPlayer(player) {
+        override fun getAvailableCommands(): Player.Commands =
+            super.getAvailableCommands().buildUpon()
+                .addAll(
+                    Player.COMMAND_SEEK_TO_NEXT,
+                    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_TO_PREVIOUS,
+                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                )
+                .build()
+
+        override fun seekToPrevious() {
+            if (currentPosition > PREVIOUS_RESTART_MS) seekTo(0L) else super.seekToPrevious()
+        }
+
+        override fun seekToPreviousMediaItem() {
+            if (currentPosition > PREVIOUS_RESTART_MS || !hasPreviousMediaItem()) {
+                seekTo(0L)
+            } else {
+                super.seekToPreviousMediaItem()
+            }
+        }
+    }
+
     companion object {
         const val ACTION_START_SLEEP_TIMER = "com.auralis.app.action.START_SLEEP_TIMER"
         const val ACTION_CANCEL_SLEEP_TIMER = "com.auralis.app.action.CANCEL_SLEEP_TIMER"
         const val EXTRA_SLEEP_TIMER_MS = "sleep_timer_duration_ms"
         private const val MAX_SLEEP_TIMER_MS = 12 * 60 * 60 * 1_000L
         private const val RECONNECT_DELAY_MS = 700L
+        /** Start playback after 500 ms of buffered audio; 1 s more after a rebuffer. */
+        private const val PLAYBACK_BUFFER_MS = 500
+        private const val PLAYBACK_REBUFFER_MS = 1_000
+        private const val PREVIOUS_RESTART_MS = 3_000L
         private const val TAG = "AuralisService"
         private const val ROOT = "auralis_root"
         private const val LIBRARY = "auralis_library"

@@ -65,6 +65,7 @@ private object Keys {
     val playerBackground = stringPreferencesKey("player_background")
     val lastUpdateCheckAt = longPreferencesKey("last_update_check_at")
     val skippedUpdateTag = stringPreferencesKey("skipped_update_tag")
+    val youtubeIntegration = booleanPreferencesKey("youtube_integration")
 }
 
 /** Persists [AppSettings] in Preferences DataStore. Unknown or corrupt values fall back to defaults. */
@@ -120,6 +121,7 @@ class SettingsRepository(private val context: Context) {
             playerBackground = enumOr(this[Keys.playerBackground], d.playerBackground),
             lastUpdateCheckAt = (this[Keys.lastUpdateCheckAt] ?: d.lastUpdateCheckAt).coerceAtLeast(0L),
             skippedUpdateTag = this[Keys.skippedUpdateTag] ?: d.skippedUpdateTag,
+            youtubeIntegration = this[Keys.youtubeIntegration] ?: d.youtubeIntegration,
         )
     }
 
@@ -162,6 +164,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.playerBackground] = s.playerBackground.name
         this[Keys.lastUpdateCheckAt] = s.lastUpdateCheckAt
         this[Keys.skippedUpdateTag] = s.skippedUpdateTag
+        this[Keys.youtubeIntegration] = s.youtubeIntegration
     }
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =

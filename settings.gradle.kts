@@ -17,6 +17,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // NewPipeExtractor is published on JitPack; pinned in gradle/libs.versions.toml.
+        maven("https://jitpack.io")
     }
 }
 

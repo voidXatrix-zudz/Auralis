@@ -19,8 +19,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SearchHistoryEntity::class,
         QueueItemEntity::class,
         PlayEventEntity::class,
+        YouTubeLikeEntity::class,
+        YouTubeRecentEntity::class,
+        DownloadEntity::class,
+        PlaylistYtEntryEntity::class,
+        SpotifyImportEntity::class,
+        SpotifyImportItemEntity::class,
+        YtMatchCacheEntity::class,
     ],
-    version = 2,
+    version = 7,
     exportSchema = true,
 )
 abstract class AuralisDatabase : RoomDatabase() {
@@ -33,6 +40,9 @@ abstract class AuralisDatabase : RoomDatabase() {
     abstract fun searchHistoryDao(): SearchHistoryDao
     abstract fun queueDao(): QueueDao
     abstract fun playEventDao(): PlayEventDao
+    abstract fun youtubeDao(): YouTubeDao
+    abstract fun downloadDao(): DownloadDao
+    abstract fun spotifyDao(): SpotifyDao
 
     companion object {
         /** Adds the play-event log without touching the existing library, queues or settings. */
@@ -54,9 +64,163 @@ abstract class AuralisDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds the YouTube likes and recents tables; no existing table changes. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `youtube_likes` (
+                        `videoId` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `artist` TEXT NOT NULL,
+                        `album` TEXT NOT NULL,
+                        `durationMs` INTEGER NOT NULL,
+                        `thumbnailUrl` TEXT,
+                        `likedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`videoId`)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `youtube_recents` (
+                        `videoId` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `artist` TEXT NOT NULL,
+                        `album` TEXT NOT NULL,
+                        `durationMs` INTEGER NOT NULL,
+                        `thumbnailUrl` TEXT,
+                        `playedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`videoId`)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_youtube_recents_playedAt` " +
+                        "ON `youtube_recents` (`playedAt`)",
+                )
+            }
+        }
+
+        /** Adds the offline download table; no existing table changes. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `downloads` (
+                        `videoId` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `artist` TEXT NOT NULL,
+                        `album` TEXT NOT NULL,
+                        `durationMs` INTEGER NOT NULL,
+                        `filePath` TEXT NOT NULL,
+                        `artPath` TEXT,
+                        `format` TEXT NOT NULL,
+                        `sizeBytes` INTEGER NOT NULL,
+                        `downloadedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`videoId`)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_downloads_downloadedAt` ON `downloads` (`downloadedAt`)")
+            }
+        }
+
+        /** Adds the play count to recents so History can show how often a song was played. */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `youtube_recents` ADD COLUMN `playCount` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** Adds YouTube songs inside local playlists; no existing table changes. */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `playlist_yt_entries` (
+                        `entryId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `playlistId` INTEGER NOT NULL,
+                        `videoId` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `artist` TEXT NOT NULL,
+                        `album` TEXT NOT NULL,
+                        `durationMs` INTEGER NOT NULL,
+                        `thumbnailUrl` TEXT,
+                        `position` INTEGER NOT NULL,
+                        FOREIGN KEY(`playlistId`) REFERENCES `playlists`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_playlist_yt_entries_playlistId_videoId` " +
+                        "ON `playlist_yt_entries` (`playlistId`, `videoId`)",
+                )
+            }
+        }
+
+        /** Adds the Spotify CSV import tables and the YouTube match cache; no existing table changes. */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `spotify_imports` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `fileName` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `total` INTEGER NOT NULL,
+                        `processed` INTEGER NOT NULL,
+                        `matched` INTEGER NOT NULL,
+                        `review` INTEGER NOT NULL,
+                        `failed` INTEGER NOT NULL,
+                        `playlistId` INTEGER
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_spotify_imports_createdAt` ON `spotify_imports` (`createdAt`)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `spotify_import_items` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `importId` INTEGER NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `artist` TEXT NOT NULL,
+                        `album` TEXT NOT NULL,
+                        `durationMs` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `matchedVideoId` TEXT,
+                        `matchedTitle` TEXT,
+                        `matchedArtist` TEXT,
+                        `candidates` TEXT
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_spotify_import_items_importId` ON `spotify_import_items` (`importId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_spotify_import_items_importId_position` ON `spotify_import_items` (`importId`, `position`)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `yt_match_cache` (
+                        `queryKey` TEXT NOT NULL,
+                        `videoId` TEXT,
+                        `title` TEXT,
+                        `artist` TEXT,
+                        `album` TEXT,
+                        `durationMs` INTEGER NOT NULL,
+                        `thumbnailUrl` TEXT,
+                        `cachedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`queryKey`)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_yt_match_cache_cachedAt` ON `yt_match_cache` (`cachedAt`)")
+            }
+        }
+
         fun create(context: Context): AuralisDatabase =
             Room.databaseBuilder(context.applicationContext, AuralisDatabase::class.java, "auralis.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build()
     }
 }

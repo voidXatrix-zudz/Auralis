@@ -119,6 +119,35 @@ data class PlaylistEntryEntity(
     val position: Int,
 )
 
+/**
+ * A streamed YouTube song inside a local playlist. It cannot live in [PlaylistEntryEntity] because
+ * that table has a foreign key to the on-device `tracks` table. The metadata is stored inline so a
+ * playlist still renders when offline; the stream is resolved on play.
+ */
+@Entity(
+    tableName = "playlist_yt_entries",
+    foreignKeys = [
+        ForeignKey(
+            entity = PlaylistEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["playlistId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["playlistId", "videoId"], unique = true)],
+)
+data class PlaylistYtEntryEntity(
+    @PrimaryKey(autoGenerate = true) val entryId: Long = 0,
+    val playlistId: Long,
+    val videoId: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val thumbnailUrl: String?,
+    val position: Int,
+)
+
 @Entity(
     tableName = "favorites",
     foreignKeys = [
@@ -159,6 +188,46 @@ data class SearchHistoryEntity(
     val searchedAt: Long,
 )
 
+/** YouTube songs hearted in-app. No foreign key: these are not library tracks. */
+@Entity(tableName = "youtube_likes")
+data class YouTubeLikeEntity(
+    @PrimaryKey val videoId: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val thumbnailUrl: String?,
+    val likedAt: Long,
+)
+
+/** Recently played YouTube songs, for the Home "Recents" row and the History screen. */
+@Entity(tableName = "youtube_recents", indices = [Index("playedAt")])
+data class YouTubeRecentEntity(
+    @PrimaryKey val videoId: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val thumbnailUrl: String?,
+    val playedAt: Long,
+    val playCount: Int,
+)
+
+/** One offline YouTube download saved into the user's music folder. */
+@Entity(tableName = "downloads", indices = [Index("downloadedAt")])
+data class DownloadEntity(
+    @PrimaryKey val videoId: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val filePath: String,
+    val artPath: String?,
+    val format: String,
+    val sizeBytes: Long,
+    val downloadedAt: Long,
+)
+
 /** One play occurrence, used for Wrapped listening statistics. */
 @Entity(
     tableName = "play_events",
@@ -197,4 +266,60 @@ data class QueueItemEntity(
     val trackId: String,
     /** Position before shuffling, so turning shuffle off restores the original order. */
     val originalPosition: Int,
+)
+
+/** One Importify/Exportify CSV import run, tracked for progress and its final summary. */
+@Entity(tableName = "spotify_imports", indices = [Index("createdAt")])
+data class SpotifyImportEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val fileName: String,
+    val createdAt: Long,
+    /** RUNNING while the worker is matching, DONE when finished. */
+    val state: String,
+    val total: Int,
+    val processed: Int,
+    val matched: Int,
+    val review: Int,
+    val failed: Int,
+    /** The local playlist this import filled; null once the playlist is deleted. */
+    val playlistId: Long?,
+)
+
+/**
+ * One Spotify row being matched. Low-confidence rows keep their candidate list as JSON so the
+ * "Needs review" screen can offer another pick without re-searching.
+ */
+@Entity(
+    tableName = "spotify_import_items",
+    indices = [Index("importId"), Index(value = ["importId", "position"])],
+)
+data class SpotifyImportItemEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val importId: Long,
+    val position: Int,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    /** MATCHED, REVIEW, FAILED or SKIPPED. */
+    val status: String,
+    val matchedVideoId: String?,
+    val matchedTitle: String?,
+    val matchedArtist: String?,
+    /** JSON array of candidate songs, for the review screen. */
+    val candidates: String?,
+)
+
+/** Cached YouTube Music match per normalized "title artist" query, so re-importing is instant. */
+@Entity(tableName = "yt_match_cache", indices = [Index("cachedAt")])
+data class YtMatchCacheEntity(
+    @PrimaryKey val queryKey: String,
+    /** Null when the search found nothing; the miss is cached too. */
+    val videoId: String?,
+    val title: String?,
+    val artist: String?,
+    val album: String?,
+    val durationMs: Long,
+    val thumbnailUrl: String?,
+    val cachedAt: Long,
 )

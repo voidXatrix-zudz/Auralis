@@ -22,6 +22,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
+import com.auralis.app.data.youtube.YtCard
+import com.auralis.app.ui.AppViewModel
+import com.auralis.app.ui.HomeCategory
+import com.auralis.app.ui.HomeUiState
 import com.auralis.app.ui.components.SectionTitle
 
 @Composable
@@ -31,7 +35,43 @@ fun HomeScreen(
     playlists: List<com.auralis.app.data.db.PlaylistEntity>, onAddToPlaylist: (Long, Track) -> Unit,
     modifier: Modifier = Modifier, onQueue: (Track) -> Unit = {}, scanning: Boolean = false, onPlayNext: (Track) -> Unit = onQueue,
     onOpenSettings: () -> Unit = {}, settingsBadge: Boolean = false,
+    youtubeEnabled: Boolean = false,
+    home: HomeUiState = HomeUiState(),
+    youtubeAvatarUrl: String? = null,
+    youtubeAccountName: String? = null,
+    youtubeSignedIn: Boolean = false,
+    onOpenHome: () -> Unit = {},
+    onRefreshHome: () -> Unit = {},
+    onSelectHomeCategory: (HomeCategory) -> Unit = {},
+    onPlayYtTrack: (Track) -> Unit = onPlay,
+    onOpenYtCard: (YtCard) -> Unit = {},
+    onLikeYtTrack: (Track) -> Unit = onFavorite,
+    onLoadMoreHomeRow: (String) -> Unit = {},
+    onCloseHomeCollection: () -> Unit = {},
+    onYouTubeSignIn: () -> Unit = {},
+    onYouTubeSignOut: () -> Unit = {},
 ) {
+    if (youtubeEnabled) {
+        YouTubeHomeScreen(
+            state = home,
+            accountName = youtubeAccountName,
+            avatarUrl = youtubeAvatarUrl,
+            signedIn = youtubeSignedIn,
+            onOpen = onOpenHome,
+            onRefresh = onRefreshHome,
+            onSelectCategory = onSelectHomeCategory,
+            onPlayTrack = onPlayYtTrack,
+            onOpenCard = onOpenYtCard,
+            onLike = onLikeYtTrack,
+            onLoadMore = onLoadMoreHomeRow,
+            onCloseCollection = onCloseHomeCollection,
+            onSignIn = onYouTubeSignIn,
+            onSignOut = onYouTubeSignOut,
+            onSwitchAccount = onYouTubeSignOut,
+            modifier = modifier,
+        )
+        return
+    }
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
         GlassHomeScreen(sources, tracks, favorites, currentId, onAddMusic, onScan, onPlay, onFavorite, playlists, onAddToPlaylist, modifier, onQueue, scanning, onPlayNext, onOpenSettings, settingsBadge)
         return

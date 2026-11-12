@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.LocalDockBottomInset
+import com.auralis.app.ui.components.LocalDownloadActions
 import com.auralis.app.ui.theme.GlassTokens
 
 @Composable
@@ -51,6 +53,10 @@ fun GlassTrackRows(
     modifier: Modifier,
     onQueue: (Track) -> Unit,
     onPlayNext: (Track) -> Unit,
+    resolvingId: String? = null,
+    downloadedIds: Set<String> = emptySet(),
+    onDownload: (Track) -> Unit = {},
+    onDeleteDownload: (Track) -> Unit = {},
 ) {
     if (tracks.isEmpty()) {
         Box(modifier.fillMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) {
@@ -64,7 +70,7 @@ fun GlassTrackRows(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(tracks, key = { it.id }) { track ->
-            GlassTrackRow(track, track.id == currentId, track.id in favorites, onPlay, onFavorite, onQueue, onPlayNext, playlists, onAddToPlaylist)
+            GlassTrackRow(track, track.id == currentId, track.id in favorites, onPlay, onFavorite, onQueue, onPlayNext, playlists, onAddToPlaylist, resolving = track.id == resolvingId, downloaded = (track.remoteId ?: track.id.removePrefix("yt:")) in LocalDownloadActions.current.downloadedIds)
         }
     }
 }
@@ -81,9 +87,14 @@ fun GlassTrackRow(
     playlists: List<PlaylistEntity>,
     onAddToPlaylist: (Long, Track) -> Unit,
     modifier: Modifier = Modifier,
+    resolving: Boolean = false,
+    downloaded: Boolean = false,
+    onDownload: (Track) -> Unit = {},
+    onDeleteDownload: (Track) -> Unit = {},
 ) {
     var menu by remember(track.id) { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
+    val dl = LocalDownloadActions.current
     GlassPanel(modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd), onClick = { onPlay(track) }) {
         Row(Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             GlassArtwork(track, Modifier.size(52.dp), 14.dp)
@@ -101,19 +112,34 @@ fun GlassTrackRow(
                     color = colors.onSurfaceVariant,
                 )
             }
-            GlassIconAction(
-                if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                if (favorite) "Remove favorite" else "Add favorite",
-                { onFavorite(track) },
-                tint = if (favorite) GlassTokens.Violet else colors.onSurfaceVariant,
-            )
-            Box {
-                GlassIconAction(Icons.Rounded.MoreVert, "More actions for ${track.title}", { menu = true })
-                DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(text = { Text("Play next") }, onClick = { onPlayNext(track); menu = false })
-                    DropdownMenuItem(text = { Text("Add to queue") }, onClick = { onQueue(track); menu = false })
-                    playlists.forEach { list ->
-                        DropdownMenuItem(text = { Text("Add to ${list.name}") }, onClick = { onAddToPlaylist(list.id, track); menu = false })
+            if (downloaded) {
+                Text("Downloaded", style = MaterialTheme.typography.labelSmall, color = GlassTokens.Violet, modifier = Modifier.padding(end = 4.dp))
+            }
+            if (track.isRemote && resolving) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                GlassIconAction(
+                    if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    if (favorite) "Remove favorite" else "Add favorite",
+                    { onFavorite(track) },
+                    tint = if (favorite) GlassTokens.Violet else colors.onSurfaceVariant,
+                )
+                Box {
+                    GlassIconAction(Icons.Rounded.MoreVert, "More actions for ${track.title}", { menu = true })
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(text = { Text("Play next") }, onClick = { onPlayNext(track); menu = false })
+                        DropdownMenuItem(text = { Text("Add to queue") }, onClick = { onQueue(track); menu = false })
+                        DropdownMenuItem(text = { Text(if (favorite) "Unlike" else "Like") }, onClick = { onFavorite(track); menu = false })
+                        if (track.isRemote) {
+                            if (downloaded) {
+                                DropdownMenuItem(text = { Text("Delete download") }, onClick = { dl.onDeleteDownload(track); menu = false })
+                            } else {
+                                DropdownMenuItem(text = { Text("Download") }, onClick = { dl.onDownload(track); menu = false })
+                            }
+                        }
+                        playlists.forEach { list ->
+                            DropdownMenuItem(text = { Text("Add to ${list.name}") }, onClick = { onAddToPlaylist(list.id, track); menu = false })
+                        }
                     }
                 }
             }

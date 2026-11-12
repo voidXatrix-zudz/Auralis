@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Backup
@@ -115,6 +116,10 @@ fun GlassSettingsScreen(
     updateChecking: Boolean = false,
     updateStatus: String? = null,
     updateAvailableVersion: String? = null,
+    clerkSignedIn: Boolean = false,
+    clerkName: String = "",
+    clerkEmail: String = "",
+    onClerkSignOut: () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
     var pendingRemoval by remember { mutableStateOf<MusicSource?>(null) }
@@ -182,6 +187,24 @@ fun GlassSettingsScreen(
             }
             item {
                 ProfileCard(sourceCount = sources.size)
+            }
+
+            if (clerkSignedIn && matches("Account", "profile", "sign out", "clerk", "email")) {
+                item {
+                    SettingsGroup("Account", Icons.Rounded.Person) {
+                        InfoNote(
+                            clerkName.ifBlank { "Signed in" } +
+                                if (clerkEmail.isNotBlank()) " · $clerkEmail" else "",
+                        )
+                        RowItem(
+                            Icons.AutoMirrored.Rounded.Logout,
+                            "Sign out",
+                            "Return to the AURALIS sign-in screen",
+                            onClerkSignOut,
+                            showDivider = false,
+                        )
+                    }
+                }
             }
 
             if (matches("Appearance", "theme", "glass", "clarity", "accent", "performance", "dock")) {

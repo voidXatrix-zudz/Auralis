@@ -33,9 +33,11 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -87,9 +89,23 @@ fun SettingsScreen(
     updateAvailableVersion: String? = null,
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
+    youtubeSignedIn: Boolean = false,
+    youtubeName: String = "",
+    onYouTubeSignIn: () -> Unit = {},
+    onYouTubeSignOut: () -> Unit = {},
+    clerkSignedIn: Boolean = false,
+    clerkName: String = "",
+    clerkEmail: String = "",
+    onClerkSignOut: () -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassSettingsScreen(settings, sources, onUpdate, onAddFolder, onRemoveSource, onOpenAbout, onOpenEqualizer, onOpenWrapped, onOpenBackup, onOpenLogs, modifier, onBack, onCheckForUpdates, updateChecking, updateStatus, updateAvailableVersion)
+        GlassSettingsScreen(
+            settings, sources, onUpdate, onAddFolder, onRemoveSource, onOpenAbout, onOpenEqualizer,
+            onOpenWrapped, onOpenBackup, onOpenLogs, modifier, onBack, onCheckForUpdates, updateChecking,
+            updateStatus, updateAvailableVersion,
+            clerkSignedIn = clerkSignedIn, clerkName = clerkName, clerkEmail = clerkEmail,
+            onClerkSignOut = onClerkSignOut,
+        )
         return
     }
     var pendingRemoval by remember { mutableStateOf<MusicSource?>(null) }
@@ -103,6 +119,70 @@ fun SettingsScreen(
     ) {
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = ScreenPadding) {
         item { Text("Settings", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface) }
+
+        // Clerk account (the app-level identity). Hidden on keyless builds where Clerk is not configured.
+        if (clerkSignedIn) {
+            item { SectionTitle("Account") }
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Person, null, tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(clerkName.ifBlank { "Signed in" }, style = MaterialTheme.typography.bodyLarge)
+                        if (clerkEmail.isNotBlank()) {
+                            Text(
+                                clerkEmail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    TextButton(onClick = onClerkSignOut) { Text("Sign out") }
+                }
+            }
+        }
+
+        item { SectionTitle("YouTube Music") }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("YouTube Music integration", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Sign in to see your Home feed, liked songs and playlists. Off by default.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = settings.youtubeIntegration,
+                    onCheckedChange = { enabled -> onUpdate { it.copy(youtubeIntegration = enabled) } },
+                )
+            }
+        }
+        if (settings.youtubeIntegration) {
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    if (youtubeSignedIn) {
+                        Text(
+                            youtubeName.ifBlank { "Signed in" },
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        TextButton(onClick = onYouTubeSignOut) { Text("Sign out") }
+                    } else {
+                        Text("Not signed in", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Button(onClick = onYouTubeSignIn) { Text("Sign in with Google") }
+                    }
+                }
+            }
+        }
 
         item { SectionTitle("Theme style") }
         item { ThemeStyleSelector(selected = settings.themeStyle, onSelect = { s -> onUpdate { it.copy(themeStyle = s) } }) }

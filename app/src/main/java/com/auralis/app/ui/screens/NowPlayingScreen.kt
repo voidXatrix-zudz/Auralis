@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Subject
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.DragHandle
@@ -79,6 +80,7 @@ import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.components.AudioInfoSheet
 import com.auralis.app.ui.components.PlayerBackgroundImage
+import com.auralis.app.ui.components.LocalDownloadActions
 import com.auralis.app.ui.components.QualityBadgeContent
 import com.auralis.app.ui.components.qualityBadgeContent
 import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
@@ -248,7 +250,7 @@ fun NowPlayingScreen(
             onBackground = Color.White,
         ) else colors
         Box(Modifier.fillMaxSize()) {
-        if (photoActive) PlayerBackgroundImage(photoBackground) else NowPlayingBackdrop(track)
+        if (photoActive) PlayerBackgroundImage(photoBackground) else NowPlayingBackdrop(track, playback.artworkUri)
         CompositionLocalProvider(LocalContentColor provides colors.onSurface) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
             Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -274,7 +276,7 @@ fun NowPlayingScreen(
                     onDragEnd = { if (artworkDrag < -openThreshold) lyricsOpen = true; artworkDrag = 0f },
                     onDragCancel = { artworkDrag = 0f },
                 ) { change, amount -> change.consume(); artworkDrag += amount }
-            })
+            }, artUri = playback.artworkUri)
             Spacer(Modifier.height(8.dp))
             Text("Swipe the artwork sideways for liquid lyrics", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant.copy(alpha = 0.7f), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(18.dp))
@@ -286,6 +288,13 @@ fun NowPlayingScreen(
                 }
                 IconButton(onClick = { onFavorite(track) }) {
                     Icon(if (track.id in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (track.id in favorites) "Remove favorite" else "Add favorite", tint = if (track.id in favorites) colors.primary else colors.onSurfaceVariant, modifier = Modifier.size(28.dp))
+                }
+                if (track.isRemote) {
+                    val dl = LocalDownloadActions.current
+                    val downloaded = (track.remoteId ?: track.id.removePrefix("yt:")) in dl.downloadedIds
+                    IconButton(onClick = { if (downloaded) dl.onDeleteDownload(track) else dl.onDownload(track) }) {
+                        Icon(Icons.Rounded.Download, if (downloaded) "Delete download" else "Download", tint = if (downloaded) colors.primary else colors.onSurfaceVariant, modifier = Modifier.size(28.dp))
+                    }
                 }
             }
             val qualityBadge = track.qualityBadgeContent()
@@ -439,7 +448,7 @@ fun NowPlayingScreen(
 private fun time(ms: Long): String { val total = (ms.coerceAtLeast(0) / 1000).toInt(); return "%d:%02d".format(total / 60, total % 60) }
 
 @Composable
-private fun NowPlayingBackdrop(track: Track) {
+private fun NowPlayingBackdrop(track: Track, artUri: Any? = null) {
     val dark = Auralis.extras.isDark
     val profile = com.auralis.app.ui.performance.LocalPerformanceProfile.current
     val fallback = MaterialTheme.colorScheme.primary
@@ -464,12 +473,14 @@ private fun NowPlayingBackdrop(track: Track) {
             ArtworkImage(
                 track,
                 Modifier.fillMaxSize().alpha(0.16f).blur(56.dp),
+                artUri = artUri,
             )
         } else {
             // No full-screen blur in Medium/Low: a dim static wash keeps the same mood.
             ArtworkImage(
                 track,
                 Modifier.fillMaxSize().alpha(0.12f),
+                artUri = artUri,
             )
         }
         Box(

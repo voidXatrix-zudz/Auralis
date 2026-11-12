@@ -10,6 +10,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import com.auralis.app.data.youtube.YOUTUBE_PLAYBACK_SCHEME
+import com.auralis.app.data.youtube.normalizeArtworkUrl
 import com.auralis.app.domain.model.Track
 import com.auralis.app.logging.AppLog
 import com.auralis.app.playback.PlaybackService.Companion.ACTION_CANCEL_SLEEP_TIMER
@@ -40,6 +42,7 @@ class PlaybackController(private val context: Context) {
 
     private val listener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = publish()
+        override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) = publish()
         override fun onIsPlayingChanged(isPlaying: Boolean) = publish()
         override fun onPlaybackStateChanged(playbackState: Int) = publish()
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) = publish()
@@ -104,7 +107,12 @@ class PlaybackController(private val context: Context) {
             if (items.isEmpty()) { setError("No playable tracks in this list"); return }
             val wantedId = uniqueTracks.getOrNull(index)?.id
             val targetIndex = items.indexOfFirst { it.mediaId == wantedId }.takeIf { it >= 0 } ?: 0
-            _state.value = _state.value.copy(error = null)
+            val targetItem = items.getOrNull(targetIndex)
+            _state.value = _state.value.copy(
+                error = null,
+                trackId = targetItem?.mediaId ?: wantedId,
+                artworkUri = targetItem?.mediaMetadata?.artworkUri,
+            )
             p.setMediaItems(items, targetIndex, positionMs)
             p.prepare()
             if (playWhenReady) p.play() else p.pause()
@@ -214,7 +222,20 @@ class PlaybackController(private val context: Context) {
     }
     fun toggle() = safely { if (it.isPlaying) it.pause() else it.play() }
     fun next() = safely { if (it.hasNextMediaItem()) it.seekToNextMediaItem() }
-    fun previous() = safely { if (it.currentMediaItemIndex >= 0) { if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() else it.seekTo(0L) } }
+
+    /**
+     * Standard music-player behavior: past three seconds, "previous" restarts the current song;
+     * earlier than that it moves back one item (or restarts the first item).
+     */
+    fun previous() = safely {
+        if (it.currentPosition > PREVIOUS_RESTART_MS) {
+            it.seekTo(0L)
+        } else if (it.hasPreviousMediaItem()) {
+            it.seekToPreviousMediaItem()
+        } else {
+            it.seekTo(0L)
+        }
+    }
     fun seekTo(positionMs: Long) = safely { it.seekTo(positionMs.coerceAtLeast(0)) }
     fun seekBy(deltaMs: Long) = safely { it.seekTo((it.currentPosition + deltaMs).coerceIn(0L, it.duration.takeIf { d -> d > 0 } ?: Long.MAX_VALUE)) }
     fun toggleShuffle() = safely { it.shuffleModeEnabled = !it.shuffleModeEnabled }
@@ -257,14 +278,26 @@ class PlaybackController(private val context: Context) {
 
     private fun toMediaItem(track: Track): MediaItem? {
         val uri = runCatching { Uri.parse(track.uri) }.getOrNull() ?: return null
-        if (uri.scheme !in setOf("content", "file")) return null
+        // auralis-yt://<videoId> is rewritten to a signed audio URL by PlaybackService.
+        if (uri.scheme !in setOf("content", "file", "http", "https", YOUTUBE_PLAYBACK_SCHEME)) return null
         val metadata = MediaMetadata.Builder()
             .setTitle(track.title.ifBlank { track.displayName })
             .setArtist(track.artist.ifBlank { "Unknown artist" })
             .setAlbumTitle(track.album.ifBlank { "Unknown album" })
-        val artworkFile = track.artKey?.let { File(context.filesDir, "artwork/$it.jpg") }
-        if (artworkFile?.isFile == true) metadata.setArtworkUri(Uri.fromFile(artworkFile))
-        return MediaItem.Builder().setMediaId(track.id).setUri(uri).setMediaMetadata(metadata.build()).build()
+        val remoteArtwork = track.artworkUrl?.let(::normalizeArtworkUrl)
+        if (!remoteArtwork.isNullOrBlank()) {
+            metadata.setArtworkUri(Uri.parse(remoteArtwork))
+        } else {
+            val artworkFile = track.artKey?.let { File(context.filesDir, "artwork/$it.jpg") }
+            if (artworkFile?.isFile == true) metadata.setArtworkUri(Uri.fromFile(artworkFile))
+        }
+        return MediaItem.Builder()
+            .setMediaId(track.id)
+            .setUri(uri)
+            // Remote songs are WebM/Opus; declaring it keeps Media3 on the progressive path.
+            .setMimeType(track.mime.takeIf { it.startsWith("audio/") })
+            .setMediaMetadata(metadata.build())
+            .build()
     }
 
     private inline fun safely(action: (Player) -> Unit) {
@@ -277,7 +310,16 @@ class PlaybackController(private val context: Context) {
 
     private fun updatePendingState() {
         val ids = (pending?.first.orEmpty() + pendingAdds.values).map { it.id }.distinct()
-        _state.value = _state.value.copy(queueIds = ids, upNextIds = ids.drop((pending?.second ?: -1).coerceAtLeast(0)), currentIndex = pending?.second ?: -1)
+        val currentTrack = pending?.first?.getOrNull((pending?.second ?: -1).coerceAtLeast(0))
+        val currentUri = currentTrack?.artworkUrl?.let { Uri.parse(normalizeArtworkUrl(it)) }
+            ?: currentTrack?.artKey?.let { Uri.fromFile(File(context.filesDir, "artwork/$it.jpg")) }
+        _state.value = _state.value.copy(
+            queueIds = ids,
+            upNextIds = ids.drop((pending?.second ?: -1).coerceAtLeast(0)),
+            currentIndex = pending?.second ?: -1,
+            trackId = currentTrack?.id,
+            artworkUri = currentUri,
+        )
     }
 
     private fun publish(preserveError: Boolean = false) {
@@ -291,9 +333,13 @@ class PlaybackController(private val context: Context) {
             nextIds += p.getMediaItemAt(next).mediaId
             next = p.currentTimeline.getNextWindowIndex(next, p.repeatMode, p.shuffleModeEnabled)
         }
+        val artUri = p.mediaMetadata.artworkUri
+            ?: p.currentMediaItem?.mediaMetadata?.artworkUri
+            ?: _state.value.artworkUri
         _state.value = _state.value.copy(
             connected = true,
-            trackId = p.currentMediaItem?.mediaId,
+            trackId = p.currentMediaItem?.mediaId ?: _state.value.trackId,
+            artworkUri = artUri,
             playing = p.isPlaying,
             shuffle = p.shuffleModeEnabled,
             repeat = p.repeatMode,
@@ -307,9 +353,13 @@ class PlaybackController(private val context: Context) {
 
     private fun publishPosition() {
         val p = player ?: return
+        val artUri = p.mediaMetadata.artworkUri
+            ?: p.currentMediaItem?.mediaMetadata?.artworkUri
+            ?: _state.value.artworkUri
         _state.value = _state.value.copy(
             connected = true,
-            trackId = p.currentMediaItem?.mediaId,
+            trackId = p.currentMediaItem?.mediaId ?: _state.value.trackId,
+            artworkUri = artUri,
             playing = p.isPlaying,
             positionMs = p.currentPosition.coerceAtLeast(0),
             durationMs = p.duration.takeIf { it >= 0 } ?: 0,
@@ -319,6 +369,7 @@ class PlaybackController(private val context: Context) {
     data class State(
         val connected: Boolean = false,
         val trackId: String? = null,
+        val artworkUri: Uri? = null,
         val playing: Boolean = false,
         val shuffle: Boolean = false,
         val repeat: Int = Player.REPEAT_MODE_OFF,
@@ -331,5 +382,8 @@ class PlaybackController(private val context: Context) {
         val error: String? = null,
     )
 
-    private companion object { const val TAG = "AuralisPlayback" }
+    private companion object {
+        const val TAG = "AuralisPlayback"
+        const val PREVIOUS_RESTART_MS = 3_000L
+    }
 }

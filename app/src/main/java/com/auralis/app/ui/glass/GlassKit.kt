@@ -365,8 +365,8 @@ fun GlassSearchField(
 
 /** Artwork with glass-style corners and specular border. */
 @Composable
-fun GlassArtwork(track: Track, modifier: Modifier = Modifier, radius: Dp = 18.dp) {
-    ArtworkImage(track, modifier.clip(RoundedCornerShape(radius)).border(1.dp, GlassTokens.BorderBrush, RoundedCornerShape(radius)))
+fun GlassArtwork(track: Track? = null, modifier: Modifier = Modifier, radius: Dp = 18.dp, artUri: Any? = null) {
+    ArtworkImage(track, modifier.clip(RoundedCornerShape(radius)).border(1.dp, GlassTokens.BorderBrush, RoundedCornerShape(radius)), shape = RoundedCornerShape(radius), artUri = artUri)
 }
 
 @Composable

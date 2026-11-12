@@ -140,6 +140,27 @@ interface PlaylistDao {
 
     @Query("UPDATE playlist_entries SET position = :position WHERE entryId = :entryId")
     suspend fun setPosition(entryId: Long, position: Int)
+
+    // --- Streamed YouTube entries (no foreign key to the on-device tracks table) ---
+
+    @Query("SELECT * FROM playlist_yt_entries ORDER BY playlistId, position")
+    fun observeYtEntries(): Flow<List<PlaylistYtEntryEntity>>
+
+    @Query("SELECT * FROM playlist_yt_entries ORDER BY playlistId, position")
+    suspend fun getAllYtEntries(): List<PlaylistYtEntryEntity>
+
+    @Query("SELECT COALESCE(MAX(position), -1) FROM playlist_yt_entries WHERE playlistId = :playlistId")
+    suspend fun maxYtPosition(playlistId: Long): Int
+
+    /** Duplicates are ignored through the unique (playlistId, videoId) index. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertYtEntries(entries: List<PlaylistYtEntryEntity>)
+
+    @Query("DELETE FROM playlist_yt_entries WHERE playlistId = :playlistId AND videoId = :videoId")
+    suspend fun removeYtEntry(playlistId: Long, videoId: String)
+
+    @Query("UPDATE playlist_yt_entries SET position = :position WHERE entryId = :entryId")
+    suspend fun setYtPosition(entryId: Long, position: Int)
 }
 
 @Dao
@@ -239,4 +260,109 @@ interface PlayEventDao {
 
     @Query("DELETE FROM play_events")
     suspend fun clear()
+}
+
+@Dao
+interface YouTubeDao {
+    @Query("SELECT videoId FROM youtube_likes ORDER BY likedAt DESC")
+    fun observeLikedIds(): Flow<List<String>>
+
+    @Query("SELECT * FROM youtube_likes ORDER BY likedAt DESC")
+    fun observeLiked(): Flow<List<YouTubeLikeEntity>>
+
+    @Upsert
+    suspend fun upsertLike(entry: YouTubeLikeEntity)
+
+    @Query("DELETE FROM youtube_likes WHERE videoId = :videoId")
+    suspend fun deleteLike(videoId: String)
+
+    @Query("DELETE FROM youtube_likes")
+    suspend fun clearLikes()
+
+    @Query("SELECT EXISTS(SELECT 1 FROM youtube_likes WHERE videoId = :videoId)")
+    suspend fun isLiked(videoId: String): Boolean
+
+    @Query("SELECT * FROM youtube_recents ORDER BY playedAt DESC LIMIT :limit")
+    fun observeRecents(limit: Int): Flow<List<YouTubeRecentEntity>>
+
+    /** Full history list, newest first, for the History screen. */
+    @Query("SELECT * FROM youtube_recents ORDER BY playedAt DESC")
+    fun observeHistory(): Flow<List<YouTubeRecentEntity>>
+
+    @Query("SELECT playCount FROM youtube_recents WHERE videoId = :videoId")
+    suspend fun playCountOf(videoId: String): Int?
+
+    @Upsert
+    suspend fun upsertRecent(entry: YouTubeRecentEntity)
+
+    @Query("DELETE FROM youtube_recents")
+    suspend fun clearRecents()
+}
+
+/** Offline YouTube downloads saved into the user's music folder. */
+@Dao
+interface DownloadDao {
+    @Query("SELECT * FROM downloads ORDER BY downloadedAt DESC")
+    fun observeAll(): Flow<List<DownloadEntity>>
+
+    @Query("SELECT * FROM downloads WHERE videoId = :videoId")
+    suspend fun get(videoId: String): DownloadEntity?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM downloads WHERE videoId = :videoId)")
+    suspend fun exists(videoId: String): Boolean
+
+    @Query("SELECT videoId FROM downloads")
+    suspend fun allVideoIds(): List<String>
+
+    @Upsert
+    suspend fun upsert(entry: DownloadEntity)
+
+    @Query("DELETE FROM downloads WHERE videoId = :videoId")
+    suspend fun delete(videoId: String)
+}
+
+/** Spotify (Exportify) CSV imports: run state, per-row matches and their candidates. */
+@Dao
+interface SpotifyDao {
+    @Insert
+    suspend fun insertImport(entry: SpotifyImportEntity): Long
+
+    @Query("UPDATE spotify_imports SET state = :state, processed = :processed, matched = :matched, review = :review, failed = :failed WHERE id = :id")
+    suspend fun updateProgress(id: Long, state: String, processed: Int, matched: Int, review: Int, failed: Int)
+
+    @Query("UPDATE spotify_imports SET playlistId = :playlistId WHERE id = :id")
+    suspend fun setPlaylist(id: Long, playlistId: Long?)
+
+    @Query("SELECT * FROM spotify_imports ORDER BY createdAt DESC")
+    fun observeImports(): Flow<List<SpotifyImportEntity>>
+
+    @Query("SELECT * FROM spotify_imports WHERE id = :id")
+    suspend fun getImport(id: Long): SpotifyImportEntity?
+
+    @Query("DELETE FROM spotify_imports WHERE id = :id")
+    suspend fun deleteImport(id: Long)
+
+    @Insert
+    suspend fun insertItems(items: List<SpotifyImportItemEntity>)
+
+    @Upsert
+    suspend fun upsertItem(item: SpotifyImportItemEntity)
+
+    @Query("UPDATE spotify_import_items SET status = :status, matchedVideoId = :videoId, matchedTitle = :title, matchedArtist = :artist WHERE id = :id")
+    suspend fun resolveItem(id: Long, status: String, videoId: String?, title: String?, artist: String?)
+
+    @Query("SELECT * FROM spotify_import_items WHERE importId = :importId AND status IN ('REVIEW', 'FAILED') ORDER BY position")
+    fun observeNeedsReview(importId: Long): Flow<List<SpotifyImportItemEntity>>
+
+    @Query("SELECT * FROM spotify_import_items WHERE importId = :importId ORDER BY position")
+    suspend fun itemsFor(importId: Long): List<SpotifyImportItemEntity>
+
+    @Query("SELECT COALESCE(MAX(position), -1) FROM spotify_import_items WHERE importId = :importId")
+    suspend fun maxItemPosition(importId: Long): Int
+
+    @Query("SELECT * FROM yt_match_cache WHERE queryKey = :key")
+    suspend fun cachedMatch(key: String): YtMatchCacheEntity?
+
+    @Upsert
+    suspend fun putMatch(entry: YtMatchCacheEntity)
 }

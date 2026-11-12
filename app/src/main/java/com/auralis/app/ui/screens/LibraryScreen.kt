@@ -22,6 +22,7 @@ import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
+import com.auralis.app.ui.components.SectionTitle
 
 private val LibraryTabs = listOf("Songs", "Albums", "Artists", "Genres", "Favorites", "Playlists")
 
@@ -36,17 +37,35 @@ fun LibraryScreen(
     onCreatePlaylist: (String) -> Unit, onAddToPlaylist: (Long, Track) -> Unit, modifier: Modifier = Modifier,
     onQueue: (Track) -> Unit = {}, onPlayAlbum: (List<Track>) -> Unit = {}, onQueueAlbum: (List<Track>) -> Unit = {}, onQueuePlaylist: (Long) -> Unit = {}, scanning: Boolean = false, onPlayNext: (Track) -> Unit = onQueue,
     onOpenSettings: () -> Unit = {},
+    youtubeEnabled: Boolean = false,
+    youtubeLiked: List<Track> = emptyList(),
+    youtubePlaylists: List<com.auralis.app.data.youtube.YtPlaylist> = emptyList(),
+    onPlayYouTubeTrack: (Track) -> Unit = onPlay,
+    onOpenYouTubePlaylist: (com.auralis.app.data.youtube.YtPlaylist) -> Unit = {},
+    onRefreshYouTubeLibrary: () -> Unit = {},
+    downloads: List<Track> = emptyList(),
+    onOpenHistory: () -> Unit = {},
+    onOpenPlaylist: (Long) -> Unit = {},
+    onImportSpotify: () -> Unit = {},
+    spotifyImports: List<com.auralis.app.data.db.SpotifyImportEntity> = emptyList(),
+    onOpenImport: (Long) -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassLibraryScreen(tracks, favorites, sources, playlists, currentId, onAddMusic, onScan, onPlay, onFavorite, onCreatePlaylist, onAddToPlaylist, modifier, onQueue, onPlayAlbum, onQueueAlbum, onQueuePlaylist, scanning, onPlayNext, onOpenSettings)
+        GlassLibraryScreen(tracks, favorites, sources, playlists, currentId, onAddMusic, onScan, onPlay, onFavorite, onCreatePlaylist, onAddToPlaylist, modifier, onQueue, onPlayAlbum, onQueueAlbum, onQueuePlaylist, scanning, onPlayNext, onOpenSettings, youtubeEnabled, youtubeLiked, youtubePlaylists, onPlayYouTubeTrack, onOpenYouTubePlaylist, onRefreshYouTubeLibrary, downloads, onOpenHistory, onOpenPlaylist, onImportSpotify, spotifyImports, onOpenImport)
         return
     }
     var selected by remember { mutableIntStateOf(0) }
     var creating by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
+    val tabs = remember(youtubeEnabled) { if (youtubeEnabled) LibraryTabs + listOf("Liked Songs", "Downloads") else LibraryTabs }
+    LaunchedEffect(youtubeEnabled) { if (youtubeEnabled) onRefreshYouTubeLibrary() }
     Column(modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onOpenHistory) { Text("History") }
+        }
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(LibraryTabs.size) { i -> FilterChip(selected == i, { selected = i }, { Text(LibraryTabs[i]) }, shape = CircleShape) }
+            items(tabs.size) { i -> FilterChip(selected == i, { selected = i }, { Text(tabs[i]) }, shape = CircleShape) }
         }
         when (selected) {
             0 -> if (tracks.isEmpty()) EmptyLibraryHero(onAddMusic, onScan, Modifier.weight(1f), scanning, onOpenSettings, sources.isEmpty()) else TrackRows(tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
@@ -81,14 +100,77 @@ fun LibraryScreen(
                 val favoriteTracks = remember(tracks, favorites) { tracks.filter { it.id in favorites } }
                 TrackRows(favoriteTracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
             }
-            else -> {
+            5 -> {
                 Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)) {
                     Button(onClick = { creating = true }) { Text("Create playlist") }
+                    TextButton(onClick = onImportSpotify) { Text("Import Spotify") }
                     playlists.forEach { playlist ->
-                        Row(Modifier.fillMaxWidth().clickable { onQueuePlaylist(playlist.id) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().clickable { onOpenPlaylist(playlist.id) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(playlist.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                             IconButton(onClick = { onQueuePlaylist(playlist.id) }) { Icon(Icons.Rounded.QueueMusic, "Add ${playlist.name} to queue", tint = MaterialTheme.colorScheme.primary) }
                         }
+                    }
+                    if (youtubeEnabled && youtubePlaylists.isNotEmpty()) {
+                        SectionTitle("YouTube Music playlists", Modifier.padding(top = 12.dp))
+                        youtubePlaylists.forEach { playlist ->
+                            Row(Modifier.fillMaxWidth().clickable { onOpenYouTubePlaylist(playlist) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "${playlist.title} · ${playlist.trackCount}",
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                    if (spotifyImports.isNotEmpty()) {
+                        SectionTitle("Spotify imports", Modifier.padding(top = 12.dp))
+                        spotifyImports.forEach { row ->
+                            Row(Modifier.fillMaxWidth().clickable { onOpenImport(row.id) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(row.fileName.removeSuffix(".csv"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        if (row.state == "RUNNING") "Matching ${row.processed}/${row.total}"
+                                        else "${row.matched} matched · ${row.review} to review · ${row.failed} failed",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            6 -> {
+                Column(Modifier.weight(1f).fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Liked Songs", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                        TextButton(onClick = onRefreshYouTubeLibrary) { Text("Refresh") }
+                    }
+                    if (youtubeLiked.isEmpty()) {
+                        Text(
+                            "No liked YouTube songs yet.",
+                            Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        TrackRows(youtubeLiked, favorites, currentId, onPlayYouTubeTrack, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                    }
+                }
+            }
+            7 -> {
+                Column(Modifier.weight(1f).fillMaxWidth()) {
+                    Text("Downloaded", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
+                    if (downloads.isEmpty()) {
+                        Text(
+                            "No downloads yet. Use “Download” on a YouTube song.",
+                            Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        TrackRows(downloads, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
                     }
                 }
             }

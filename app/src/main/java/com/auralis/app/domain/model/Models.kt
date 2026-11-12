@@ -76,7 +76,15 @@ data class Track(
     val artColor: Int?,
     val addedAt: Long,
     val tagError: String?,
-)
+    /** True for streamed sources (YouTube) that are not indexed into the local library. */
+    val isRemote: Boolean = false,
+    /** Remote artwork URL for streamed songs; local tracks keep using [artKey]. */
+    val artworkUrl: String? = null,
+    /** Provider-specific id for streamed songs (the YouTube video id). */
+    val remoteId: String? = null,
+) {
+    val thumbnail: String? get() = artworkUrl
+}
 
 data class Playlist(
     val id: Long,

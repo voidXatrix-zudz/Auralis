@@ -1,11 +1,15 @@
 package com.auralis.app
 
+import android.Manifest
 import android.content.ComponentName
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
@@ -19,10 +23,27 @@ class MainActivity : ComponentActivity() {
     private val viewModel: AppViewModel by viewModels { AppViewModel.Factory((application as AuralisApp).container) }
     private var controllerFuture: ListenableFuture<MediaController>? = null
 
+    // Downloads still run when this is denied (the notification just stays silent), so the result
+    // is intentionally ignored rather than gating anything.
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Let Clerk hand OAuth (Google) results back to this Activity once it is attached.
+        (application as AuralisApp).container.clerkAuth.attachActivity(this)
+        requestNotificationPermissionIfNeeded()
         setContent { AuralisRoot(viewModel) }
+    }
+
+    /** Android 13+ needs an explicit grant before download notifications can be shown. */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) return
+        runCatching { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
     }
 
     override fun onStart() {

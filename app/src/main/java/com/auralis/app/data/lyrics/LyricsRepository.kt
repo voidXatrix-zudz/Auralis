@@ -63,7 +63,8 @@ class LyricsRepository(
         stored.firstOrNull { it.source == LyricsSource.EMBEDDED.name }?.let {
             return@withContext parseAndCache(track.id, it)
         }
-        if (allowDiscovery) {
+        // Remote (streamed) songs have no local file, so only the DB cache and LRCLIB apply.
+        if (allowDiscovery && !track.isRemote) {
             val embedded = EmbeddedLyrics.read(context, track)
             if (embedded != null) {
                 cache(track, LyricsSource.EMBEDDED, embedded.text)
@@ -76,7 +77,7 @@ class LyricsRepository(
             return@withContext parseAndCache(track.id, it)
         }
         if (!allowDiscovery) return@withContext null
-        val discovered = discover(track)
+        val discovered = if (track.isRemote) null else discover(track)
         if (discovered != null) {
             cache(track, LyricsSource.LRC, discovered.first)
             return@withContext parseRaw(track.id, discovered.first, LyricsSource.LRC)
