@@ -59,17 +59,20 @@ fun SearchScreen(
     youtubeResolvingId: String? = null,
     onSearchYouTube: (String) -> Unit = {},
     onPlayYouTube: (Track) -> Unit = {},
+    youtubeEnabled: Boolean = false,
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
         GlassSearchScreen(
             tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, modifier,
             onQueue, sources, onPlayNext, youtubeResults, youtubeLoading, youtubeError,
-            youtubeResolvingId, onSearchYouTube, onPlayYouTube,
+            youtubeResolvingId, onSearchYouTube, onPlayYouTube, youtubeEnabled,
         )
         return
     }
     var query by rememberSaveable { mutableStateOf("") }
-    var youtube by rememberSaveable { mutableStateOf(false) }
+    var youtube by remember { mutableStateOf(false) }
+    // Part S: YouTube is the default source every time Search opens, when the integration is on.
+    LaunchedEffect(youtubeEnabled) { youtube = youtubeEnabled }
     val normalizedQuery = query.trim()
     val sourceNames = remember(sources) { sources.associate { it.id to it.name } }
     // Filter only when the query or library actually changes.
@@ -109,8 +112,12 @@ fun SearchScreen(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            FilterChip(selected = !youtube, onClick = { youtube = false }, label = { Text("Local") })
-            FilterChip(selected = youtube, onClick = { youtube = true }, label = { Text("YouTube") })
+            if (youtubeEnabled) {
+                FilterChip(selected = youtube, onClick = { youtube = true }, label = { Text("YouTube") })
+                FilterChip(selected = !youtube, onClick = { youtube = false }, label = { Text("Local") })
+            } else {
+                FilterChip(selected = true, onClick = {}, label = { Text("Local") })
+            }
         }
 
         if (youtube) {

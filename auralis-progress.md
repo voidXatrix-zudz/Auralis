@@ -18,7 +18,7 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
 - [x] Part P — Fast chunked downloads
 - [x] Part Q — Lyrics page fix + all providers
 - [x] Part R — Library redesign (both themes)
-- [ ] Part S — Search defaults to YouTube
+- [x] Part S — Search defaults to YouTube
 
 ## Notes
 - Part A: single allowed `adb logcat -d AndroidRuntime:E *:S` returned nothing (no device attached); cause found by code reading.
@@ -73,3 +73,5 @@ Worked in order. Each part is compiled (`:app:compileDebugKotlin`) and committed
   - Below: a sort selector ("Custom order"/"Recents"/"A-Z") and a list/grid toggle, both persisted in DataStore (`librarySort`/`libraryGridView` in `AppSettings`). Filter chips Playlists / By me / Artists / Albums; tapping the active chip clears it. "By me" is limited to locally created playlists; Artists/Albums show the existing lists (artist photos reused).
   - Main list: Liked Songs (gradient heart tile, merges YouTube account likes + local favourites), Local Files (folder tile, all local songs sorted/searched), Downloaded (download tile), then every playlist with songs — local, Spotify-imported and (signed in) YouTube account playlists — as a 64 dp mosaic row (bigger cards in grid mode) from the first four distinct covers (single cover when fewer than four), labelled "Playlist • <owner>", with a ⋮ menu (Play / Shuffle / Rename / Delete). Empty playlists are hidden; internal Liked/Local/Downloaded sections avoid new nav routes.
   - `buildLibraryPlaylists(...)` + `LibraryPlaylistRow` are shared by both themes; `AppViewModel.shufflePlaylist` added. Glass theme uses the same layout with glass panels, chips and artwork. The dock and mini-player are untouched.
+- Part S: Search defaults to YouTube.
+  - Source chips are now YouTube first, then Local (both themes). When the YouTube integration is ON, YouTube is selected by default every time the Search screen opens (`remember` state reset on entry + `LaunchedEffect`); switching to Local still filters the on-device library as before. When the integration is OFF, only the Local chip is shown. Results follow the selected chip.

@@ -347,9 +347,12 @@ fun GlassSearchScreen(
     youtubeResolvingId: String? = null,
     onSearchYouTube: (String) -> Unit = {},
     onPlayYouTube: (Track) -> Unit = {},
+    youtubeEnabled: Boolean = false,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    var youtube by rememberSaveable { mutableStateOf(false) }
+    var youtube by remember { mutableStateOf(false) }
+    // Part S: YouTube is the default source every time Search opens, when the integration is on.
+    LaunchedEffect(youtubeEnabled) { youtube = youtubeEnabled }
     val q = query.trim()
     val sourceNames = remember(sources) { sources.associate { it.id to it.name } }
     // Same matching rules as the Normal search screen; recomputed only for a new query/library.
@@ -385,8 +388,12 @@ fun GlassSearchScreen(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            GlassChip("Local", !youtube, { youtube = false })
-            GlassChip("YouTube", youtube, { youtube = true })
+            if (youtubeEnabled) {
+                GlassChip("YouTube", youtube, { youtube = true })
+                GlassChip("Local", !youtube, { youtube = false })
+            } else {
+                GlassChip("Local", true, {})
+            }
         }
         Spacer(Modifier.height(12.dp))
         if (youtube) {

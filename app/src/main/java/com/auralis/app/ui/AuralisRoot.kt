@@ -526,6 +526,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             youtubeResolvingId = youtubeResolvingId,
                                             onSearchYouTube = viewModel::searchYouTube,
                                             onPlayYouTube = viewModel::playYouTube,
+                                            youtubeEnabled = settings.youtubeIntegration,
                                         )
                                         Tab.LIBRARY -> LibraryScreen(
                                             tracks, mergedFavorites, sources, playlists, playbackTrackId, addMusic, scan,
