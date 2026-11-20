@@ -16,6 +16,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 
+// Numeric AudioDeviceInfo type values, inlined so minSdk 26 builds do not reference constants that
+// only exist on API 31+/33+ (lint InlinedApi; a runtime version check does not silence it).
+private const val TYPE_BLE_HEADSET_COMPAT = 26   // AudioDeviceInfo.TYPE_BLE_HEADSET (API 31)
+private const val TYPE_BLE_BROADCAST_COMPAT = 30 // AudioDeviceInfo.TYPE_BLE_BROADCAST (API 33)
+
 /**
  * Name of the Bluetooth audio output currently carrying media, or null when playback is routed
  * elsewhere. Updates live as devices connect and disconnect.
@@ -78,5 +83,5 @@ private fun AudioManager.activeBluetoothOutputName(): String? = runCatching {
 
 private fun AudioDeviceInfo.isBluetoothAudio(): Boolean =
     type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-        type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && type == AudioDeviceInfo.TYPE_BLE_BROADCAST)
+        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && type == TYPE_BLE_HEADSET_COMPAT) ||
+        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && type == TYPE_BLE_BROADCAST_COMPAT)

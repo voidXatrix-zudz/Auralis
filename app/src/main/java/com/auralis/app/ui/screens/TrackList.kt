@@ -36,7 +36,7 @@ import com.auralis.app.ui.components.LocalDownloadActions
     }
     val dl = LocalDownloadActions.current
     if(tracks.isEmpty()) { Box(modifier.fillMaxWidth().padding(36.dp),contentAlignment=Alignment.Center){Text("No matching songs.",color=MaterialTheme.colorScheme.onSurfaceVariant)};return }
-    LazyColumn(modifier=modifier,contentPadding=PaddingValues(bottom=24.dp)) { items(tracks,key={it.id}) { track -> Row(Modifier.fillMaxWidth().clickable{onPlay(track)}.padding(horizontal=12.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+    LazyColumn(modifier=modifier,contentPadding=PaddingValues(bottom=24.dp)) { items(tracks,key={it.id}) { track -> Row(Modifier.fillMaxWidth().animateItem().clickable{onPlay(track)}.padding(horizontal=12.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
         IconButton(onClick={onPlay(track)}) {
             if (resolvingId == track.id) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             else Icon(Icons.Rounded.PlayArrow,contentDescription="Play ${track.title}",tint=if(track.id==currentId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)

@@ -3,6 +3,10 @@ package com.auralis.app.ui.theme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.SliderColors
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SwitchColors
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -21,44 +25,83 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.performance.LocalVisualPerformance
 import com.auralis.app.ui.performance.VisualPerformanceTier
 
-/** Premium Neo-inspired glassmorphic design tokens and specular materials. */
+/**
+ * Glassmorphic design tokens.
+ *
+ * The Glassmorphic theme uses exactly two base colours and nothing else:
+ * Midnight Indigo (#212842) for the background, Vanilla Cream (#F0E7D5) for everything drawn
+ * on top of it. Every other value below is one of those two at a fixed opacity. Components must
+ * read these tokens instead of hardcoding a colour.
+ */
 object GlassTokens {
-    val Obsidian = Color(0xFF07080E)
-    val Surface = Color(0xFF12141C)
-    val Surface2 = Color(0xFF181B26)
-    val SurfaceHigh = Color(0xFF222634)
-    val Silver = Color(0xFFF1F5F9)
-    val SilverMuted = Color(0xFF94A3B8)
-    val Violet = Color(0xFFA78BFA)
-    /** Soft cool-blue companion to the violet accent (deliberately not teal/bright cyan). */
-    val Ice = Color(0xFF8FA8FF)
-    val OnAccent = Color(0xFF07080E)
-    val VioletContainer = Color(0xFF2A2244)
-    val Error = Color(0xFFF87171)
-    val Hairline = Color.White.copy(alpha = 0.12f)
-    val SpecularLight = Color.White.copy(alpha = 0.26f)
-    val SpecularDark = Color.White.copy(alpha = 0.04f)
+    /** Midnight Indigo — the app background and the inverted (on-cream) foreground. */
+    val Indigo = Color(0xFF212842)
 
-    // Reusable specular refraction border brush: crisp top-left catch, soft fade bottom-right
-    val BorderBrush = Brush.linearGradient(
-        listOf(Color.White.copy(alpha = 0.32f), Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.02f), Color.White.copy(alpha = 0.16f)),
-    )
+    /** Vanilla Cream — primary text, icons, borders and the only accent. */
+    val Cream = Color(0xFFF0E7D5)
 
-    // Vibrant neo accent gradient (violet to ice cyan)
-    val AccentGradient = Brush.linearGradient(listOf(Violet, Ice))
+    // Cream at each opacity the palette spells out. Derive new steps from Cream, never re-hex.
+    /** Surface fill over the indigo background. */
+    val Cream6 = Cream.copy(alpha = 0.06f)
+    /** Pressed surface, dividers. */
+    val Cream10 = Cream.copy(alpha = 0.10f)
+    /** 1px surface border. */
+    val Cream14 = Cream.copy(alpha = 0.14f)
+    /** Unfilled part of a slider or progress bar. */
+    val Cream20 = Cream.copy(alpha = 0.20f)
+    /** Text selection background. */
+    val Cream30 = Cream.copy(alpha = 0.30f)
+    /** Tertiary text, hints, placeholders. */
+    val Cream40 = Cream.copy(alpha = 0.40f)
+    /** Inactive icons. */
+    val Cream55 = Cream.copy(alpha = 0.55f)
+    /** Off switches (track border and thumb). */
+    val Cream60 = Cream.copy(alpha = 0.60f)
+    /** Secondary text. */
+    val Cream65 = Cream.copy(alpha = 0.65f)
 
-    // Subtle internal glass sheen
-    val SurfaceSheen = Brush.verticalGradient(
-        listOf(Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.02f), Color.Transparent),
-    )
+    // Material slots cannot carry alpha, so surfaces are pre-composited cream over indigo.
+    val Surface = blend(Cream, Indigo, 0.06f)
+    val Surface2 = blend(Cream, Indigo, 0.10f)
+    val SurfaceHigh = blend(Cream, Indigo, 0.14f)
 
-    // Radii (dp): sm 14, md 20, card 24, lg 26, xl 32
+    // Semantic aliases kept so every existing call site recolours through this one file.
+    val Obsidian = Indigo
+    val Silver = Cream
+    val SilverMuted = Cream65
+    /** The old accent; the palette has no separate accent hue. */
+    val Violet = Cream
+    val Ice = Cream
+    val OnAccent = Indigo
+    val VioletContainer = Surface2
+    val Error = Cream
+    val Hairline = Cream14
+    val SpecularLight = Cream.copy(alpha = 0.26f)
+    val SpecularDark = Cream6
+
+    /** Flat cream hairline: no specular gradient, no off-palette hues. */
+    val BorderBrush = Brush.linearGradient(listOf(Cream14, Cream14))
+
+    /** Primary fill: cream at full strength. */
+    val AccentGradient = Brush.linearGradient(listOf(Cream, Cream))
+
+    /** The old glass sheen added a second white layer; the palette fill is already exact. */
+    val SurfaceSheen = Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
+
     val RadiusSm = 14.dp
     val RadiusMd = 20.dp
     val RadiusCard = 24.dp
     val RadiusLg = 26.dp
     val RadiusXl = 32.dp
 }
+
+/** Opaque composite of [foreground] over [background] at [alpha], for Material colour slots. */
+private fun blend(foreground: Color, background: Color, alpha: Float): Color = Color(
+    red = background.red * (1f - alpha) + foreground.red * alpha,
+    green = background.green * (1f - alpha) + foreground.green * alpha,
+    blue = background.blue * (1f - alpha) + foreground.blue * alpha,
+    alpha = 1f,
+)
 
 /**
  * Live optical parameters for the liquid-glass material. Derived from the persisted
@@ -80,20 +123,23 @@ data class GlassOptics(
 val LocalGlassOptics = staticCompositionLocalOf { GlassOptics() }
 
 private val GlassColorScheme = darkColorScheme(
-    primary = GlassTokens.Violet, onPrimary = GlassTokens.OnAccent,
-    primaryContainer = GlassTokens.VioletContainer, onPrimaryContainer = GlassTokens.Silver,
-    secondary = GlassTokens.Ice, onSecondary = GlassTokens.OnAccent,
-    secondaryContainer = GlassTokens.VioletContainer, onSecondaryContainer = GlassTokens.Silver,
-    tertiary = GlassTokens.Ice, onTertiary = GlassTokens.OnAccent,
-    background = GlassTokens.Obsidian, onBackground = GlassTokens.Silver,
-    surface = GlassTokens.Surface, onSurface = GlassTokens.Silver,
-    surfaceVariant = GlassTokens.Surface2, onSurfaceVariant = GlassTokens.SilverMuted,
-    surfaceTint = GlassTokens.Violet,
-    surfaceContainerLowest = GlassTokens.Obsidian, surfaceContainerLow = GlassTokens.Surface,
+    primary = GlassTokens.Cream, onPrimary = GlassTokens.Indigo,
+    primaryContainer = GlassTokens.Surface2, onPrimaryContainer = GlassTokens.Cream,
+    secondary = GlassTokens.Cream, onSecondary = GlassTokens.Indigo,
+    secondaryContainer = GlassTokens.Surface2, onSecondaryContainer = GlassTokens.Cream,
+    tertiary = GlassTokens.Cream, onTertiary = GlassTokens.Indigo,
+    background = GlassTokens.Indigo, onBackground = GlassTokens.Cream,
+    surface = GlassTokens.Surface, onSurface = GlassTokens.Cream,
+    surfaceVariant = GlassTokens.Surface2, onSurfaceVariant = GlassTokens.Cream65,
+    surfaceTint = GlassTokens.Cream,
+    surfaceContainerLowest = GlassTokens.Indigo, surfaceContainerLow = GlassTokens.Surface,
     surfaceContainer = GlassTokens.Surface, surfaceContainerHigh = GlassTokens.Surface2,
     surfaceContainerHighest = GlassTokens.SurfaceHigh,
-    outline = Color.White.copy(alpha = 0.20f), outlineVariant = GlassTokens.Hairline,
-    error = GlassTokens.Error, onError = Color(0xFF1A0508),
+    outline = GlassTokens.Cream20, outlineVariant = GlassTokens.Cream14,
+    error = GlassTokens.Cream, onError = GlassTokens.Indigo,
+    errorContainer = GlassTokens.Surface2, onErrorContainer = GlassTokens.Cream,
+    inverseSurface = GlassTokens.Cream, inverseOnSurface = GlassTokens.Indigo,
+    inversePrimary = GlassTokens.Indigo,
 )
 
 private val GlassShapes = Shapes(
@@ -104,7 +150,7 @@ private val GlassShapes = Shapes(
     extraLarge = RoundedCornerShape(GlassTokens.RadiusXl),
 )
 
-/** Neo-grotesque geometric typography utilizing bundled Sora and Manrope fonts. */
+/** Typography using the bundled Sora and Manrope fonts. */
 private val GlassTypography: Typography = Typography(
     displayLarge = TextStyle(fontFamily = Sora, fontWeight = FontWeight.Bold, fontSize = 48.sp, letterSpacing = (-0.02).em),
     displayMedium = TextStyle(fontFamily = Sora, fontWeight = FontWeight.Bold, fontSize = 40.sp, letterSpacing = (-0.02).em),
@@ -127,9 +173,41 @@ private val GlassTypography: Typography = Typography(
 val LocalThemeStyle = staticCompositionLocalOf { ThemeStyle.NORMAL }
 
 /**
- * Single entry point. NORMAL calls the existing [AuralisAppTheme] with the same arguments as before,
- * so the Normal theme is untouched.
+ * Switch colours for the active theme. NORMAL returns Material's own defaults unchanged;
+ * GLASSMORPHIC applies the palette rules: ON = cream track + indigo thumb, OFF = indigo track
+ * with a cream-60 border and a cream-60 thumb (so the off switch never vanishes into indigo).
  */
+@Composable
+fun auralisSwitchColors(): SwitchColors =
+    if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
+        SwitchDefaults.colors(
+            checkedThumbColor = GlassTokens.Indigo,
+            checkedTrackColor = GlassTokens.Cream,
+            checkedBorderColor = Color.Transparent,
+            checkedIconColor = GlassTokens.Indigo,
+            uncheckedThumbColor = GlassTokens.Cream60,
+            uncheckedTrackColor = GlassTokens.Indigo,
+            uncheckedBorderColor = GlassTokens.Cream60,
+            uncheckedIconColor = GlassTokens.Cream60,
+        )
+    } else {
+        SwitchDefaults.colors()
+    }
+
+/** Slider colours for the active theme; NORMAL keeps Material defaults. */
+@Composable
+fun auralisSliderColors(): SliderColors =
+    if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
+        SliderDefaults.colors(
+            thumbColor = GlassTokens.Cream,
+            activeTrackColor = GlassTokens.Cream,
+            inactiveTrackColor = GlassTokens.Cream20,
+        )
+    } else {
+        SliderDefaults.colors()
+    }
+
+/** Single entry point: NORMAL delegates to [AuralisAppTheme], GLASSMORPHIC to the glass tokens. */
 @Composable
 fun AuralisTheme(
     themeStyle: ThemeStyle,
@@ -156,11 +234,10 @@ private fun GlassTheme(visualPerformance: VisualPerformanceTier, content: @Compo
     val extras = remember {
         AuralisExtras(
             surface2 = GlassTokens.Surface2,
-            mutedForeground = GlassTokens.SilverMuted,
-            border = GlassTokens.Hairline,
-            // Same translucent smoked glass on every performance profile.
-            glass = GlassTokens.Surface.copy(alpha = 0.72f),
-            glassBorder = GlassTokens.Hairline,
+            mutedForeground = GlassTokens.Cream65,
+            border = GlassTokens.Cream14,
+            glass = GlassTokens.Surface,
+            glassBorder = GlassTokens.Cream14,
             isDark = true,
         )
     }

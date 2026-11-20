@@ -19,6 +19,7 @@ media3 = "1.7.1"
 documentfile = "1.1.0"
 coil = "3.2.0"
 junit = "4.13.2"
+profileinstaller = "1.4.1"
 haze = "1.6.7"
 okhttp = "4.12.0"
 kotlinxSerialization = "1.8.1"
@@ -30,6 +31,10 @@ clerk = "1.4.1"
 # URLDecoder.decode(String, Charset), which NewPipeExtractor calls and which only exists
 # natively on API 33+, so it crashed on Android 12 (API 31).
 desugarJdkLibs = "2.1.5"
+# QuickJS Android binding (dokar3). Ships prebuilt libquickjs.so for arm64-v8a/armeabi-v7a/x86/x86_64
+# and an async-function DSL, which hosts the embedded YouTube.js provider. Pinned to 1.0.15: 1.0.16+
+# require compileSdk 37, which AGP 8.13 cannot target yet. Built against Kotlin 2.4.x, matching us.
+quickjs = "1.0.15"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -37,6 +42,7 @@ androidx-activity-compose = { module = "androidx.activity:activity-compose", ver
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 androidx-documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
+androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
 
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
@@ -73,6 +79,7 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 newpipe-extractor = { module = "com.github.TeamNewPipe:NewPipeExtractor", version.ref = "newPipeExtractor" }
 clerk-android-api = { module = "com.clerk:clerk-android-api", version.ref = "clerk" }
 desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs_nio", version.ref = "desugarJdkLibs" }
+quickjs-kt = { module = "io.github.dokar3:quickjs-kt", version.ref = "quickjs" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

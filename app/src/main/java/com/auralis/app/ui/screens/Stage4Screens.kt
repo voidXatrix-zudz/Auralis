@@ -46,6 +46,8 @@ import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.components.ScreenPadding
 import com.auralis.app.ui.components.SectionTitle
 import com.auralis.app.ui.theme.Auralis
+import com.auralis.app.ui.theme.auralisSliderColors
+import com.auralis.app.ui.theme.auralisSwitchColors
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import kotlin.math.roundToInt
@@ -122,6 +124,7 @@ fun EqualizerScreen(settings: AppSettings, onUpdate: ((AppSettings) -> AppSettin
                         onUpdate { it.copy(eqEnabled = enabled) }
                     },
                     enabled = eqAvailable,
+                    colors = auralisSwitchColors(),
                 )
             }
             effects.message?.let {
@@ -194,6 +197,7 @@ fun EqualizerScreen(settings: AppSettings, onUpdate: ((AppSettings) -> AppSettin
                         },
                         valueRange = band.minMillibels.toFloat()..band.maxMillibels.toFloat(),
                         enabled = settings.eqEnabled,
+                        colors = auralisSliderColors(),
                     )
                 }
             }
@@ -213,6 +217,7 @@ fun EqualizerScreen(settings: AppSettings, onUpdate: ((AppSettings) -> AppSettin
                         onValueChangeFinished = { onUpdate { it.copy(preampDb = preampDb) } },
                         valueRange = 0f..12f,
                         enabled = settings.eqEnabled,
+                        colors = auralisSliderColors(),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Limiter (anti-clip)", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -223,6 +228,7 @@ fun EqualizerScreen(settings: AppSettings, onUpdate: ((AppSettings) -> AppSettin
                                 onUpdate { it.copy(limiterEnabled = enabled) }
                             },
                             enabled = settings.eqEnabled && effects.limiterAvailable,
+                            colors = auralisSwitchColors(),
                         )
                     }
                 }
@@ -241,6 +247,7 @@ fun EqualizerScreen(settings: AppSettings, onUpdate: ((AppSettings) -> AppSettin
                             onUpdate { it.copy(bassBoostEnabled = enabled) }
                         },
                         enabled = bassAvailable,
+                        colors = auralisSwitchColors(),
                     )
                 }
                 if (!bassAvailable) {
@@ -259,6 +266,7 @@ fun EqualizerScreen(settings: AppSettings, onUpdate: ((AppSettings) -> AppSettin
                     onValueChangeFinished = { onUpdate { it.copy(bassDb = bassDb) } },
                     valueRange = 0f..12f,
                     enabled = bassAvailable && settings.bassBoostEnabled,
+                    colors = auralisSliderColors(),
                 )
                 Text(
                     "Strength ${formatDb(bassDb)}",
@@ -280,6 +288,7 @@ fun EqualizerScreen(settings: AppSettings, onUpdate: ((AppSettings) -> AppSettin
                             onUpdate { it.copy(virtualizerEnabled = enabled) }
                         },
                         enabled = virtualizerAvailable,
+                        colors = auralisSwitchColors(),
                     )
                 }
                 if (!virtualizerAvailable) {
@@ -298,6 +307,7 @@ fun EqualizerScreen(settings: AppSettings, onUpdate: ((AppSettings) -> AppSettin
                     onValueChangeFinished = { onUpdate { it.copy(virtualizerStrength = virtualizerStrength.roundToInt()) } },
                     valueRange = 0f..1000f,
                     enabled = virtualizerAvailable && settings.virtualizerEnabled,
+                    colors = auralisSliderColors(),
                 )
                 Text(
                     "Strength ${(virtualizerStrength / 10f).roundToInt()}% · works best with headphones",
@@ -435,7 +445,7 @@ fun MetadataEditorScreen(
         val value = base.copy(title = title, artist = artist, album = album, albumArtist = albumArtist, genre = genre,
             year = year.toIntOrNull(), trackNumber = trackNo.toIntOrNull(), discNumber = discNo.toIntOrNull(),
             composer = composer, artwork = artwork, removeArtwork = removeArtwork)
-        if (Build.VERSION.SDK_INT >= 29 && track.uri.startsWith("content://media/")) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && track.uri.startsWith("content://media/")) {
             runCatching { MediaStore.createWriteRequest(context.contentResolver, listOf(Uri.parse(track.uri))) }
                 .onSuccess { sender -> pendingWrite = value; saving = true; writeRequest.launch(IntentSenderRequest.Builder(sender.intentSender).build()) }
                 .onFailure { error = it.localizedMessage }

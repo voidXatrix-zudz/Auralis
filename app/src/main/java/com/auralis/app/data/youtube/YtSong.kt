@@ -1,8 +1,10 @@
 package com.auralis.app.data.youtube
 
 import com.auralis.app.domain.model.Track
+import kotlinx.serialization.Serializable
 
 /** One song returned by the YouTube Music search. */
+@Serializable
 data class YtSong(
     val videoId: String,
     val title: String,
@@ -10,6 +12,14 @@ data class YtSong(
     val album: String,
     val durationMs: Long,
     val thumbnailUrl: String?,
+    val albumId: String? = null,
+    val artistId: String? = null,
+    val explicit: Boolean = false,
+    /** Music videos are playable as audio, but the Home "Music videos" rows label them differently. */
+    val isVideo: Boolean = false,
+    /** Raw InnerTube `musicVideoType` (`MUSIC_VIDEO_TYPE_ATV`, `..._OMV`, `..._UGC`, ...). */
+    val musicVideoType: String? = null,
+    val shelfTitle: String = "",
 ) {
     val thumbnail: String? get() = thumbnailUrl
 }
@@ -111,11 +121,63 @@ fun YtSong.toTrack(): Track = Track(
     remoteId = videoId,
 )
 
+/**
+ * True when [this] is a song streamed from YouTube Music.
+ *
+ * A downloaded YouTube song also keeps a `yt:` id and a `remoteId`, but its URI points at a local
+ * file. The playback scheme is therefore the decisive test: sending a download down the stream
+ * path would ignore the file on disk and re-download it.
+ */
+fun Track.isYouTubeTrack(): Boolean = uri.startsWith("$YOUTUBE_PLAYBACK_SCHEME://")
+
+/** The queue and start index for one tapped row, plus whether the row was found in the list. */
+data class PlaybackStart(val queue: List<Track>, val index: Int, val found: Boolean)
+
+/**
+ * Chooses what to hand the player for a tap in [list].
+ *
+ * When [track] is not in [list] the old code coerced the missing index to 0 and played a completely
+ * different song. Here the tapped song is played on its own instead, so a mismatched list can never
+ * substitute another track.
+ */
+fun playbackStart(track: Track, list: List<Track>): PlaybackStart {
+    val index = list.indexOfFirst { it.id == track.id }
+    return if (index < 0) PlaybackStart(listOf(track), 0, found = false)
+    else PlaybackStart(list, index, found = true)
+}
+
+/**
+ * Sends a tap in a list that mixes local and YouTube tracks down the matching playback path.
+ * Kept pure so the routing rule can be unit-tested without Compose or a player.
+ */
+inline fun routeLibraryPlay(
+    track: Track,
+    playLocal: (Track) -> Unit,
+    playYouTube: (Track) -> Unit,
+) {
+    if (track.isYouTubeTrack()) playYouTube(track) else playLocal(track)
+}
+
+/** A playable card becomes the same remote [Track] the search/radio pipeline already uses. */
+fun YtCard.toTrack(): Track = YtSong(
+    videoId = videoId.orEmpty(),
+    title = title,
+    artist = subtitle.ifBlank { "Unknown artist" },
+    album = "",
+    durationMs = durationMs,
+    thumbnailUrl = thumbnailUrl,
+    explicit = explicit,
+    isVideo = type == YtItemType.VIDEO,
+    musicVideoType = musicVideoType,
+).toTrack()
+
 const val YOUTUBE_SOURCE_ID = "youtube"
 const val YOUTUBE_TRACK_PREFIX = "yt:"
 
 /** Mirrors a liked-songs (VLLM) result into the Room like table so it works offline. */
-fun YtSong.toYouTubeLikeEntity(): com.auralis.app.data.db.YouTubeLikeEntity =
+fun YtSong.toYouTubeLikeEntity(
+    likedAt: Long = System.currentTimeMillis(),
+): com.auralis.app.data.db.YouTubeLikeEntity =
     com.auralis.app.data.db.YouTubeLikeEntity(
         videoId = videoId,
         title = title,
@@ -123,7 +185,7 @@ fun YtSong.toYouTubeLikeEntity(): com.auralis.app.data.db.YouTubeLikeEntity =
         album = album,
         durationMs = durationMs,
         thumbnailUrl = thumbnailUrl,
-        likedAt = System.currentTimeMillis(),
+        likedAt = likedAt,
     )
 
 /** Browser UA used for InnerTube, extraction and the Media3 OkHttp data source. */

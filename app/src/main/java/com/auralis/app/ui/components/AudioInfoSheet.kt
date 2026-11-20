@@ -60,6 +60,10 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.ReplayGainMode
 import com.auralis.app.domain.model.Track
 import com.auralis.app.playback.AudioEffectsEngine
+import com.auralis.app.domain.model.ThemeStyle
+import com.auralis.app.ui.glass.DialogBackdropBlur
+import com.auralis.app.ui.glass.glassWindowPanelColor
+import com.auralis.app.ui.theme.LocalThemeStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -438,6 +442,7 @@ fun AudioInfoSheet(
     var error by remember(track.id) { mutableStateOf<String?>(null) }
     var copied by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
 
     LaunchedEffect(track.id, settings.eqEnabled, settings.replayGain) {
         report = null
@@ -450,9 +455,10 @@ fun AudioInfoSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = if (glass) glassWindowPanelColor() else MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
     ) {
+        if (glass) DialogBackdropBlur()
         Column(
             Modifier
                 .fillMaxWidth()

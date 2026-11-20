@@ -1,5 +1,8 @@
 package com.auralis.app.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,12 +23,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,6 +51,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +64,7 @@ import androidx.compose.foundation.Image
 import com.auralis.app.R
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.AuthUiState
+import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LocalThemeStyle
 
 /**
@@ -70,6 +77,16 @@ import com.auralis.app.ui.theme.LocalThemeStyle
  * Sign-in itself is handled entirely by Clerk (see [com.auralis.app.data.auth.ClerkAuthRepository]);
  * this screen is just the presentation.
  */
+private val LoginBackdrop = Brush.verticalGradient(
+    0f to Color(0xFF020306),
+    0.45f to Color(0xFF090B12),
+    1f to Color(0xFF020306),
+)
+
+/** Glass paints a flat indigo field; Normal keeps the original AMOLED backdrop. */
+private fun loginBackdrop(glass: Boolean): Brush =
+    if (glass) Brush.linearGradient(listOf(GlassTokens.Indigo, GlassTokens.Indigo)) else LoginBackdrop
+
 @Composable
 fun LoginScreen(
     auth: AuthUiState,
@@ -78,10 +95,43 @@ fun LoginScreen(
     onVerifyCode: (String) -> Unit,
     onEditEmail: () -> Unit,
     onClearError: () -> Unit,
+    onRetryInit: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
-    val accent = MaterialTheme.colorScheme.primary
+    val context = LocalContext.current
+    val accent = if (glass) GlassTokens.Cream else MaterialTheme.colorScheme.primary
+    // Glass uses cream text/steps; Normal keeps the original whites and accent.
+    val onBg = if (glass) GlassTokens.Cream else Color.White
+    val onBgMuted = if (glass) GlassTokens.Cream65 else Color.White.copy(alpha = 0.6f)
+    val onBgSubtle = if (glass) GlassTokens.Cream40 else Color.White.copy(alpha = 0.38f)
+    val subtitleTint = if (glass) GlassTokens.Cream65 else Color.White.copy(alpha = 0.62f)
+    val dividerTint = if (glass) GlassTokens.Cream10 else Color.White.copy(alpha = 0.12f)
+    val fieldColors = if (glass) {
+        OutlinedTextFieldDefaults.colors(
+            focusedTextColor = GlassTokens.Cream,
+            unfocusedTextColor = GlassTokens.Cream,
+            disabledTextColor = GlassTokens.Cream40,
+            focusedContainerColor = GlassTokens.Cream6,
+            unfocusedContainerColor = GlassTokens.Cream6,
+            disabledContainerColor = GlassTokens.Cream6,
+            cursorColor = GlassTokens.Cream,
+            selectionColors = TextSelectionColors(
+                handleColor = GlassTokens.Cream,
+                backgroundColor = GlassTokens.Cream30,
+            ),
+            focusedBorderColor = GlassTokens.Cream,
+            unfocusedBorderColor = GlassTokens.Cream14,
+            disabledBorderColor = GlassTokens.Cream14,
+            focusedLabelColor = GlassTokens.Cream65,
+            unfocusedLabelColor = GlassTokens.Cream40,
+            disabledLabelColor = GlassTokens.Cream40,
+            focusedPlaceholderColor = GlassTokens.Cream40,
+            unfocusedPlaceholderColor = GlassTokens.Cream40,
+        )
+    } else {
+        OutlinedTextFieldDefaults.colors()
+    }
     var email by rememberSaveable { mutableStateOf(auth.email) }
     var code by rememberSaveable { mutableStateOf("") }
     val focus = LocalFocusManager.current
@@ -95,24 +145,20 @@ fun LoginScreen(
     Box(
         modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    0f to Color(0xFF020306),
-                    0.45f to Color(0xFF090B12),
-                    1f to Color(0xFF020306),
-                ),
-            ),
+            .background(loginBackdrop(glass)),
     ) {
-        // Soft accent glow behind the wordmark — pure decoration, no interaction.
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.22f), Color.Transparent),
+        if (!glass) {
+            // Soft accent glow behind the wordmark — pure decoration, no interaction.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(accent.copy(alpha = 0.22f), Color.Transparent),
+                        ),
                     ),
-                ),
-        )
+            )
+        }
 
         Column(
             modifier = Modifier
@@ -135,7 +181,7 @@ fun LoginScreen(
             Text(
                 "Music, reimagined",
                 style = MaterialTheme.typography.titleMedium,
-                color = Color.White.copy(alpha = 0.62f),
+                color = subtitleTint,
             )
             Spacer(Modifier.height(40.dp))
 
@@ -144,23 +190,24 @@ fun LoginScreen(
                 Spacer(Modifier.height(16.dp))
                 Text(
                     "Preparing your session…",
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = onBgMuted,
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(40.dp))
                 return@Column
             }
 
-            AuthCard(glass = glass) {                Text(
+            AuthCard(glass = glass) {
+                Text(
                     "Sign in to continue",
                     style = MaterialTheme.typography.headlineSmall,
-                    color = Color.White,
+                    color = onBg,
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "Sync your profile and keep your listening history across devices.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = onBgMuted,
                 )
                 Spacer(Modifier.height(24.dp))
 
@@ -169,12 +216,21 @@ fun LoginScreen(
                     onClick = { focus.clearFocus(); onGoogleSignIn() },
                     enabled = !auth.busy,
                     shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color(0xFF1F1F1F),
-                        disabledContainerColor = Color.White.copy(alpha = 0.4f),
-                        disabledContentColor = Color(0xFF1F1F1F),
-                    ),
+                    colors = if (glass) {
+                        ButtonDefaults.buttonColors(
+                            containerColor = GlassTokens.Cream,
+                            contentColor = GlassTokens.Indigo,
+                            disabledContainerColor = GlassTokens.Cream20,
+                            disabledContentColor = GlassTokens.Indigo.copy(alpha = 0.55f),
+                        )
+                    } else {
+                        ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Color(0xFF1F1F1F),
+                            disabledContainerColor = Color.White.copy(alpha = 0.4f),
+                            disabledContentColor = Color(0xFF1F1F1F),
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                 ) {
                     GoogleGlyph(Modifier.size(20.dp))
@@ -184,13 +240,13 @@ fun LoginScreen(
 
                 Spacer(Modifier.height(20.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f).height(1.dp).background(Color.White.copy(alpha = 0.12f)))
+                    Box(Modifier.weight(1f).height(1.dp).background(dividerTint))
                     Text(
                         "  or  ",
                         style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = onBgSubtle,
                     )
-                    Box(Modifier.weight(1f).height(1.dp).background(Color.White.copy(alpha = 0.12f)))
+                    Box(Modifier.weight(1f).height(1.dp).background(dividerTint))
                 }
                 Spacer(Modifier.height(20.dp))
 
@@ -210,6 +266,7 @@ fun LoginScreen(
                             onRequestCode(email)
                         }),
                         shape = RoundedCornerShape(14.dp),
+                        colors = fieldColors,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(14.dp))
@@ -217,14 +274,23 @@ fun LoginScreen(
                         onClick = { focus.clearFocus(); onRequestCode(email) },
                         enabled = !auth.busy && email.isNotBlank(),
                         shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = accent),
+                        colors = if (glass) {
+                            ButtonDefaults.buttonColors(
+                                containerColor = GlassTokens.Cream,
+                                contentColor = GlassTokens.Indigo,
+                                disabledContainerColor = GlassTokens.Cream20,
+                                disabledContentColor = GlassTokens.Indigo.copy(alpha = 0.55f),
+                            )
+                        } else {
+                            ButtonDefaults.buttonColors(containerColor = accent)
+                        },
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) {
                         if (auth.busy) {
                             CircularProgressIndicator(
                                 Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
+                                color = if (glass) GlassTokens.Indigo else MaterialTheme.colorScheme.onPrimary,
                             )
                         } else {
                             Text("Email me a sign-in code", fontWeight = FontWeight.SemiBold)
@@ -234,9 +300,9 @@ fun LoginScreen(
                     Text(
                         "Enter the code we sent to",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.6f),
+                        color = onBgMuted,
                     )
-                    Text(auth.email, color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(auth.email, color = onBg, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(14.dp))
                     OutlinedTextField(
                         value = code,
@@ -253,6 +319,7 @@ fun LoginScreen(
                             onVerifyCode(code)
                         }),
                         shape = RoundedCornerShape(14.dp),
+                        colors = fieldColors,
                         modifier = Modifier.fillMaxWidth().focusRequester(codeFocus),
                     )
                     Spacer(Modifier.height(14.dp))
@@ -260,14 +327,23 @@ fun LoginScreen(
                         onClick = { focus.clearFocus(); onVerifyCode(code) },
                         enabled = !auth.busy && code.length >= 4,
                         shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = accent),
+                        colors = if (glass) {
+                            ButtonDefaults.buttonColors(
+                                containerColor = GlassTokens.Cream,
+                                contentColor = GlassTokens.Indigo,
+                                disabledContainerColor = GlassTokens.Cream20,
+                                disabledContentColor = GlassTokens.Indigo.copy(alpha = 0.55f),
+                            )
+                        } else {
+                            ButtonDefaults.buttonColors(containerColor = accent)
+                        },
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) {
                         if (auth.busy) {
                             CircularProgressIndicator(
                                 Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
+                                color = if (glass) GlassTokens.Indigo else MaterialTheme.colorScheme.onPrimary,
                             )
                         } else {
                             Text("Verify and sign in", fontWeight = FontWeight.SemiBold)
@@ -275,19 +351,43 @@ fun LoginScreen(
                     }
                     Spacer(Modifier.height(4.dp))
                     TextButton(onClick = { code = ""; onEditEmail() }, enabled = !auth.busy) {
-                        Text("Use a different email", color = Color.White.copy(alpha = 0.7f))
+                        Text("Use a different email", color = onBg)
                     }
                 }
 
-                if (auth.error != null) {
+                // Init-time failure (Clerk never became ready): show the real reason plus Copy/Retry
+                // so the gate is never a dead end. Other errors keep the plain message.
+                val errorText = auth.error
+                if (errorText != null) {
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        auth.error,
-                        color = MaterialTheme.colorScheme.error,
+                        errorText,
+                        color = if (glass) GlassTokens.Cream else MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    if (auth.initFailed) {
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            TextButton(onClick = {
+                                val clipboard = context
+                                    .getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(
+                                    ClipData.newPlainText("AURALIS sign-in error", errorText),
+                                )
+                            }) {
+                                Text("Copy", color = onBg)
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = onRetryInit, enabled = !auth.busy) {
+                                Text("Retry", color = onBg)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -295,7 +395,109 @@ fun LoginScreen(
             Text(
                 "Secured by Clerk · Your password never touches AURALIS",
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.38f),
+                color = onBgSubtle,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * Shown when no Clerk publishable key was present at build time. Instead of crashing or silently
+ * skipping the gate, AURALIS explains exactly what is missing and offers a way to continue into the
+ * app, so local playback keeps working without an account.
+ */
+@Composable
+fun SignInUnavailable(
+    onContinue: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
+    val accent = if (glass) GlassTokens.Cream else MaterialTheme.colorScheme.primary
+    // Same palette overrides as the sign-in gate; Normal keeps its original values.
+    val onBg = if (glass) GlassTokens.Cream else Color.White
+    val onBgMuted = if (glass) GlassTokens.Cream65 else Color.White.copy(alpha = 0.6f)
+    val onBgSubtle = if (glass) GlassTokens.Cream40 else Color.White.copy(alpha = 0.38f)
+    val subtitleTint = if (glass) GlassTokens.Cream65 else Color.White.copy(alpha = 0.62f)
+    Box(
+        modifier
+            .fillMaxSize()
+            .background(loginBackdrop(glass)),
+    ) {
+        if (!glass) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(accent.copy(alpha = 0.22f), Color.Transparent),
+                        ),
+                    ),
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 28.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Spacer(Modifier.height(24.dp))
+            Image(
+                painter = painterResource(R.drawable.ic_logo_header),
+                contentDescription = "AURALIS",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.height(56.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Music, reimagined",
+                style = MaterialTheme.typography.titleMedium,
+                color = subtitleTint,
+            )
+            Spacer(Modifier.height(40.dp))
+
+            AuthCard(glass = glass) {
+                Text(
+                    "Sign-in isn't configured",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = onBg,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "This build has no Clerk publishable key, so the sign-in gate is switched off. " +
+                        "Add CLERK_PUBLISHABLE_KEY to local.properties and rebuild to enable it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = onBgMuted,
+                )
+                Spacer(Modifier.height(24.dp))
+                Button(
+                    onClick = onContinue,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = if (glass) {
+                        ButtonDefaults.buttonColors(
+                            containerColor = GlassTokens.Cream,
+                            contentColor = GlassTokens.Indigo,
+                        )
+                    } else {
+                        ButtonDefaults.buttonColors(containerColor = accent)
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) {
+                    Text("Continue without an account", fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Spacer(Modifier.height(28.dp))
+            Text(
+                "Sign-in will appear automatically once the key is present.",
+                style = MaterialTheme.typography.labelSmall,
+                color = onBgSubtle,
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(24.dp))
@@ -310,8 +512,8 @@ private fun AuthCard(glass: Boolean, content: @Composable () -> Unit) {
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(if (glass) Color.White.copy(alpha = 0.06f) else Color(0xFF101319))
-            .border(1.dp, Color.White.copy(alpha = if (glass) 0.14f else 0.07f), shape)
+            .background(if (glass) GlassTokens.Cream6 else Color(0xFF101319))
+            .border(1.dp, if (glass) GlassTokens.Cream14 else Color.White.copy(alpha = 0.07f), shape)
             .padding(24.dp),
     ) { Column(Modifier.fillMaxWidth()) { content() } }
 }

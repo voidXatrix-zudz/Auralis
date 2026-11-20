@@ -21,11 +21,11 @@ import com.auralis.app.domain.model.StreamSourceMode
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.PerformanceMode
+import com.auralis.app.logging.AppLog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import java.io.IOException
 
 private val Context.settingsStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -71,10 +71,13 @@ private object Keys {
     val lastUpdateCheckAt = longPreferencesKey("last_update_check_at")
     val skippedUpdateTag = stringPreferencesKey("skipped_update_tag")
     val youtubeIntegration = booleanPreferencesKey("youtube_integration")
-    val youtubeConnectPromptDismissed = booleanPreferencesKey("youtube_connect_prompt_dismissed")
+    val youtubeConnectPromptSnoozeUntil = longPreferencesKey("youtube_connect_prompt_snooze_until")
     val youtubeSyncHistory = booleanPreferencesKey("youtube_sync_history")
     val youtubeSyncLikes = booleanPreferencesKey("youtube_sync_likes")
     val youtubeSyncPlaylists = booleanPreferencesKey("youtube_sync_playlists")
+    val youtubeSongsOnly = booleanPreferencesKey("youtube_songs_only")
+    val liveSyncEnabled = booleanPreferencesKey("live_sync_enabled")
+    val liveSyncLastSyncedAt = longPreferencesKey("live_sync_last_synced_at")
     val lyricsProviderOrder = stringPreferencesKey("lyrics_provider_order")
     val lyricsProvidersEnabled = stringPreferencesKey("lyrics_providers_enabled")
     val metadataProvidersEnabled = stringPreferencesKey("metadata_providers_enabled")
@@ -87,6 +90,7 @@ private object Keys {
     val mobileStreamQuality = intPreferencesKey("mobile_stream_quality")
     val dataSaverEnabled = booleanPreferencesKey("data_saver_enabled")
     val streamSource = stringPreferencesKey("stream_source")
+    val youtubeJsEnabled = booleanPreferencesKey("youtube_js_enabled")
     val reduceBlurAndEffects = booleanPreferencesKey("reduce_blur_effects")
     val downloadLyricsWithSongs = booleanPreferencesKey("download_lyrics_with_songs")
     val cacheSizeMb = intPreferencesKey("cache_size_mb")
@@ -145,17 +149,28 @@ data class ResolverStat(
 class SettingsRepository(private val context: Context) {
 
     val settings: Flow<AppSettings> = context.settingsStore.data
-        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
-        .map { it.toSettings() }
+        .catch { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            // CorruptionException is an IOException, but a type change can also raise
+            // ClassCastException; either way fall back to defaults rather than crashing startup.
+            AppLog.w("Settings", "Couldn't read saved settings (${error.javaClass.simpleName}); using defaults")
+            emit(emptyPreferences())
+        }
+        .map { prefs ->
+            runCatching { prefs.toSettings() }.getOrElse { error ->
+                AppLog.w("Settings", "Settings parse failed (${error.javaClass.simpleName}); using defaults")
+                AppSettings()
+            }
+        }
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         context.settingsStore.edit { prefs -> prefs.write(transform(prefs.toSettings())) }
     }
 
     /** Reads one resolver's persisted rolling stats (Part M). */
-    suspend fun resolverStat(newpipe: Boolean): ResolverStat {
+    suspend fun resolverStat(newpipe: Boolean): ResolverStat = runCatching {
         val prefs = context.settingsStore.data.first()
-        return if (newpipe) {
+        if (newpipe) {
             ResolverStat(
                 avgMs = prefs[Keys.resolverNpAvg] ?: 0L,
                 success = prefs[Keys.resolverNpSuccess] ?: 0,
@@ -168,24 +183,26 @@ class SettingsRepository(private val context: Context) {
                 failure = prefs[Keys.resolverItFailure] ?: 0,
             )
         }
-    }
+    }.getOrDefault(ResolverStat())
 
     /** Persists one resolution outcome for the resolver race (Part M). */
     suspend fun recordResolverResult(newpipe: Boolean, latencyMs: Long, succeeded: Boolean) {
-        context.settingsStore.edit { prefs ->
-            val avgKey = if (newpipe) Keys.resolverNpAvg else Keys.resolverItAvg
-            val okKey = if (newpipe) Keys.resolverNpSuccess else Keys.resolverItSuccess
-            val failKey = if (newpipe) Keys.resolverNpFailure else Keys.resolverItFailure
-            val current = ResolverStat(
-                avgMs = prefs[avgKey] ?: 0L,
-                success = prefs[okKey] ?: 0,
-                failure = prefs[failKey] ?: 0,
-            )
-            val next = current.updated(latencyMs, succeeded)
-            prefs[avgKey] = next.avgMs
-            prefs[okKey] = next.success
-            prefs[failKey] = next.failure
-        }
+        runCatching {
+            context.settingsStore.edit { prefs ->
+                val avgKey = if (newpipe) Keys.resolverNpAvg else Keys.resolverItAvg
+                val okKey = if (newpipe) Keys.resolverNpSuccess else Keys.resolverItSuccess
+                val failKey = if (newpipe) Keys.resolverNpFailure else Keys.resolverItFailure
+                val current = ResolverStat(
+                    avgMs = prefs[avgKey] ?: 0L,
+                    success = prefs[okKey] ?: 0,
+                    failure = prefs[failKey] ?: 0,
+                )
+                val next = current.updated(latencyMs, succeeded)
+                prefs[avgKey] = next.avgMs
+                prefs[okKey] = next.success
+                prefs[failKey] = next.failure
+            }
+        }.onFailure { AppLog.w("Settings", "Couldn't persist resolver stats (${it.javaClass.simpleName})") }
     }
 
     private fun Preferences.toSettings(): AppSettings {
@@ -233,10 +250,13 @@ class SettingsRepository(private val context: Context) {
             lastUpdateCheckAt = (this[Keys.lastUpdateCheckAt] ?: d.lastUpdateCheckAt).coerceAtLeast(0L),
             skippedUpdateTag = this[Keys.skippedUpdateTag] ?: d.skippedUpdateTag,
             youtubeIntegration = this[Keys.youtubeIntegration] ?: d.youtubeIntegration,
-            youtubeConnectPromptDismissed = this[Keys.youtubeConnectPromptDismissed] ?: d.youtubeConnectPromptDismissed,
+            youtubeConnectPromptSnoozeUntil = this[Keys.youtubeConnectPromptSnoozeUntil] ?: d.youtubeConnectPromptSnoozeUntil,
             youtubeSyncHistory = this[Keys.youtubeSyncHistory] ?: d.youtubeSyncHistory,
             youtubeSyncLikes = this[Keys.youtubeSyncLikes] ?: d.youtubeSyncLikes,
             youtubeSyncPlaylists = this[Keys.youtubeSyncPlaylists] ?: d.youtubeSyncPlaylists,
+            youtubeSongsOnly = this[Keys.youtubeSongsOnly] ?: d.youtubeSongsOnly,
+            liveSyncEnabled = this[Keys.liveSyncEnabled] ?: d.liveSyncEnabled,
+            liveSyncLastSyncedAt = (this[Keys.liveSyncLastSyncedAt] ?: d.liveSyncLastSyncedAt).coerceAtLeast(0L),
             lyricsProviderOrder = decodeList(this[Keys.lyricsProviderOrder], d.lyricsProviderOrder),
             lyricsProvidersEnabled = decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled),
             metadataProvidersEnabled = decodeSet(this[Keys.metadataProvidersEnabled], d.metadataProvidersEnabled),
@@ -249,6 +269,7 @@ class SettingsRepository(private val context: Context) {
             mobileStreamQuality = StreamQuality.fromIndex(this[Keys.mobileStreamQuality] ?: d.mobileStreamQuality.ordinal),
             dataSaverEnabled = this[Keys.dataSaverEnabled] ?: d.dataSaverEnabled,
             streamSource = this[Keys.streamSource]?.let { runCatching { StreamSourceMode.valueOf(it) }.getOrNull() } ?: d.streamSource,
+            youtubeJsEnabled = this[Keys.youtubeJsEnabled] ?: d.youtubeJsEnabled,
             reduceBlurAndEffects = this[Keys.reduceBlurAndEffects] ?: d.reduceBlurAndEffects,
             downloadLyricsWithSongs = this[Keys.downloadLyricsWithSongs] ?: d.downloadLyricsWithSongs,
             cacheSizeMb = this[Keys.cacheSizeMb] ?: d.cacheSizeMb,
@@ -297,10 +318,13 @@ class SettingsRepository(private val context: Context) {
         this[Keys.lastUpdateCheckAt] = s.lastUpdateCheckAt
         this[Keys.skippedUpdateTag] = s.skippedUpdateTag
         this[Keys.youtubeIntegration] = s.youtubeIntegration
-        this[Keys.youtubeConnectPromptDismissed] = s.youtubeConnectPromptDismissed
+        this[Keys.youtubeConnectPromptSnoozeUntil] = s.youtubeConnectPromptSnoozeUntil
         this[Keys.youtubeSyncHistory] = s.youtubeSyncHistory
         this[Keys.youtubeSyncLikes] = s.youtubeSyncLikes
         this[Keys.youtubeSyncPlaylists] = s.youtubeSyncPlaylists
+        this[Keys.youtubeSongsOnly] = s.youtubeSongsOnly
+        this[Keys.liveSyncEnabled] = s.liveSyncEnabled
+        this[Keys.liveSyncLastSyncedAt] = s.liveSyncLastSyncedAt
         this[Keys.lyricsProviderOrder] = s.lyricsProviderOrder.joinToString(",")
         this[Keys.lyricsProvidersEnabled] = s.lyricsProvidersEnabled.joinToString(",")
         this[Keys.metadataProvidersEnabled] = s.metadataProvidersEnabled.joinToString(",")
@@ -313,6 +337,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.mobileStreamQuality] = s.mobileStreamQuality.ordinal
         this[Keys.dataSaverEnabled] = s.dataSaverEnabled
         this[Keys.streamSource] = s.streamSource.name
+        this[Keys.youtubeJsEnabled] = s.youtubeJsEnabled
         this[Keys.reduceBlurAndEffects] = s.reduceBlurAndEffects
         this[Keys.downloadLyricsWithSongs] = s.downloadLyricsWithSongs
         this[Keys.cacheSizeMb] = s.cacheSizeMb

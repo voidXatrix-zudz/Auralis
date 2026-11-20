@@ -1,6 +1,5 @@
 package com.auralis.app.ui.update
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +30,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.auralis.app.data.update.UpdateUiState
+import com.auralis.app.ui.glass.DialogBackdropBlur
+import com.auralis.app.ui.glass.glassWindowSurface
+import com.auralis.app.ui.theme.GlassTokens
 import java.util.Locale
 
 /**
@@ -49,17 +51,20 @@ fun UpdateDialog(
     onOpenPage: () -> Unit,
 ) {
     val release = state.available ?: return
-    val secondary = if (glass) Color.White.copy(alpha = 0.68f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val secondary = if (glass) GlassTokens.Cream65 else MaterialTheme.colorScheme.onSurfaceVariant
     val progress = state.downloadProgress
 
     Dialog(onDismissRequest = onLater) {
+        if (glass) DialogBackdropBlur()
+        val shape = RoundedCornerShape(28.dp)
         Surface(
-            shape = RoundedCornerShape(28.dp),
-            color = if (glass) Color(0xF2181920) else MaterialTheme.colorScheme.surface,
-            contentColor = if (glass) Color.White else MaterialTheme.colorScheme.onSurface,
+            shape = shape,
+            color = if (glass) Color.Transparent else MaterialTheme.colorScheme.surface,
+            contentColor = if (glass) GlassTokens.Cream else MaterialTheme.colorScheme.onSurface,
             tonalElevation = if (glass) 0.dp else 4.dp,
-            border = if (glass) BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)) else null,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (glass) Modifier.glassWindowSurface(shape) else Modifier),
         ) {
             Column(Modifier.padding(horizontal = 22.dp, vertical = 20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

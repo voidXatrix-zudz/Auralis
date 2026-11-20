@@ -96,7 +96,6 @@ fun AuralisAppTheme(
         surface2 = p.surface2,
         mutedForeground = p.mutedForeground,
         border = p.border,
-        // Same glass opacity on every performance profile.
         glass = p.surface.copy(alpha = if (darkTheme) 0.72f else 0.78f),
         glassBorder = p.foreground.copy(alpha = 0.12f),
         isDark = darkTheme,

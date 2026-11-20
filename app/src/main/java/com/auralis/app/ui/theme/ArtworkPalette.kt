@@ -1,7 +1,6 @@
 package com.auralis.app.ui.theme
 
 import android.graphics.Bitmap
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -88,9 +87,4 @@ object ArtworkPalette {
         }
         return (channel(24) shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
     }
-
-    fun isSimilar(first: Int, second: Int): Boolean =
-        abs(((first shr 16) and 0xFF) - ((second shr 16) and 0xFF)) < 10 &&
-            abs(((first shr 8) and 0xFF) - ((second shr 8) and 0xFF)) < 10 &&
-            abs((first and 0xFF) - (second and 0xFF)) < 10
 }

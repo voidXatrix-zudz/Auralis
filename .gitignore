@@ -20,3 +20,7 @@ keystore.properties
 
 # All module build directories
 **/build/
+
+# Third-party reference source (read-only, never part of this project)
+reference/
+../reference/

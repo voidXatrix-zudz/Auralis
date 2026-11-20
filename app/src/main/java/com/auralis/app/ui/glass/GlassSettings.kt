@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -55,8 +56,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -69,12 +68,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
@@ -91,7 +91,6 @@ import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
 import com.auralis.app.ui.performance.VisualPerformanceTier
 import com.auralis.app.ui.theme.GlassTokens
-import com.auralis.app.ui.theme.LocalGlassOptics
 import kotlin.math.roundToInt
 
 /**
@@ -342,8 +341,8 @@ private fun ProfileCard(
                 modifier = Modifier
                     .size(56.dp)
                     .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(GlassTokens.Violet.copy(alpha = 0.60f), GlassTokens.Ice.copy(alpha = 0.42f))))
-                    .border(1.dp, GlassTokens.BorderBrush, CircleShape),
+                    .background(GlassTokens.Cream20)
+                    .border(1.dp, GlassTokens.Cream14, CircleShape),
             )
             Column(Modifier.weight(1f).padding(start = 14.dp)) {
                 if (signedIn) {
@@ -387,6 +386,32 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
     val dockGlass = LocalDockGlassStyle.current
     val profile = LocalPerformanceProfile.current
     val performanceReason = LocalPerformanceReason.current
+    val drag = LocalGlassDrag.current
+    val persisted = GlassSettings.fromPercent(
+        settings.dockGlassTransparency,
+        settings.glassClarity,
+        settings.dockGlassBlur,
+    )
+    // Drag-time values are live; the persisted copy is the fallback.
+    val live = drag.value ?: persisted
+    // 0..1 snapped to whole percent, so the transient value is bit-identical to what gets saved.
+    fun snapped(value: Float): Float = (value.coerceIn(0f, 1f) * 100f).roundToInt() / 100f
+    fun preview(transform: (GlassSettings) -> GlassSettings) {
+        drag.value = transform(drag.value ?: persisted)
+    }
+    fun commit() {
+        val next = drag.value ?: persisted
+        onUpdate {
+            it.copy(
+                dockGlassTransparency = GlassMapping.percentToInt(next.dockTransparency),
+                glassClarity = GlassMapping.percentToInt(next.glassClarity),
+                dockGlassBlur = GlassMapping.percentToInt(next.blurStrength),
+            )
+        }
+    }
+    val clarityPercent = (live.glassClarity * 100).roundToInt()
+    val dockPercent = (live.dockTransparency * 100).roundToInt()
+
     SegmentedRow(
         icon = Icons.Rounded.Palette,
         title = "Theme style",
@@ -419,19 +444,32 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
             TintedIcon(Icons.Rounded.Tune)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text("Glass clarity", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-                Text(clarityName(settings.glassClarity), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Glass clarity: all glass surfaces",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            Text("${settings.glassClarity}%", style = MaterialTheme.typography.labelMedium, color = GlassTokens.SilverMuted)
+            Text("$clarityPercent%", style = MaterialTheme.typography.labelMedium, color = GlassTokens.SilverMuted)
         }
         Slider(
-            value = settings.glassClarity / 100f,
-            onValueChange = { value -> onUpdate { it.copy(glassClarity = (value * 100).roundToInt()) } },
+            value = live.glassClarity,
+            onValueChange = { value -> preview { it.copy(glassClarity = snapped(value)) } },
+            onValueChangeFinished = { commit() },
             colors = violetSliderColors(),
             modifier = Modifier.padding(top = 4.dp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(15 to "Tinted", 45 to "Frosted", 85 to "Crystal").forEach { (value, label) ->
-                GlassChip(label, settings.glassClarity == value, { onUpdate { it.copy(glassClarity = value) } })
+            listOf(15 to "Frosted", 50 to "Balanced", 85 to "Clear").forEach { (value, label) ->
+                GlassChip(
+                    label,
+                    clarityPercent == value,
+                    {
+                        preview { it.copy(glassClarity = value / 100f) }
+                        commit()
+                    },
+                    blur = false,
+                )
             }
         }
     }
@@ -442,22 +480,23 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text("Dock transparency", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                 Text(
-                    "Tint only. Icons, labels and the capsule stay fully opaque.",
+                    "Dock transparency: dock only",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text("${settings.dockGlassTransparency}%", style = MaterialTheme.typography.labelMedium, color = GlassTokens.SilverMuted)
+            Text("$dockPercent%", style = MaterialTheme.typography.labelMedium, color = GlassTokens.SilverMuted)
         }
         Slider(
-            value = settings.dockGlassTransparency / 100f,
-            onValueChange = { value -> onUpdate { it.copy(dockGlassTransparency = (value * 100).roundToInt()) } },
+            value = live.dockTransparency,
+            onValueChange = { value -> preview { it.copy(dockTransparency = snapped(value)) } },
+            onValueChangeFinished = { commit() },
             colors = violetSliderColors(),
             modifier = Modifier.padding(top = 4.dp),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Nearly clear", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Solid tint", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Solid", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Clear", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     Divider()
@@ -465,17 +504,21 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
     ToggleRow(
         icon = Icons.Rounded.AutoAwesome,
         title = "Live blur",
-        description = if (blurSupported) "Blur the content scrolling behind the glass" else "Needs Android 12 or newer",
-        checked = settings.dockGlassBlur > 0 && blurSupported,
+        description = if (blurSupported) "Live blur: blur strength on every glass surface" else "Needs Android 12 or newer",
+        checked = live.blurStrength > 0f && blurSupported,
         onCheckedChange = { enabled ->
-            if (blurSupported) onUpdate { it.copy(dockGlassBlur = if (enabled) 60 else 0) }
+            if (blurSupported) {
+                preview { it.copy(blurStrength = if (enabled) GlassMapping.DEFAULT_BLUR_STRENGTH else 0f) }
+                commit()
+            }
         },
         showDivider = false,
     )
     Column(Modifier.padding(horizontal = 14.dp)) {
         Slider(
-            value = settings.dockGlassBlur / 100f,
-            onValueChange = { value -> onUpdate { it.copy(dockGlassBlur = (value * 100).roundToInt()) } },
+            value = live.blurStrength,
+            onValueChange = { value -> preview { it.copy(blurStrength = snapped(value)) } },
+            onValueChangeFinished = { commit() },
             enabled = blurSupported,
             colors = violetSliderColors(),
             modifier = Modifier.padding(top = 0.dp),
@@ -483,7 +526,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Off", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                "${(settings.dockGlassBlur * 0.4f).roundToInt()}dp chosen · ${dockGlass.blurDp.roundToInt()}dp active",
+                "${(live.blurStrength * GlassMapping.MAX_BLUR_DP).roundToInt()}dp chosen · ${dockGlass.blurDp.roundToInt()}dp active",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -499,6 +542,40 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
             blurDp = dockGlass.blurDp,
             outlines = dockGlass.outlines,
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    Divider()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(
+                role = Role.Button,
+                onClick = {
+                    drag.value = null
+                    onUpdate {
+                        it.copy(
+                            dockGlassTransparency = GlassMapping.DEFAULT_DOCK_TRANSPARENCY_PERCENT,
+                            glassClarity = GlassMapping.DEFAULT_GLASS_CLARITY_PERCENT,
+                            dockGlassBlur = GlassMapping.DEFAULT_BLUR_PERCENT,
+                        )
+                    }
+                },
+            )
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TintedIcon(Icons.Rounded.Refresh)
+        Text(
+            "Reset to default",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(start = 12.dp),
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            "${GlassMapping.DEFAULT_DOCK_TRANSPARENCY_PERCENT}% · ${GlassMapping.DEFAULT_GLASS_CLARITY_PERCENT}% · ${GlassMapping.DEFAULT_BLUR_PERCENT}%",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
     Divider()
@@ -604,6 +681,7 @@ private fun PlaybackSection(
                 settings.replayGain.name.lowercase().replaceFirstChar { c -> c.uppercase() },
                 selected = false,
                 onClick = { replayOpen = true },
+                blur = false,
             )
             DropdownMenu(replayOpen, { replayOpen = false }) {
                 ReplayGainMode.entries.forEach { mode ->
@@ -845,11 +923,11 @@ private fun TintedIcon(icon: ImageVector) {
         Modifier
             .size(32.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(Brush.linearGradient(listOf(GlassTokens.Violet.copy(alpha = 0.30f), GlassTokens.Ice.copy(alpha = 0.18f))))
-            .border(1.dp, GlassTokens.BorderBrush, RoundedCornerShape(10.dp)),
+            .background(GlassTokens.Cream10)
+            .border(1.dp, GlassTokens.Cream14, RoundedCornerShape(10.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, null, tint = GlassTokens.Silver, modifier = Modifier.size(17.dp))
+        Icon(icon, null, tint = GlassTokens.Cream, modifier = Modifier.size(17.dp))
     }
 }
 
@@ -860,7 +938,7 @@ private fun Divider() {
             .fillMaxWidth()
             .padding(start = 58.dp)
             .height(1.dp)
-            .background(Color.White.copy(alpha = 0.07f)),
+            .background(GlassTokens.Cream10),
     )
 }
 
@@ -879,18 +957,34 @@ private fun InfoNote(text: String) {
 
 @Composable
 private fun GlassSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
-    Switch(
-        checked = checked,
-        onCheckedChange = onChange,
-        colors = SwitchDefaults.colors(
-            checkedThumbColor = GlassTokens.Silver,
-            checkedTrackColor = GlassTokens.Violet,
-            checkedBorderColor = GlassTokens.Violet.copy(alpha = 0.55f),
-            uncheckedThumbColor = GlassTokens.SilverMuted,
-            uncheckedTrackColor = Color.White.copy(alpha = 0.10f),
-            uncheckedBorderColor = Color.White.copy(alpha = 0.14f),
-        ),
+    val trackWidth = 46.dp
+    val trackHeight = 26.dp
+    val thumbSize = 20.dp
+    val inset = 3.dp
+    val thumbOffset by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (checked) trackWidth - thumbSize - inset else inset,
+        animationSpec = spring(dampingRatio = 0.80f),
+        label = "glassSwitchThumb",
     )
+    Box(
+        Modifier
+            .size(width = trackWidth, height = trackHeight)
+            .clip(CircleShape)
+            // ON: cream track, indigo thumb. OFF: indigo track, 1.5dp cream-60 border and thumb.
+            .background(if (checked) GlassTokens.Cream else GlassTokens.Indigo)
+            .border(1.5.dp, if (checked) Color.Transparent else GlassTokens.Cream60, CircleShape)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier
+                // Deferred to layout: the thumb spring no longer recomposes it every frame.
+                .offset { IntOffset(thumbOffset.roundToPx(), 0) }
+                .size(thumbSize)
+                .clip(CircleShape)
+                .background(if (checked) GlassTokens.Indigo else GlassTokens.Cream60),
+        )
+    }
 }
 
 @Composable
@@ -899,7 +993,7 @@ private fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect:
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.05f))
+            .background(GlassTokens.Cream6)
             .padding(3.dp),
     ) {
         options.forEach { (value, label) ->
@@ -908,13 +1002,8 @@ private fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect:
                 Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(11.dp))
-                    .background(
-                        if (active) {
-                            Brush.linearGradient(listOf(GlassTokens.Violet.copy(alpha = 0.42f), GlassTokens.Ice.copy(alpha = 0.22f)))
-                        } else {
-                            Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
-                        },
-                    )
+                    // Selected segment inverts to a cream fill with indigo text.
+                    .background(if (active) GlassTokens.Cream else Color.Transparent)
                     .clickable { onSelect(value) }
                     .padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center,
@@ -923,7 +1012,7 @@ private fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect:
                     label,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (active) GlassTokens.Silver else GlassTokens.SilverMuted,
+                    color = if (active) GlassTokens.Indigo else GlassTokens.Cream65,
                 )
             }
         }
@@ -962,9 +1051,9 @@ private fun SliderRow(
 
 @Composable
 private fun violetSliderColors() = SliderDefaults.colors(
-    thumbColor = GlassTokens.Silver,
-    activeTrackColor = GlassTokens.Violet,
-    inactiveTrackColor = Color.White.copy(alpha = 0.12f),
+    thumbColor = GlassTokens.Cream,
+    activeTrackColor = GlassTokens.Cream,
+    inactiveTrackColor = GlassTokens.Cream20,
 )
 
 @Composable
@@ -973,7 +1062,7 @@ private fun DockGlassPreview(tintAlpha: Float, blurDp: Float, outlines: Boolean,
         modifier
             .height(112.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(Brush.linearGradient(listOf(GlassTokens.Violet.copy(alpha = 0.55f), GlassTokens.Ice.copy(alpha = 0.42f), Color(0xFF171A24)))),
+            .background(GlassTokens.Indigo),
     ) {
         // Blurred "artwork" behind the glass: its softness tracks the real effective radius.
         Box(
@@ -982,7 +1071,7 @@ private fun DockGlassPreview(tintAlpha: Float, blurDp: Float, outlines: Boolean,
                 .size(64.dp)
                 .blur(blurDp.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.18f)),
+                .background(GlassTokens.Cream20),
         )
         Box(
             Modifier
@@ -991,7 +1080,7 @@ private fun DockGlassPreview(tintAlpha: Float, blurDp: Float, outlines: Boolean,
                 .size(44.dp)
                 .blur(blurDp.dp)
                 .clip(CircleShape)
-                .background(GlassTokens.Obsidian.copy(alpha = 0.35f)),
+                .background(GlassTokens.Cream6),
         )
         Row(
             Modifier
@@ -1001,17 +1090,16 @@ private fun DockGlassPreview(tintAlpha: Float, blurDp: Float, outlines: Boolean,
                 .height(44.dp)
                 .shadowSoft()
                 .clip(CircleShape)
-                .background(GlassTokens.Surface.copy(alpha = tintAlpha.coerceIn(0.04f, 0.88f)))
-                .background(GlassTokens.SurfaceSheen)
-                .then(if (outlines) Modifier.border(1.dp, GlassTokens.BorderBrush, CircleShape) else Modifier)
+                .background(GlassTokens.Cream6)
+                .then(if (outlines) Modifier.border(1.dp, GlassTokens.Cream14, CircleShape) else Modifier)
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Rounded.AutoAwesome, null, tint = GlassTokens.Silver, modifier = Modifier.size(16.dp))
+            Icon(Icons.Rounded.AutoAwesome, null, tint = GlassTokens.Cream, modifier = Modifier.size(16.dp))
             Text(
                 "Live dock preview",
                 style = MaterialTheme.typography.labelMedium,
-                color = GlassTokens.Silver,
+                color = GlassTokens.Cream,
                 modifier = Modifier.padding(start = 8.dp),
             )
         }

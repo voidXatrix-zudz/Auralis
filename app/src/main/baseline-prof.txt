@@ -1,0 +1,50 @@
+# AURALIS baseline profile (hand-authored starting point).
+#
+# This tells ART which classes to AOT-compile so the first launch and the first scroll of each
+# hot screen are not interpreted. It covers the paths named in the performance brief: app start,
+# Home scroll, tab switches, opening Settings and opening Now Playing.
+#
+# IMPORTANT: this file is a *seed* written without a device. Regenerate it on real hardware with
+# the Baseline Profile Generator (or the androidx.baselineprofile plugin), which emits method
+# rules with H/S/P flags, and commit the generated profile before shipping, so it reflects measured
+# hot paths rather than these estimates.
+#
+# Format note: a class rule is a bare class descriptor. H/S/P flags are only valid on *method*
+# rules (descriptors followed by "->method()"), so they are not used here.
+
+# --- Startup -----------------------------------------------------------------------------------
+Lcom/auralis/app/AuralisApp;
+Lcom/auralis/app/MainActivity;
+Lcom/auralis/app/ui/AuralisRootKt;
+Lcom/auralis/app/ui/AppViewModel;
+Lcom/auralis/app/ui/DatabaseRecoveryScreenKt;
+Lcom/auralis/app/data/settings/SettingsRepository;
+
+# --- Theme + navigation ------------------------------------------------------------------------
+Lcom/auralis/app/ui/theme/ThemeKt;
+Lcom/auralis/app/ui/nav/NavState;
+
+# --- Dock + mini player (always on screen) -----------------------------------------------------
+Lcom/auralis/app/ui/components/AppDockKt;
+
+# --- Tab content (Home scroll, Library, Search, Explore) ---------------------------------------
+Lcom/auralis/app/ui/screens/HomeScreenKt;
+Lcom/auralis/app/ui/screens/LibraryScreenKt;
+Lcom/auralis/app/ui/screens/SearchScreenKt;
+Lcom/auralis/app/ui/screens/ExploreScreenKt;
+Lcom/auralis/app/ui/screens/YouTubeHomeScreenKt;
+Lcom/auralis/app/ui/glass/GlassScreensKt;
+Lcom/auralis/app/ui/glass/GlassListsKt;
+Lcom/auralis/app/ui/glass/GlassHistoryKt;
+
+# --- Settings ----------------------------------------------------------------------------------
+Lcom/auralis/app/ui/settings/SettingsHubKt;
+Lcom/auralis/app/ui/settings/SettingsSubPagesKt;
+Lcom/auralis/app/ui/glass/GlassSettingsKt;
+
+# --- Now Playing -------------------------------------------------------------------------------
+Lcom/auralis/app/ui/screens/NowPlayingScreenKt;
+Lcom/auralis/app/ui/glass/GlassNowPlayingKt;
+
+# --- Artwork (every list tile) -----------------------------------------------------------------
+Lcom/auralis/app/ui/components/ArtworkImageKt;

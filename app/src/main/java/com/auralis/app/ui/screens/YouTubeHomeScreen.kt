@@ -32,7 +32,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.auralis.app.data.youtube.HomeRowStyle
 import com.auralis.app.data.youtube.YtCard
+import com.auralis.app.data.youtube.YtItemType
+import com.auralis.app.data.youtube.cardDisplay
+import com.auralis.app.data.youtube.toTrack
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.HomeCategory
@@ -40,6 +44,9 @@ import com.auralis.app.ui.HomeRow
 import com.auralis.app.ui.HomeUiState
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.ArtworkImage
+import com.auralis.app.ui.glass.DialogBackdropBlur
+import com.auralis.app.ui.glass.GlassChip
+import com.auralis.app.ui.glass.glassWindowPanelColor
 import com.auralis.app.ui.theme.LocalThemeStyle
 
 /**
@@ -74,6 +81,7 @@ fun YouTubeHomeScreen(
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onSwitchAccount: () -> Unit,
+    onOpenExplore: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // Auto-load on first render; loadHome() is a no-op when content for this category is cached.
@@ -113,6 +121,13 @@ fun YouTubeHomeScreen(
             item(key = "categories") {
                 CategoryChips(state.category, onSelectCategory)
             }
+            // A failed recommendations fetch is an error with a retry, not an empty account. Quick
+            // Picks (when they loaded) still render below this line.
+            if (state.homeError != null) {
+                item(key = "home-error") {
+                    HomeErrorBanner(state.homeError, state.refreshing, onRefresh)
+                }
+            }
             if (rows.isNotEmpty()) {
                 rows.forEach { row ->
                     item(key = "row:${row.id}") {
@@ -123,11 +138,14 @@ fun YouTubeHomeScreen(
                             onOpenCard = onOpenCard,
                             onLike = onLike,
                             onLoadMore = onLoadMore,
+                            onOpenExplore = onOpenExplore,
                         )
                     }
                 }
             } else if (state.refreshing || state.rows.values.any { it.loading }) {
                 item(key = "skeleton") { HomeSkeleton() }
+            } else if (state.homeError != null) {
+                // The banner above already explains the failure and offers Retry.
             } else {
                 item(key = "empty") { HomeEmpty(onRefresh) }
             }
@@ -146,6 +164,22 @@ fun YouTubeHomeScreen(
             onLike = onLike,
             onDismiss = onCloseCollection,
         )
+    }
+}
+
+@Composable
+private fun HomeErrorBanner(message: String, refreshing: Boolean, onRetry: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            message,
+            Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+        TextButton(onClick = onRetry, enabled = !refreshing) { Text("Retry") }
     }
 }
 
@@ -254,16 +288,22 @@ private fun AccountAvatar(accountName: String?, avatarUrl: String?) {
 
 @Composable
 private fun CategoryChips(selected: HomeCategory, onSelect: (HomeCategory) -> Unit) {
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(HomeCategory.entries) { category ->
-            FilterChip(
-                selected = category == selected,
-                onClick = { onSelect(category) },
-                label = { Text(category.label) },
-            )
+            if (glass) {
+                // Category tabs are the only material on the raw backdrop, so they blur it too.
+                GlassChip(category.label, category == selected, { onSelect(category) })
+            } else {
+                FilterChip(
+                    selected = category == selected,
+                    onClick = { onSelect(category) },
+                    label = { Text(category.label) },
+                )
+            }
         }
     }
 }
@@ -276,9 +316,14 @@ private fun HomeSection(
     onOpenCard: (YtCard) -> Unit,
     onLike: (Track) -> Unit,
     onLoadMore: (String) -> Unit,
+    onOpenExplore: () -> Unit,
 ) {
     Column {
-        SectionHeader(row.title, row.subtitle)
+        SectionHeader(
+            title = row.title,
+            subtitle = row.subtitle,
+            onShowAll = if (row.showAll) onOpenExplore else null,
+        )
         val empty = row.tracks.isEmpty() && row.cards.isEmpty()
         when {
             row.loading && empty -> RowPlaceholder(glass)
@@ -288,13 +333,24 @@ private fun HomeSection(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (row.cards.isNotEmpty()) {
-                    items(row.cards, key = { it.browseId ?: it.videoId ?: it.title }) { card ->
-                        ArtistCard(card, onOpenCard)
-                    }
-                } else {
+                if (row.tracks.isNotEmpty()) {
                     items(row.tracks, key = { it.id }) { track ->
                         TrackCard(track, glass, onPlayTrack, onLike)
+                    }
+                } else {
+                    items(row.cards, key = { it.videoId ?: it.browseId ?: it.title }) { card ->
+                        when (row.style) {
+                            HomeRowStyle.CIRCLE_CARDS -> ArtistCard(card, onOpenCard)
+                            HomeRowStyle.WIDE_CARDS -> WideVideoCard(card, glass, onOpenCard)
+                            HomeRowStyle.LARGE_CARDS -> LargePickCard(card, glass, onOpenCard)
+                            HomeRowStyle.SQUARE_TILES -> CollectionCard(card, onOpenCard)
+                            HomeRowStyle.TRACKS -> TrackCard(card.toTrack(), glass, onPlayTrack, onLike)
+                            HomeRowStyle.AUTO -> when {
+                                card.videoId != null -> TrackCard(card.toTrack(), glass, onPlayTrack, onLike)
+                                card.type == YtItemType.ARTIST -> ArtistCard(card, onOpenCard)
+                                else -> CollectionCard(card, onOpenCard)
+                            }
+                        }
                     }
                 }
                 if (row.hasMore) {
@@ -306,23 +362,31 @@ private fun HomeSection(
 }
 
 @Composable
-private fun SectionHeader(title: String, subtitle: String?) {
-    Column(Modifier.padding(horizontal = 16.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(top = 22.dp, bottom = if (subtitle == null) 12.dp else 2.dp),
-        )
-        if (subtitle != null) {
+private fun SectionHeader(title: String, subtitle: String?, onShowAll: (() -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Column(Modifier.weight(1f)) {
             Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(bottom = 12.dp),
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(top = 22.dp, bottom = if (subtitle == null) 12.dp else 2.dp),
             )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+            }
+        }
+        if (onShowAll != null) {
+            TextButton(onClick = onShowAll) { Text("Show all") }
         }
     }
 }
@@ -382,6 +446,143 @@ private fun TrackCard(
     }
 }
 
+/** Large Top Picks card: artwork, eyebrow ("New from <artist>"), title and release line. */
+@Composable
+private fun LargePickCard(card: YtCard, glass: Boolean, onOpen: (YtCard) -> Unit) {
+    val shape = RoundedCornerShape(22.dp)
+    val display = cardDisplay(card)
+    Column(
+        Modifier
+            .width(232.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable { onOpen(card) }
+            .padding(bottom = 10.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(176.dp)
+                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            if (!card.thumbnailUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = card.thumbnailUrl,
+                    contentDescription = card.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (glass) {
+                // Readability over artwork without inventing a colour: the theme's own surface.
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, MaterialTheme.colorScheme.surface.copy(alpha = 0.35f)),
+                        ),
+                    ),
+                )
+            }
+            if (card.videoId != null) {
+                PlayBadge(Modifier.align(Alignment.BottomEnd).padding(10.dp))
+            }
+        }
+        if (display.eyebrow.isNotBlank()) {
+            Text(
+                display.eyebrow,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp),
+            )
+        }
+        Text(
+            display.title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = if (display.eyebrow.isBlank()) 10.dp else 2.dp),
+        )
+        if (display.detail.isNotBlank()) {
+            Text(
+                display.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 2.dp),
+            )
+        }
+    }
+}
+
+/** 16:9 music-video card. Tapping plays the audio stream through the normal YouTube path. */
+@Composable
+private fun WideVideoCard(card: YtCard, glass: Boolean, onOpen: (YtCard) -> Unit) {
+    val shape = RoundedCornerShape(18.dp)
+    Column(
+        Modifier
+            .width(248.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable { onOpen(card) }
+            .padding(bottom = 10.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(139.dp)
+                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            if (!card.thumbnailUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = card.thumbnailUrl,
+                    contentDescription = card.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            PlayBadge(Modifier.align(Alignment.Center))
+        }
+        Text(
+            card.title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
+        )
+        Text(
+            card.subtitle.ifBlank { "Music video" },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 2.dp),
+        )
+    }
+}
+
+@Composable
+private fun PlayBadge(modifier: Modifier = Modifier) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier,
+    ) {
+        Icon(
+            Icons.Rounded.PlayArrow,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.padding(6.dp).size(20.dp),
+        )
+    }
+}
+
 /** Circular artist card; tapping opens the artist's songs in a sheet. */
 @Composable
 private fun ArtistCard(card: YtCard, onOpen: (YtCard) -> Unit) {
@@ -413,6 +614,52 @@ private fun ArtistCard(card: YtCard, onOpen: (YtCard) -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Square card for albums, playlists and moods; tapping opens the collection sheet. */
+@Composable
+private fun CollectionCard(card: YtCard, onOpen: (YtCard) -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        Modifier
+            .width(156.dp)
+            .clip(shape)
+            .clickable { onOpen(card) }
+            .padding(2.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(156.dp)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            if (!card.thumbnailUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = card.thumbnailUrl,
+                    contentDescription = card.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        Text(
+            card.title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp),
+        )
+        Text(
+            card.subtitle.ifBlank { card.type.name.lowercase().replaceFirstChar { it.uppercase() } },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 2.dp, end = 2.dp, bottom = 2.dp),
         )
     }
 }
@@ -525,7 +772,13 @@ private fun CollectionSheet(
     artistImageUrl: String? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = if (glass) glassWindowPanelColor() else MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        if (glass) DialogBackdropBlur()
         if (artistBrowseId != null) {
             Row(
                 Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),

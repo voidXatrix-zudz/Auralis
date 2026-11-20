@@ -1,7 +1,7 @@
 package com.auralis.app.domain.model
 
 /** Which resolver stack the player prefers for YouTube streams (Part H/M). */
-enum class StreamSourceMode { AUTO, NEWPIPE, INNERTUBE }
+enum class StreamSourceMode { AUTO, NEWPIPE, INNERTUBE, YOUTUBEJS }
 
 /**
  * A network streaming quality tier. [approxKbps] is the target used to pick the closest audio-only

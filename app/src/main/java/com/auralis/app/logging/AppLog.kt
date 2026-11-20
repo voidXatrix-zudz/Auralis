@@ -45,6 +45,9 @@ object AppLog {
     private var directory: File? = null
     private var installedHandler = false
 
+    /** Identical consecutive lines collapse to `line (xN)` instead of flooding the ring. */
+    private val collapser = ConsecutiveCollapser()
+
     fun init(context: Context) {
         synchronized(lock) {
             if (directory == null) {
@@ -76,6 +79,9 @@ object AppLog {
         val dir = directory ?: return emptyList()
         val entries = ArrayList<LogEntry>()
         synchronized(lock) {
+            // A collapsed run is only written when the next different line arrives; flush it first so
+            // the viewer/export never hides the newest line.
+            flushPendingLocked(dir)
             listOf(File(dir, PREVIOUS), File(dir, CURRENT)).forEach { file ->
                 if (file.exists()) runCatching { parse(file.readLines(), entries) }
             }
@@ -86,9 +92,16 @@ object AppLog {
     fun clear() {
         val dir = directory ?: return
         synchronized(lock) {
+            collapser.flush()
             runCatching { File(dir, CURRENT).delete() }
             runCatching { File(dir, PREVIOUS).delete() }
         }
+    }
+
+    /** Writes any collapsed-but-unwritten line now (called before reading, clearing and exporting). */
+    fun flush() {
+        val dir = directory ?: return
+        synchronized(lock) { flushPendingLocked(dir) }
     }
 
     private fun write(level: Char, tag: String, message: String, error: Throwable?) {
@@ -99,14 +112,30 @@ object AppLog {
             append(dateFormat.get()!!.format(Date()))
             append(' ').append(level).append('/').append(tag).append(": ").append(safeMessage)
             if (!safeStack.isNullOrBlank()) append('\n').append(safeStack.trimEnd())
-            append('\n')
         }
+        val key = "$level/$tag/$safeMessage/${safeStack.orEmpty()}"
         synchronized(lock) {
-            runCatching {
-                val file = File(dir, CURRENT)
-                if (file.length() + line.length > MAX_BYTES) rotate(dir)
-                file.appendText(line)
+            // Errors and crashes must reach the file even if the process dies immediately.
+            if (level == 'E' || level == 'F') {
+                flushPendingLocked(dir)
+                appendLocked(dir, line)
+            } else {
+                collapser.add(key, line)?.let { run ->
+                    appendLocked(dir, ConsecutiveCollapser.render(run))
+                }
             }
+        }
+    }
+
+    private fun flushPendingLocked(dir: File) {
+        collapser.flush()?.let { run -> appendLocked(dir, ConsecutiveCollapser.render(run)) }
+    }
+
+    private fun appendLocked(dir: File, line: String) {
+        runCatching {
+            val file = File(dir, CURRENT)
+            if (file.length() + line.length > MAX_BYTES) rotate(dir)
+            file.appendText(line + "\n")
         }
     }
 

@@ -64,13 +64,26 @@ import com.auralis.app.BuildConfig
 import com.auralis.app.core.formatSummary
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
+import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.logging.AppLog
+import com.auralis.app.logging.CrashHandler
 import com.auralis.app.logging.LogEntry
 import com.auralis.app.playback.AudioEffectsEngine
 import com.auralis.app.data.youtube.StreamResolverStatus
+import com.auralis.app.data.youtube.YouTubeAuth
+import com.auralis.app.logging.DiagnosticCheck
+import com.auralis.app.logging.DiagnosticLevel
+import com.auralis.app.logging.SessionLogSanitizer
+import com.auralis.app.logging.SessionSummary
+import com.auralis.app.logging.YouTubeSessionLog
+import com.auralis.app.logging.buildDiagnosticsReport
+import com.auralis.app.logging.refreshAgeText
 import com.auralis.app.ui.components.ScreenPadding
 import com.auralis.app.ui.components.SectionTitle
+import com.auralis.app.ui.debugCrashTrigger
+import com.auralis.app.ui.theme.GlassTokens
+import com.auralis.app.ui.theme.LocalThemeStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -78,14 +91,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
-
-private enum class DiagnosticLevel { OK, WARN, ERROR }
-
-private data class DiagnosticCheck(
-    val title: String,
-    val level: DiagnosticLevel,
-    val reason: String,
-)
 
 private enum class LogFilter(val label: String) {
     ALL("All"),
@@ -101,6 +106,9 @@ fun LogsDiagnosticsScreen(
     settings: AppSettings,
     sources: List<MusicSource>,
     currentTrack: Track?,
+    youtubeAuth: YouTubeAuth? = null,
+    youtubeReadError: String? = null,
+    youtubeHasSnapshot: Boolean = youtubeAuth != null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -108,6 +116,7 @@ fun LogsDiagnosticsScreen(
     val scope = rememberCoroutineScope()
     var entries by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
     var checks by remember { mutableStateOf<List<DiagnosticCheck>>(emptyList()) }
+    var sessionLines by remember { mutableStateOf<List<String>>(emptyList()) }
     var filter by remember { mutableStateOf(LogFilter.ALL) }
     var confirmClear by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableIntStateOf(0) }
@@ -115,16 +124,36 @@ fun LogsDiagnosticsScreen(
 
     val header = remember(settings, currentTrack) { exportHeader(settings, currentTrack) }
 
+    fun sessionSummary(): SessionSummary = SessionSummary(
+        signedIn = youtubeAuth?.signedIn == true,
+        expired = youtubeAuth?.expired == true,
+        lastRefreshAge = refreshAgeText(youtubeAuth?.lastRefreshedAt ?: 0L),
+        cookieNames = SessionLogSanitizer.cookieNames(youtubeAuth?.cookie),
+        clientVersionPresent = !youtubeAuth?.clientVersion.isNullOrBlank(),
+        visitorDataPresent = !youtubeAuth?.visitorData.isNullOrBlank(),
+        dataSyncIdPresent = !youtubeAuth?.dataSyncId.isNullOrBlank(),
+        authUser = youtubeAuth?.authUser.orEmpty().ifBlank { "0" },
+        snapshotExists = youtubeHasSnapshot,
+        sessionReadError = youtubeReadError,
+        lastLines = sessionLines,
+    )
+
     suspend fun refresh() {
         val snapshot = withContext(Dispatchers.IO) {
+            // The collapse buffer must be on disk before the viewer/export reads it.
+            AppLog.flush()
             val loadedEntries = AppLog.entries()
-            loadedEntries to collectChecks(context, sources, loadedEntries)
+            val loadedSession = YouTubeSessionLog.entries(limit = 50)
+            Triple(loadedEntries, collectChecks(context, sources, loadedEntries), loadedSession)
         }
         entries = snapshot.first
         checks = snapshot.second
+        sessionLines = snapshot.third
     }
 
-    LaunchedEffect(refreshKey, settings, sources) { refresh() }
+    LaunchedEffect(refreshKey, settings, sources, youtubeAuth, youtubeHasSnapshot, youtubeReadError) {
+        refresh()
+    }
     LaunchedEffect(Unit) {
         while (isActive) {
             delay(5_000)
@@ -132,7 +161,17 @@ fun LogsDiagnosticsScreen(
         }
     }
 
-    fun buildReport(): String = buildDiagnosticReport(header, checks, entries)
+    fun buildReport(): String {
+        AppLog.flush()
+        return buildDiagnosticsReport(
+            header = header,
+            checks = checks,
+            entries = entries,
+            session = sessionSummary(),
+            crash = CrashHandler.latestCrashSummary(context),
+            startupWarnings = CrashHandler.readStartupWarnings(context),
+        )
+    }
 
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         if (uri != null) scope.launch {
@@ -154,7 +193,11 @@ fun LogsDiagnosticsScreen(
 
     LazyColumn(modifier = modifier.fillMaxWidth(), contentPadding = ScreenPadding) {
         item {
-            Text("Logs & diagnostics", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "Logs & diagnostics",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.debugCrashTrigger("logs-title"),
+            )
             Text(
                 "A local record of errors, warnings and device checks. Nothing is uploaded.",
                 style = MaterialTheme.typography.bodySmall,
@@ -258,12 +301,13 @@ fun LogsDiagnosticsScreen(
 
 @Composable
 private fun SummaryCard(checks: List<DiagnosticCheck>) {
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
     val errors = checks.count { it.level == DiagnosticLevel.ERROR }
     val warnings = checks.count { it.level == DiagnosticLevel.WARN }
     val color = when {
         errors > 0 -> MaterialTheme.colorScheme.error
-        warnings > 0 -> Amber
-        else -> Green
+        warnings > 0 -> if (glass) GlassTokens.Cream65 else Amber
+        else -> if (glass) GlassTokens.Cream else Green
     }
     val title = when {
         checks.isEmpty() -> "Checking the device…"
@@ -293,9 +337,10 @@ private fun SummaryCard(checks: List<DiagnosticCheck>) {
 
 @Composable
 private fun DiagnosticRow(check: DiagnosticCheck) {
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
     val color = when (check.level) {
-        DiagnosticLevel.OK -> Green
-        DiagnosticLevel.WARN -> Amber
+        DiagnosticLevel.OK -> if (glass) GlassTokens.Cream else Green
+        DiagnosticLevel.WARN -> if (glass) GlassTokens.Cream65 else Amber
         DiagnosticLevel.ERROR -> MaterialTheme.colorScheme.error
     }
     val label = when (check.level) {
@@ -340,9 +385,10 @@ private fun HeaderCard(header: List<Pair<String, String>>) {
 
 @Composable
 private fun LogRow(entry: LogEntry) {
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
     val color = when {
         entry.isError -> MaterialTheme.colorScheme.error
-        entry.isWarning -> Amber
+        entry.isWarning -> if (glass) GlassTokens.Cream65 else Amber
         entry.level == 'I' -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -392,31 +438,6 @@ private fun exportHeader(settings: AppSettings, track: Track?): List<Pair<String
     "Theme" to "${settings.themeStyle.name.lowercase(Locale.US)} · ${settings.theme.name.lowercase(Locale.US)}",
     "Current track format" to (track?.formatSummary()?.takeIf { it.isNotBlank() } ?: "No track playing"),
 )
-
-private fun buildDiagnosticReport(
-    header: List<Pair<String, String>>,
-    checks: List<DiagnosticCheck>,
-    entries: List<LogEntry>,
-): String = buildString {
-    appendLine("AURALIS diagnostics")
-    header.forEach { (label, value) -> appendLine("$label: $value") }
-    appendLine()
-    appendLine("What's not working")
-    checks.forEach { check ->
-        val label = when (check.level) {
-            DiagnosticLevel.OK -> "OK"
-            DiagnosticLevel.WARN -> "WARN"
-            DiagnosticLevel.ERROR -> "ERROR"
-        }
-        appendLine("[$label] ${check.title}: ${check.reason}")
-    }
-    appendLine()
-    appendLine("Logs (${entries.size} most recent, newest first)")
-    entries.take(500).forEach { entry ->
-        appendLine("${entry.timestamp} ${entry.level}/${entry.tag}: ${entry.message}")
-        entry.stackTrace?.lineSequence()?.forEach { line -> appendLine("  $line") }
-    }
-}
 
 private fun collectChecks(
     context: Context,
@@ -511,6 +532,18 @@ private fun collectChecks(
         if (playerErrors == 0) "No playback or decoder errors in the current log."
         else "$playerErrors recent playback or decoder error${if (playerErrors == 1) "" else "s"} — see the log below.",
     )
+
+    val lastCrash = CrashHandler.latestCrashFile(context)
+    checks += if (lastCrash == null) {
+        DiagnosticCheck("Last crash", DiagnosticLevel.OK, "No crash has been recorded on this device.")
+    } else {
+        DiagnosticCheck(
+            "Last crash",
+            DiagnosticLevel.WARN,
+            "A crash was recorded (${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(lastCrash.lastModified()))}). " +
+                "The full report is included in the export below.",
+        )
+    }
 
     val effects = AudioEffectsEngine.current()
     checks += when {

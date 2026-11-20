@@ -247,6 +247,17 @@ interface SearchHistoryDao {
     @Upsert
     suspend fun upsert(entry: SearchHistoryEntity)
 
+    /** Deletes one query, case-insensitively (the same term may have been re-saved with new case). */
+    @Query("DELETE FROM search_history WHERE query = :query COLLATE NOCASE")
+    suspend fun delete(query: String)
+
+    /** Keeps only the newest [limit] rows (the UI shows 20; the table should not grow past that). */
+    @Query(
+        "DELETE FROM search_history WHERE query NOT IN " +
+            "(SELECT query FROM search_history ORDER BY searchedAt DESC LIMIT :limit)",
+    )
+    suspend fun trim(limit: Int)
+
     @Query("DELETE FROM search_history")
     suspend fun clear()
 }
@@ -301,6 +312,22 @@ interface YouTubeDao {
 
     @Query("DELETE FROM youtube_likes")
     suspend fun clearLikes()
+
+    @Query("SELECT * FROM youtube_likes ORDER BY likedAt DESC")
+    suspend fun likedRows(): List<YouTubeLikeEntity>
+
+    @Upsert
+    suspend fun upsertLikes(entries: List<YouTubeLikeEntity>)
+
+    @Query("DELETE FROM youtube_likes WHERE videoId IN (:ids)")
+    suspend fun deleteLikes(ids: List<String>)
+
+    /** One transaction per live-sync pass so the Room mirror never shows a half-applied change. */
+    @Transaction
+    suspend fun applyLikeSync(insert: List<YouTubeLikeEntity>, remove: List<String>) {
+        if (insert.isNotEmpty()) upsertLikes(insert)
+        if (remove.isNotEmpty()) deleteLikes(remove)
+    }
 
     @Query("SELECT EXISTS(SELECT 1 FROM youtube_likes WHERE videoId = :videoId)")
     suspend fun isLiked(videoId: String): Boolean
@@ -416,6 +443,19 @@ interface ProviderCacheDao {
 
     @Query("DELETE FROM provider_cache")
     suspend fun clearAll()
+}
+
+/** Cached YouTube Music list responses (Home shelves, library feeds, playlist pages). */
+@Dao
+interface YouTubeCacheDao {
+    @Upsert
+    suspend fun put(entry: YouTubeCacheEntity)
+
+    @Query("SELECT * FROM youtube_cache WHERE cacheKey = :key")
+    suspend fun get(key: String): YouTubeCacheEntity?
+
+    @Query("DELETE FROM youtube_cache")
+    suspend fun clear()
 }
 
 /** Cached circular artist photos (Part L): positives and 7-day negatives, keyed by browse id or name. */

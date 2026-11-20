@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.ServiceInfo
+import com.auralis.app.core.notifyIfPermitted
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -303,7 +304,7 @@ class SpotifyImportWorker(appContext: Context, params: WorkerParameters) : Corou
             .setContentText("$fileName · $matched matched, $review to review, $failed failed")
             .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(applicationContext).notify(SpotifyImportManager.NOTIFICATION_ID + 1, notification) }
+        runCatching { notifyIfPermitted(applicationContext, SpotifyImportManager.NOTIFICATION_ID + 1, notification) }
     }
 
     private fun ensureChannel() {

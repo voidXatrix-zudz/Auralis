@@ -94,26 +94,26 @@ object AudioEffectsEngine {
 
         equalizer = try {
             Equalizer(0, audioSessionId)
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             Log.w(TAG, "Equalizer unavailable for session $audioSessionId", error)
             messages += "Equalizer is not available on this device"
             null
         }
         bassBoost = try {
             BassBoost(0, audioSessionId)
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             Log.w(TAG, "Bass boost unavailable", error)
             null
         }
         virtualizer = try {
             Virtualizer(0, audioSessionId)
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             Log.w(TAG, "Virtualizer unavailable", error)
             null
         }
         loudness = try {
             LoudnessEnhancer(audioSessionId)
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             Log.w(TAG, "Loudness enhancer unavailable", error)
             null
         }

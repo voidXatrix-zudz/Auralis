@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- windowLayoutInDisplayCutoutMode was added in API 27. -->
+    <style name="Theme.Auralis" parent="Theme.Auralis.Base">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

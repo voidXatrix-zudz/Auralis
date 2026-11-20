@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -27,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Composable
@@ -43,7 +45,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -64,8 +65,6 @@ import androidx.compose.ui.window.DialogProperties
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.theme.GlassTokens
-import com.auralis.app.ui.theme.LocalGlassOptics
-import com.auralis.app.ui.theme.Auralis
 import kotlin.random.Random
 
 /**
@@ -80,7 +79,6 @@ fun GlassPanel(
     onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val extras = Auralis.extras
     val glass = LocalDockGlassStyle.current
     // Cards share the dock material pipeline at Medium strength.
     val elevation = 10.dp * glass.shadowScale
@@ -92,16 +90,13 @@ fun GlassPanel(
                     shape = shape,
                     clip = false,
                     ambientColor = Color.Black.copy(alpha = 0.35f),
-                    spotColor = Color(0xFF0F0B1E).copy(alpha = 0.45f),
+                    spotColor = Color.Black.copy(alpha = 0.45f),
                 ) else Modifier,
             )
             .clip(shape)
-            .glass(
-                hazeState = null,
+            .glassSurface(
+                kind = GlassKind.Surface,
                 shape = shape,
-                level = GlassLevel.MEDIUM,
-                style = glass,
-                fallbackSurface = extras.glass,
             )
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
         content = content,
@@ -128,10 +123,19 @@ fun GlassDialog(
         enter.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 320f))
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxWidth().padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
+        DialogBackdropBlur()
+        Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(GlassTokens.Indigo.copy(alpha = GlassMapping.DIALOG_SCRIM))
+                    .clickable(onClick = onDismiss),
+            )
             Column(
                 Modifier
+                    .align(Alignment.Center)
                     .fillMaxWidth()
+                    .padding(horizontal = 28.dp)
                     .graphicsLayer {
                         scaleX = enter.value
                         scaleY = enter.value
@@ -144,14 +148,9 @@ fun GlassDialog(
                         ambientColor = Color.Black.copy(alpha = 0.55f),
                         spotColor = Color.Black.copy(alpha = 0.65f),
                     )
-                    .clip(shape)
-                    .glass(
-                        hazeState = null,
-                        shape = shape,
-                        level = GlassLevel.STRONG,
-                        style = glass,
-                        fallbackSurface = GlassTokens.Surface,
-                    )
+                    // Swallow taps inside the panel so they cannot reach the dismiss scrim.
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .glassWindowSurface(shape)
                     .padding(24.dp),
             ) {
                 Text(title, style = MaterialTheme.typography.headlineSmall, color = GlassTokens.Silver)
@@ -164,6 +163,66 @@ fun GlassDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     GlassGhostButton(dismissLabel, onDismiss, Modifier.weight(1f))
                     GlassPrimaryButton(confirmLabel, onConfirm, Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Glass dialog used for text prompts (connect/confirm). Dialogs live in their own window, so the
+ * shared [DialogBackdropBlur] blurs the app behind on API 31+, a strong indigo scrim removes the
+ * busy content from under the text, and [glassWindowSurface] adds the palette fill and hairline.
+ */
+@Composable
+fun GlassAlertDialog(
+    onDismissRequest: () -> Unit,
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    dismissLabel: String = "Cancel",
+    onDismiss: () -> Unit = onDismissRequest,
+    extraLabel: String? = null,
+    onExtra: (() -> Unit)? = null,
+) {
+    Dialog(onDismissRequest = onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        DialogBackdropBlur()
+        Box(Modifier.fillMaxSize()) {
+            // Scrim: tap-outside dismisses, and the app content is dimmed even below API 31.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(GlassTokens.Indigo.copy(alpha = GlassMapping.DIALOG_SCRIM))
+                    .clickable(onClick = onDismissRequest),
+            )
+            Column(
+                Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .padding(horizontal = 28.dp)
+                    // Swallow taps inside the panel so they cannot reach the dismiss scrim.
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .glassWindowSurface(RoundedCornerShape(GlassTokens.RadiusCard))
+                    .padding(24.dp),
+            ) {
+                Text(title, style = MaterialTheme.typography.headlineSmall, color = GlassTokens.Silver)
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onDismiss) { Text(dismissLabel) }
+                    if (extraLabel != null && onExtra != null) {
+                        TextButton(onClick = onExtra) { Text(extraLabel) }
+                    }
+                    TextButton(onClick = onConfirm) { Text(confirmLabel) }
                 }
             }
         }
@@ -187,9 +246,7 @@ fun GlassIconButton(
         modifier
             .size(size)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.08f))
-            .background(GlassTokens.SurfaceSheen)
-            .border(1.dp, GlassTokens.BorderBrush, CircleShape)
+            .glassTint(CircleShape)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -214,7 +271,7 @@ fun GlassIconAction(
     description: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    tint: Color = GlassTokens.Cream55,
     enabled: Boolean = true,
 ) {
     Box(
@@ -226,24 +283,26 @@ fun GlassIconAction(
 }
 
 @Composable
-fun GlassChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val violet = GlassTokens.Violet
+fun GlassChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    // Chips placed straight on the app backdrop blur it; chips nested inside a glass card keep the
+    // tint-only material so they do not re-sample the raw backdrop through the parent's frost.
+    blur: Boolean = true,
+) {
     Box(
         modifier
             .heightIn(min = 40.dp)
             .clip(CircleShape)
-            .background(
-                if (selected) {
-                    Brush.linearGradient(listOf(violet.copy(alpha = 0.28f), GlassTokens.Ice.copy(alpha = 0.18f)))
-                } else {
-                    Brush.horizontalGradient(listOf(Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.06f)))
+            .then(
+                when {
+                    // Selected chips invert: solid cream fill with indigo text.
+                    selected -> Modifier.background(GlassTokens.Cream)
+                    blur -> Modifier.glassSurface(GlassKind.Surface, CircleShape)
+                    else -> Modifier.glassTint(CircleShape)
                 },
-            )
-            .border(
-                1.dp,
-                if (selected) Brush.linearGradient(listOf(violet.copy(alpha = 0.75f), GlassTokens.Ice.copy(alpha = 0.50f)))
-                else GlassTokens.BorderBrush,
-                CircleShape,
             )
             .selectable(selected = selected, role = Role.Tab, onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 8.dp),
@@ -253,32 +312,30 @@ fun GlassChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: M
             label,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (selected) GlassTokens.Silver else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (selected) GlassTokens.Indigo else GlassTokens.Cream65,
         )
     }
 }
 
-/** Filled Neo gradient button with subtle glow shadow. */
+/**
+ * Primary button: solid Vanilla Cream fill with Midnight Indigo text, a plain black shadow.
+ */
 @Composable
 fun GlassPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, enabled: Boolean = true) {
     Row(
         modifier
             .heightIn(min = 48.dp)
-            .shadow(12.dp, CircleShape, clip = false, ambientColor = GlassTokens.Violet.copy(alpha = 0.35f), spotColor = GlassTokens.Violet.copy(alpha = 0.50f))
+            .shadow(8.dp, CircleShape, clip = false, ambientColor = Color.Black.copy(alpha = 0.30f), spotColor = Color.Black.copy(alpha = 0.40f))
             .clip(CircleShape)
-            .background(
-                if (enabled) GlassTokens.AccentGradient
-                else Brush.linearGradient(listOf(GlassTokens.Violet.copy(alpha = 0.35f), GlassTokens.Violet.copy(alpha = 0.35f))),
-            )
-            .border(1.dp, Color.White.copy(alpha = 0.30f), CircleShape)
+            .background(if (enabled) GlassTokens.Cream else GlassTokens.Cream20)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (icon != null) Icon(icon, null, tint = GlassTokens.OnAccent, modifier = Modifier.size(18.dp))
+        if (icon != null) Icon(icon, null, tint = GlassTokens.Indigo, modifier = Modifier.size(18.dp))
         Text(
             text,
-            color = GlassTokens.OnAccent,
+            color = GlassTokens.Indigo,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(start = if (icon != null) 8.dp else 0.dp),
@@ -293,9 +350,7 @@ fun GlassGhostButton(text: String, onClick: () -> Unit, modifier: Modifier = Mod
         modifier
             .heightIn(min = 48.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.07f))
-            .background(GlassTokens.SurfaceSheen)
-            .border(1.dp, GlassTokens.BorderBrush, CircleShape)
+            .glassTint(CircleShape)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -339,25 +394,36 @@ fun GlassSearchField(
     placeholder: String,
     modifier: Modifier = Modifier,
     leading: @Composable (() -> Unit)? = null,
+    onSearch: (() -> Unit)? = null,
 ) {
+    // Fill and hairline follow Glass clarity; no nested Haze effect inside text fields.
+    val settings = LocalGlassSettings.current
+    val fill = maxOf(GlassMapping.surfaceFillAlpha(settings.glassClarity), GlassMapping.NESTED_MIN_FILL)
+    val hairline = GlassMapping.borderAlpha(settings.glassClarity)
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        placeholder = { Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        placeholder = { Text(placeholder, color = GlassTokens.Cream40) },
         leadingIcon = leading,
         trailingIcon = if (value.isNotEmpty()) {
             { GlassIconAction(Icons.Rounded.Close, "Clear", { onValueChange("") }, modifier = Modifier.size(36.dp)) }
         } else null,
         singleLine = true,
         shape = CircleShape,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+        ),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+            onSearch = { onSearch?.invoke() },
+        ),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = Color.White.copy(alpha = 0.09f),
-            unfocusedContainerColor = Color.White.copy(alpha = 0.05f),
-            focusedBorderColor = GlassTokens.Violet.copy(alpha = 0.70f),
-            unfocusedBorderColor = Color.White.copy(alpha = 0.14f),
-            cursorColor = GlassTokens.Violet,
-            focusedTextColor = GlassTokens.Silver,
-            unfocusedTextColor = GlassTokens.Silver,
+            focusedContainerColor = GlassTokens.Cream.copy(alpha = (fill + 0.04f).coerceAtMost(0.44f)),
+            unfocusedContainerColor = GlassTokens.Cream.copy(alpha = fill),
+            focusedBorderColor = GlassTokens.Cream.copy(alpha = (hairline + 0.04f).coerceAtMost(0.30f)),
+            unfocusedBorderColor = GlassTokens.Cream.copy(alpha = hairline),
+            cursorColor = GlassTokens.Cream,
+            focusedTextColor = GlassTokens.Cream,
+            unfocusedTextColor = GlassTokens.Cream,
         ),
         modifier = modifier,
     )
@@ -376,8 +442,7 @@ fun GlassEmptyState(title: String, body: String, modifier: Modifier = Modifier, 
             Modifier
                 .size(72.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.06f))
-                .border(1.dp, GlassTokens.BorderBrush, CircleShape),
+                .glassTint(CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(Icons.Rounded.Album, null, tint = GlassTokens.Violet, modifier = Modifier.size(42.dp))
@@ -389,10 +454,8 @@ fun GlassEmptyState(title: String, body: String, modifier: Modifier = Modifier, 
 }
 
 /**
- * White waveform seek bar:
- * symmetric rounded bars on the dark glass backdrop, bright played bars with a faint glow,
- * and dim unplayed bars. The waveform is generated once per track and sampled to the measured
- * bar count, so it never changes shape on recomposition or rotation.
+ * Cream waveform seek bar: symmetric rounded bars on the indigo backdrop. Played bars are solid
+ * cream, unplayed bars cream at 20%, matching every other progress control.
  */
 @Composable
 fun GlassWaveSeek(
@@ -503,20 +566,20 @@ fun GlassWaveSeek(
             if (centerFraction <= clamped) {
                 // Faint bloom behind the played bars.
                 drawRoundRect(
-                    color = Color.White.copy(alpha = 0.18f),
+                    color = GlassTokens.Cream14,
                     topLeft = Offset(x - barWidth * 0.5f, top - 2.dp.toPx()),
                     size = Size(barWidth * 2f, height + 4.dp.toPx()),
                     cornerRadius = CornerRadius(barWidth),
                 )
                 drawRoundRect(
-                    color = Color.White.copy(alpha = 0.95f),
+                    color = GlassTokens.Cream,
                     topLeft = Offset(x, top),
                     size = Size(barWidth, height),
                     cornerRadius = CornerRadius(barWidth / 2f),
                 )
             } else {
                 drawRoundRect(
-                    color = Color.White.copy(alpha = 0.30f),
+                    color = GlassTokens.Cream20,
                     topLeft = Offset(x, top),
                     size = Size(barWidth, height),
                     cornerRadius = CornerRadius(barWidth / 2f),

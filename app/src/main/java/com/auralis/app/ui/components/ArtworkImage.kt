@@ -112,16 +112,14 @@ fun ArtworkImage(
                     .memoryCachePolicy(CachePolicy.ENABLED)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .listener(
-                        onStart = {
-                            AppLog.d("Artwork", "Loading art: $data")
-                        },
-                        onSuccess = { _, result ->
-                            AppLog.i("Artwork", "Image load SUCCESS: $data (source=${result.dataSource})")
-                        },
                         onError = { _, result ->
-                            AppLog.e("Artwork", "Image load ERROR for $data: ${result.throwable.message}", result.throwable)
+                            // Successes (including memory-cache hits) stay out of the log; only a
+                            // failed artwork request is worth a line.
+                            AppLog.w(
+                                "Artwork",
+                                "Artwork load failed (source=$data): ${result.throwable.message}",
+                            )
                             if (attempt < candidates.lastIndex) {
-                                AppLog.w("Artwork", "Trying next art candidate (index ${attempt + 1})")
                                 attempt++
                             }
                         }

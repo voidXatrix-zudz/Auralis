@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Equalizer
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Pause
@@ -66,19 +67,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp as dpLerp
 import androidx.compose.ui.unit.sp
 import com.auralis.app.BuildConfig
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.glass.DockGlassStyle
+import com.auralis.app.ui.glass.GlassKind
 import com.auralis.app.ui.glass.LocalDockGlassStyle
-import com.auralis.app.ui.glass.GlassLevel
-import com.auralis.app.ui.glass.glass
+import com.auralis.app.ui.glass.glassBubble
+import com.auralis.app.ui.glass.glassSurface as applyGlassSurface
 import com.auralis.app.ui.glass.rememberReduceMotion
 import com.auralis.app.ui.nav.Tab
 import com.auralis.app.ui.theme.GlassTokens
-import com.auralis.app.ui.theme.LocalGlassOptics
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
@@ -160,13 +162,6 @@ val LocalDockBottomInset = compositionLocalOf { 0.dp }
 
 // Shared dock spring: dampingRatio ~0.83, medium-low stiffness for the ~300-350ms morph.
 private val DockSpring = spring<Float>(dampingRatio = 0.83f, stiffness = 300f)
-
-// Thin specular rim: bright top-left catch, faint middle, soft bottom light.
-private val DockBorderBrush = Brush.linearGradient(
-    0f to Color.White.copy(alpha = 0.35f),
-    0.5f to Color.White.copy(alpha = 0.08f),
-    1f to Color.White.copy(alpha = 0.20f),
-)
 
 private val MiniHeightExpanded = 48.dp
 private val MiniHeightCollapsed = 56.dp
@@ -266,26 +261,19 @@ fun rememberDockScrollState(): DockScrollState {
 
 private data class DockNavItem(val tab: Tab, val label: String, val icon: ImageVector)
 
-/** Glass order is deliberately Home, Library, Equalizer, Search (Settings lives on Home). */
-private val GlassDockNavItems = listOf(
+/**
+ * Both themes show the same three-tab pill, in this order. Search keeps its own circle beside the
+ * pill and Settings has its own entry points (Home/Library avatar), so neither lives in here.
+ */
+private val DockNavItems = listOf(
     DockNavItem(Tab.HOME, "Home", Icons.Rounded.Home),
+    DockNavItem(Tab.EXPLORE, "Explore", Icons.Rounded.Explore),
     DockNavItem(Tab.LIBRARY, "Library", Icons.Rounded.LibraryMusic),
-    DockNavItem(Tab.EQUALIZER, "Equalizer", Icons.Rounded.Equalizer),
-    DockNavItem(Tab.SEARCH, "Search", Icons.Rounded.Search),
-)
-
-/** The Normal dock is untouched: it keeps its original five slots, including Settings. */
-private val SolidDockNavItems = listOf(
-    DockNavItem(Tab.HOME, "Home", Icons.Rounded.Home),
-    DockNavItem(Tab.LIBRARY, "Library", Icons.Rounded.LibraryMusic),
-    DockNavItem(Tab.SEARCH, "Search", Icons.Rounded.Search),
-    DockNavItem(Tab.EQUALIZER, "Equalizer", Icons.Rounded.Equalizer),
-    DockNavItem(Tab.SETTINGS, "Settings", Icons.Rounded.Settings),
 )
 
 /**
  * Floating dock with two continuous states:
- *  - p = 0: mini-player pill above a five-slot navigation pill.
+ *  - p = 0: mini-player pill above the three-slot navigation pill, with the Search circle alongside.
  *  - p = 1: one row with a Home circle, the mini pill and a Search circle.
  *
  * Geometry lives in ONE custom [Layout] with exactly four children: navPill, homeCircle,
@@ -411,12 +399,11 @@ fun AppDock(
                 glass = glass,
                 icon = Icons.Rounded.Search,
                 description = "Search",
-                tint = if (style == DockStyle.GLASS) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                alpha = circleIn,
-                scale = circleScale,
-                // Inclusive so there is never a frame where both the nav pill and the circles
-                // are non-interactive while the dock is settling.
-                enabled = p >= 0.5f,
+                tint = if (style == DockStyle.GLASS) GlassTokens.Cream else MaterialTheme.colorScheme.onSurfaceVariant,
+                // The Search circle is permanent: it sits beside the pill in both dock states.
+                alpha = 1f,
+                scale = 1f,
+                enabled = true,
                 onClick = { onSelectTab(Tab.SEARCH); onExpand() },
             )
             DockMiniPill(
@@ -453,7 +440,13 @@ fun AppDock(
         // top of the shrinking layout is what makes it visibly travel down into the row.
         val miniY = 0
 
-        val navWidth = if (showsMini) miniWidth else fullWidth
+        val navWidth = if (showsMini) {
+            // Expanded, the pill shares its row with the permanent Search circle on the right.
+            val navExpandedWidth = (fullWidth - circlePx - gapPx).coerceAtLeast(0)
+            lerpF(navExpandedWidth.toFloat(), circlePx.toFloat(), p).roundToInt().coerceIn(0, fullWidth)
+        } else {
+            (fullWidth - circlePx - gapPx).coerceAtLeast(0)
+        }
         val navPxHeight = lerpF(NavHeight.toPx(), RowHeight.toPx(), p).roundToInt()
         val navX = if (showsMini) miniX else 0
         // The nav pill stays anchored to the bottom while the mini pill slides over it.
@@ -474,7 +467,7 @@ fun AppDock(
     }
 }
 
-/** Four equal-width tab slots with 11sp labels and one sliding spring capsule behind the selection. */
+/** Three equal-width tab slots with 11sp labels and one sliding spring capsule behind the selection. */
 @Composable
 private fun DockNavPill(
     style: DockStyle,
@@ -489,15 +482,17 @@ private fun DockNavPill(
 ) {
     val colors = MaterialTheme.colorScheme
     val accent = colors.primary
-    val unselected = if (style == DockStyle.GLASS) Color.White.copy(alpha = 0.92f) else colors.onSurfaceVariant
-    val capsuleColor = if (style == DockStyle.GLASS) {
-        Color.White.copy(alpha = 0.16f)
+    val isGlassDock = style == DockStyle.GLASS
+    val unselected = if (isGlassDock) GlassTokens.Cream55 else colors.onSurfaceVariant
+    // Selected slots invert on glass: cream capsule, indigo icon and label.
+    val activeTint = if (isGlassDock) GlassTokens.Indigo else accent
+    val capsuleColor = if (isGlassDock) {
+        GlassTokens.Cream
     } else {
         colors.primary.copy(alpha = 0.16f)
     }
-    val glow = if (style == DockStyle.GLASS) GlassTokens.Violet else colors.primary
     val pillShape = RoundedCornerShape(50)
-    val items = if (style == DockStyle.GLASS) GlassDockNavItems else SolidDockNavItems
+    val items = DockNavItems
     val reduceMotion = rememberReduceMotion()
     val slideSpec: androidx.compose.animation.core.AnimationSpec<Float> =
         if (reduceMotion) snap() else spring(dampingRatio = 0.62f, stiffness = 260f)
@@ -517,13 +512,13 @@ private fun DockNavPill(
             .padding(5.dp),
     ) {
         if (style == DockStyle.SOLID) {
-            // Normal theme: original five slots and the original per-slot fading capsule.
+            // Normal theme: the three Home/Explore/Library slots with the per-slot fading capsule.
             Row(Modifier.fillMaxSize()) {
                 items.forEach { item ->
                     val active = item.tab == selected
                     val interaction = remember { MutableInteractionSource() }
                     val tint by animateColorAsState(
-                        targetValue = if (active) accent else unselected,
+                        targetValue = if (active) activeTint else unselected,
                         animationSpec = tween(180),
                         label = "dockSlotTint",
                     )
@@ -582,22 +577,24 @@ private fun DockNavPill(
                         Modifier
                             .fillMaxHeight()
                             .width(slotWidth)
-                            .offset(x = slotWidth * slide)
+                            // Deferred to the layout phase: the slide animation no longer
+                            // recomposes this capsule on every frame.
+                            .offset { IntOffset((slotWidth * slide).roundToPx(), 0) }
                             .graphicsLayer { alpha = capsuleAlpha }
                             .padding(3.dp)
                             .shadow(
                                 elevation = 10.dp,
                                 shape = CircleShape,
                                 clip = false,
-                                ambientColor = glow.copy(alpha = 0.30f),
-                                spotColor = glow.copy(alpha = 0.45f),
+                                ambientColor = Color.Black.copy(alpha = 0.28f),
+                                spotColor = Color.Black.copy(alpha = 0.38f),
                             )
                             .clip(CircleShape)
                             .background(capsuleColor)
                             .border(
                                 1.dp,
-                                Brush.verticalGradient(
-                                    listOf(Color.White.copy(alpha = 0.34f), glow.copy(alpha = 0.16f)),
+                                if (isGlassDock) Brush.linearGradient(listOf(Color.Transparent, Color.Transparent)) else Brush.verticalGradient(
+                                    listOf(Color.White.copy(alpha = 0.34f), accent.copy(alpha = 0.16f)),
                                 ),
                                 CircleShape,
                             ),
@@ -608,7 +605,7 @@ private fun DockNavPill(
                         val active = item.tab == selected
                         val interaction = remember { MutableInteractionSource() }
                         val tint by animateColorAsState(
-                            targetValue = if (active) accent else unselected,
+                            targetValue = if (active) activeTint else unselected,
                             animationSpec = tintSpec,
                             label = "dockSlotTint",
                         )
@@ -797,7 +794,7 @@ private fun DockMiniPill(
                     overflow = TextOverflow.Ellipsis,
                     fontSize = if (isGlass) DockDimens.MiniTitleSize else 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isGlass) Color.White else colors.onSurface,
+                    color = if (isGlass) GlassTokens.Cream else colors.onSurface,
                 )
                 Text(
                     text = track.artist.ifBlank { "Unknown artist" },
@@ -869,13 +866,14 @@ private fun DockPlayButton(
                     hazeState = hazeState,
                     glass = glass,
                     solidFill = MaterialTheme.colorScheme.primary,
+                    blurBackdrop = false,
                 ),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 contentDescription = if (playing) "Pause" else "Play",
-                tint = if (style == DockStyle.GLASS) Color.White else MaterialTheme.colorScheme.onPrimary,
+                tint = if (style == DockStyle.GLASS) GlassTokens.Cream else MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.size(if (style == DockStyle.GLASS) DockDimens.MiniButtonIconSize else 20.dp),
             )
         }
@@ -912,13 +910,14 @@ private fun DockNextButton(
                     hazeState = hazeState,
                     glass = glass,
                     solidFill = MaterialTheme.colorScheme.primary,
+                    blurBackdrop = false,
                 ),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Rounded.SkipNext,
                 contentDescription = "Next",
-                tint = if (style == DockStyle.GLASS) Color.White else MaterialTheme.colorScheme.onPrimary,
+                tint = if (style == DockStyle.GLASS) GlassTokens.Cream else MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.size(if (style == DockStyle.GLASS) DockDimens.MiniButtonIconSize else 20.dp),
             )
         }
@@ -955,45 +954,37 @@ private fun Modifier.dockSurface(
             .background(fill)
     }
 
-    val optics = LocalGlassOptics.current
     return this
         .shadow(
-            elevation = 14.dp * glass.shadowScale,
+            elevation = 10.dp * glass.shadowScale,
             shape = shape,
             clip = false,
-            ambientColor = Color.Black.copy(alpha = 0.40f),
-            spotColor = Color.Black.copy(alpha = 0.60f),
+            ambientColor = Color.Black.copy(alpha = 0.20f),
+            spotColor = Color.Black.copy(alpha = 0.28f),
         )
         .clip(shape)
-        .glass(
+        .applyGlassSurface(
+            kind = GlassKind.Dock,
+            shape = shape,
             hazeState = hazeState,
-            shape = shape,
-            level = GlassLevel.STRONG,
             refraction = refraction && glass.refractionEnabled,
-            style = glass,
-            fallbackSurface = GlassTokens.Surface,
-        )
-        // 1.5dp light-to-transparent rim shared by the glass nav and mini pills.
-        .border(
-            width = DockDimens.RimWidth,
-            brush = Brush.linearGradient(
-                0f to Color.White.copy(alpha = 0.55f),
-                0.55f to Color.White.copy(alpha = 0.12f),
-                1f to Color.Transparent,
-            ),
-            shape = shape,
+            cornerRadius = cornerRadius,
         )
 }
 
-/** Small circular control: white ~15% glass in GLASS, opaque palette fill in SOLID. */
+/** Small circular dock control. Dock transparency drives its fill; never Glass clarity. */
 @Composable
 private fun Modifier.dockControlCircle(
     style: DockStyle,
     hazeState: HazeState?,
     glass: DockGlassStyle,
     solidFill: Color,
+    /**
+     * False for controls nested inside an already-blurred pill (mini-player play/next). Sampling
+     * the backdrop a second time for a 28dp bubble would be pure overdraw.
+     */
+    blurBackdrop: Boolean = true,
 ): Modifier {
-    val whiteAlpha = (0.12f + 0.06f * glass.tintAlpha).coerceIn(0f, 0.18f)
     if (style == DockStyle.SOLID) {
         return this
             .shadow(
@@ -1007,23 +998,22 @@ private fun Modifier.dockControlCircle(
             .background(solidFill)
     }
 
-    val optics = LocalGlassOptics.current
     return this
         .shadow(
-            elevation = 6.dp * glass.shadowScale,
+            elevation = 5.dp * glass.shadowScale,
             shape = CircleShape,
             clip = false,
-            ambientColor = Color.Black.copy(alpha = 0.30f),
-            spotColor = Color.Black.copy(alpha = 0.45f),
+            ambientColor = Color.Black.copy(alpha = 0.18f),
+            spotColor = Color.Black.copy(alpha = 0.24f),
         )
         .clip(CircleShape)
-        .glass(
-            hazeState = hazeState,
+        .applyGlassSurface(
+            kind = GlassKind.Dock,
             shape = CircleShape,
-            level = GlassLevel.LIGHT,
+            hazeState = hazeState,
             refraction = false,
-            style = glass,
-            fallbackSurface = GlassTokens.Surface,
+            cornerRadius = 40.dp,
+            blur = blurBackdrop,
         )
 }
 
@@ -1031,17 +1021,14 @@ private fun Modifier.dockControlCircle(
 // Glassmorphic (Mornye-style) dock. Normal theme keeps the shared legacy layout above untouched.
 // ---------------------------------------------------------------------------------------------
 
-private val DockPink = Color(0xFFFF4D79)
-private val DockMuted = Color(0xFFC9C9D1)
-private val DockArtist = Color(0xFFB9B9C4)
+private val DockPink = GlassTokens.Cream
+private val DockArtist = GlassTokens.Cream65
 
-private val GlassDockItems = listOf(
-    DockNavItem(Tab.HOME, "Home", Icons.Rounded.Home),
-    DockNavItem(Tab.LIBRARY, "Your Library", Icons.Rounded.LibraryMusic),
-)
+private val GlassDockItems = DockNavItems
 
 private fun Tab.dockIcon(): ImageVector = when (this) {
     Tab.HOME -> Icons.Rounded.Home
+    Tab.EXPLORE -> Icons.Rounded.Explore
     Tab.LIBRARY -> Icons.Rounded.LibraryMusic
     Tab.SEARCH -> Icons.Rounded.Search
     Tab.EQUALIZER -> Icons.Rounded.Equalizer
@@ -1059,7 +1046,7 @@ private fun pressScale(interaction: MutableInteractionSource): Float {
     return scale
 }
 
-/** Floating liquid-glass dock: mini-player pill on top, Home/Library pill + Search/Equalizer circles below. */
+/** Floating liquid-glass dock: mini-player pill on top, Home/Explore/Library pill + Search circle below. */
 @Composable
 private fun GlassDock(
     progress: () -> Float,
@@ -1094,8 +1081,8 @@ private fun GlassDock(
             .height(dockHeight)
             .padding(horizontal = DockMetrics.GlassSideMargin),
         content = {
-            // Places/draws in this order: nav pill, search, equalizer, active circle, then mini
-            // pill last so it slides over the fading circles.
+            // Places/draws in this order: nav pill, search, active circle, then mini pill last so
+            // it slides over the fading circles.
             GlassNavPill(
                 glass = surfaceGlass,
                 hazeState = hazeState,
@@ -1113,20 +1100,10 @@ private fun GlassDock(
             GlassCircleButton(
                 icon = Icons.Rounded.Search,
                 description = "Search",
-                tint = Color.White,
+                tint = GlassTokens.Cream,
                 alpha = 1f,
                 enabled = true,
                 onClick = { onSelectTab(Tab.SEARCH) },
-                glass = surfaceGlass,
-                hazeState = hazeState,
-            )
-            GlassCircleButton(
-                icon = Icons.Rounded.Equalizer,
-                description = "Equalizer",
-                tint = Color.White,
-                alpha = navAlpha,
-                enabled = p < 0.5f,
-                onClick = { onSelectTab(Tab.EQUALIZER) },
                 glass = surfaceGlass,
                 hazeState = hazeState,
             )
@@ -1174,31 +1151,28 @@ private fun GlassDock(
         // up with the 74dp circles instead of hugging the top edge.
         val miniY = if (showsMini) lerpF(0f, ((GlassNavHeight - GlassMiniHeight).toPx() / 2f), p).roundToInt() else 0
 
-        val navWidth = lerpF((fullWidth - 2 * (circlePx + gapPx)).toFloat(), circlePx.toFloat(), p).roundToInt().coerceAtLeast(0)
+        val navWidth = lerpF((fullWidth - circlePx - gapPx).toFloat(), circlePx.toFloat(), p).roundToInt().coerceAtLeast(0)
         val navHeight = GlassNavHeight.roundToPx()
         val navY = height - navHeight
         val circleY = navY + (navHeight - circlePx) / 2
         val searchX = fullWidth - circlePx
-        val eqX = fullWidth - 2 * circlePx - gapPx
         val activeX = 0
 
         val navPlaceable = measurables[0].measure(Constraints.fixed(navWidth, navHeight))
         val searchPlaceable = measurables[1].measure(Constraints.fixed(circlePx, circlePx))
-        val eqPlaceable = measurables[2].measure(Constraints.fixed(circlePx, circlePx))
-        val activePlaceable = measurables[3].measure(Constraints.fixed(circlePx, circlePx))
-        val miniPlaceable = measurables[4].measure(Constraints.fixed(miniWidth, miniHeight))
+        val activePlaceable = measurables[2].measure(Constraints.fixed(circlePx, circlePx))
+        val miniPlaceable = measurables[3].measure(Constraints.fixed(miniWidth, miniHeight))
 
         layout(fullWidth, height) {
             navPlaceable.placeRelative(0, navY)
             searchPlaceable.placeRelative(searchX, circleY)
-            eqPlaceable.placeRelative(eqX, circleY)
             activePlaceable.placeRelative(activeX, circleY)
             miniPlaceable.placeRelative(miniX, miniY)
         }
     }
 }
 
-/** Two glass tab slots and one sliding lens capsule painted in the dock accent. */
+/** Three glass tab slots and one sliding lens capsule painted in the dock accent. */
 @Composable
 private fun GlassNavPill(
     glass: DockGlassStyle,
@@ -1234,36 +1208,25 @@ private fun GlassNavPill(
                 label = "glassLensSlide",
             )
             val targetIndex = if (selectedIndex >= 0) selectedIndex.toFloat() else 0f
-            // 5-8% stretch in the direction of travel, decaying as the lens lands.
-            val stretch = 1f + 0.07f * abs(slide - targetIndex).coerceIn(0f, 1f)
             if (selectedIndex >= 0) {
                 Box(
                     Modifier
                         .fillMaxHeight()
                         .width(slot)
-                        .offset(x = slot * slide)
-                        .graphicsLayer { scaleX = stretch }
+                        // Both the slide and the 5-8% travel stretch are read in the layer phase,
+                        // so the lens animation never recomposes this Box.
+                        .offset { IntOffset((slot * slide).roundToPx(), 0) }
+                        .graphicsLayer { scaleX = 1f + 0.07f * abs(slide - targetIndex).coerceIn(0f, 1f) }
                         .shadow(
-                            elevation = 10.dp,
+                            elevation = 8.dp,
                             shape = CircleShape,
                             clip = false,
-                            ambientColor = DockPink.copy(alpha = 0.22f),
-                            spotColor = DockPink.copy(alpha = 0.35f),
+                            ambientColor = Color.Black.copy(alpha = 0.16f),
+                            spotColor = Color.Black.copy(alpha = 0.22f),
                         )
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.13f))
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.White.copy(alpha = 0.10f), Color.Transparent),
-                            ),
-                        )
-                        .border(
-                            1.dp,
-                            Brush.linearGradient(
-                                listOf(Color.White.copy(alpha = 0.42f), Color.White.copy(alpha = 0.05f)),
-                            ),
-                            CircleShape,
-                        ),
+                        // Clear glass bubble: a faint cream lens (not a solid capsule) with the same
+                        // gradient rim and inner sheen as the pill it sits on. No second blur.
+                        .glassBubble(CircleShape),
                 )
             }
             Row(Modifier.fillMaxSize()) {
@@ -1272,7 +1235,7 @@ private fun GlassNavPill(
                     val interaction = remember { MutableInteractionSource() }
                     val press = pressScale(interaction)
                     val tint by animateColorAsState(
-                        targetValue = if (active) DockPink else DockMuted,
+                        targetValue = if (active) GlassTokens.Cream else GlassTokens.Cream55,
                         animationSpec = spring(dampingRatio = 0.80f, stiffness = 520f),
                         label = "glassSlotTint",
                     )
@@ -1371,18 +1334,6 @@ private fun GlassCircleButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            Modifier
-                .matchParentSize()
-                .drawWithCache {
-                    val glow = Brush.radialGradient(
-                        colors = listOf(Color.White.copy(alpha = 0.20f), Color.Transparent),
-                        center = Offset(size.width * 0.32f, size.height * 0.24f),
-                        radius = size.minDimension * 0.78f,
-                    )
-                    onDrawBehind { drawRect(glow) }
-                },
-        )
         Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(24.dp))
     }
 }

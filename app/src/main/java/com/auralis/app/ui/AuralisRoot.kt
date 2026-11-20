@@ -8,8 +8,14 @@ import com.auralis.app.ui.theme.LyricsFontPreloader
 import com.auralis.app.ui.theme.LocalGlassOptics
 import com.auralis.app.ui.components.AuralisBackdrop
 import com.auralis.app.ui.glass.GlassTopBar
+import com.auralis.app.ui.glass.GlassAlertDialog
 import com.auralis.app.ui.glass.GlassAvatarButton
 import com.auralis.app.ui.glass.LocalDockGlassStyle
+import com.auralis.app.ui.glass.GlassDragState
+import com.auralis.app.ui.glass.GlassSettings
+import com.auralis.app.ui.glass.LocalGlassDrag
+import com.auralis.app.ui.glass.LocalGlassSettings
+import com.auralis.app.ui.glass.LocalHazeState
 import com.auralis.app.ui.glass.resolveDockGlass
 import com.auralis.app.ui.components.AppDock
 import com.auralis.app.ui.components.DockMetrics
@@ -24,6 +30,7 @@ import com.auralis.app.ui.components.rememberDockScrollState
 import com.auralis.app.ui.components.resolveAccountImageUrl
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Build
 import android.Manifest
 import android.content.pm.PackageManager
@@ -31,10 +38,15 @@ import androidx.core.content.ContextCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
@@ -70,6 +82,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,6 +98,8 @@ import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.auralis.app.R
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.nav.Destination
@@ -98,10 +113,14 @@ import com.auralis.app.domain.model.Track
 import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.ui.components.PlayerBackgroundImage
 import com.auralis.app.ui.screens.HomeScreen
+import com.auralis.app.ui.screens.ExploreScreen
+import com.auralis.app.ui.screens.ExploreMoodScreen
+import com.auralis.app.ui.explore.ExploreMoods
 import com.auralis.app.ui.screens.HistoryScreen
 import com.auralis.app.ui.screens.LibraryScreen
 import com.auralis.app.ui.screens.NowPlayingScreen
 import com.auralis.app.ui.screens.PlaylistDetailScreen
+import com.auralis.app.ui.screens.YouTubePlaylistScreen
 import com.auralis.app.ui.screens.SpotifyImportScreen
 import com.auralis.app.ui.screens.SearchScreen
 import com.auralis.app.ui.screens.SettingsScreen
@@ -113,10 +132,12 @@ import com.auralis.app.ui.screens.AudioAnalysisScreen
 import com.auralis.app.ui.screens.LogsDiagnosticsScreen
 import com.auralis.app.ui.update.UpdateDialog
 import com.auralis.app.ui.theme.AuralisAppTheme
+import com.auralis.app.ui.theme.DarkPalette
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.ui.performance.LocalPerformanceMode
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
+import com.auralis.app.ui.performance.RefreshRateEffect
 import com.auralis.app.ui.components.glassSurface
 import com.auralis.app.logging.AppLog
 import dev.chrisbanes.haze.rememberHazeState
@@ -127,7 +148,57 @@ import java.io.File
 
 @Composable
 fun AuralisRoot(viewModel: AppViewModel) {
-    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    // One-time "AURALIS crashed last time" notice. Shown before the themed tree (and even while
+    // the startup settings read is still pending) so a launch crash is never silently forgotten.
+    val crashContext = androidx.compose.ui.platform.LocalContext.current
+    var pendingCrash by remember { androidx.compose.runtime.mutableStateOf(com.auralis.app.logging.CrashHandler.pendingCrashReport(crashContext)) }
+    if (pendingCrash != null) {
+        AlertDialog(
+            onDismissRequest = {
+                pendingCrash?.let { com.auralis.app.logging.CrashHandler.acknowledge(crashContext, it) }
+                pendingCrash = null
+            },
+            title = { Text("AURALIS crashed last time") },
+            text = { Text("A crash report was saved on this device. Open it to copy or share the details before closing.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingCrash?.let { file ->
+                        com.auralis.app.logging.CrashHandler.acknowledge(crashContext, file)
+                        runCatching {
+                            crashContext.startActivity(
+                                Intent(crashContext, com.auralis.app.CrashReportActivity::class.java).apply {
+                                    putExtra(com.auralis.app.CrashReportActivity.EXTRA_CRASH_FILE, file.absolutePath)
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                },
+                            )
+                        }
+                    }
+                    pendingCrash = null
+                }) { Text("View report") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    pendingCrash?.let { com.auralis.app.logging.CrashHandler.acknowledge(crashContext, it) }
+                    pendingCrash = null
+                }) { Text("Dismiss") }
+            },
+        )
+    }
+    // One authoritative startup read. The themed tree (and therefore Home, whose YouTube/local
+    // branch depends on youtubeIntegration) is not composed until DataStore has answered once, so
+    // the saved appearance applies to the very first frame instead of being applied on top of a
+    // visible default Normal theme.
+    val loadedSettings by viewModel.loadedSettings.collectAsStateWithLifecycle()
+    // The one resolved workload for the whole app, read here (before the first frame) so the
+    // display refresh-rate request — High 120 / Medium 90 / Low 60 Hz, clamped to the panel's own
+    // supported modes — is in force while the app is still starting up.
+    val profile by viewModel.performanceProfile.collectAsStateWithLifecycle()
+    RefreshRateEffect(profile.tier)
+    val settings = loadedSettings
+    if (settings == null) {
+        StartupSurface()
+        return
+    }
     val nav by viewModel.nav.collectAsStateWithLifecycle()
     val sources by viewModel.sources.collectAsStateWithLifecycle()
     val tracks by viewModel.tracks.collectAsStateWithLifecycle()
@@ -146,9 +217,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val queueIds by remember { derivedStateOf { playbackState.queueIds } }
     val upNextIds by remember { derivedStateOf { playbackState.upNextIds } }
     val context = androidx.compose.ui.platform.LocalContext.current
-    // The one resolved workload for the whole app. Collected once here, provided downwards, so
-    // changing the mode (or Battery Saver/thermal state) updates every screen without a restart.
-    val profile by viewModel.performanceProfile.collectAsStateWithLifecycle()
+    // [profile] was collected above the startup gate; it is provided downwards so changing the mode
+    // (or Battery Saver/thermal state) updates every screen without a restart.
     val performanceMode by viewModel.performanceMode.collectAsStateWithLifecycle()
     val performanceReason by viewModel.performanceReason.collectAsStateWithLifecycle()
     // GitHub release state; drives the global dialog, the Settings row and the dock badge.
@@ -159,17 +229,34 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val remoteTracks by viewModel.remoteTracks.collectAsStateWithLifecycle()
     val home by viewModel.home.collectAsStateWithLifecycle()
     val youtubeAuth by viewModel.youtubeAuth.collectAsStateWithLifecycle()
+    val youtubeSessionReadError by viewModel.youtubeSessionReadError.collectAsStateWithLifecycle()
+    val youtubeSessionSnapshot by viewModel.youtubeSessionSnapshot.collectAsStateWithLifecycle()
     val youtubeLikedIds by viewModel.youtubeLikedIds.collectAsStateWithLifecycle()
     val youtubeLikedTracks by viewModel.youtubeLikedTracks.collectAsStateWithLifecycle()
+    val liveSyncUi by viewModel.liveSyncUi.collectAsStateWithLifecycle()
     val youtubePlaylists by viewModel.youtubePlaylists.collectAsStateWithLifecycle()
+    val youtubeLibraryError by viewModel.youtubeLibraryError.collectAsStateWithLifecycle()
+    val youtubeLibraryLoading by viewModel.youtubeLibraryLoading.collectAsStateWithLifecycle()
+    val settingsLoaded by viewModel.settingsLoaded.collectAsStateWithLifecycle()
+    val youTubeTestLines by viewModel.youTubeTestLines.collectAsStateWithLifecycle()
+    val youTubeTestRunning by viewModel.youTubeTestRunning.collectAsStateWithLifecycle()
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
     val youtubeHistory by viewModel.youtubeHistory.collectAsStateWithLifecycle()
+                val mergedHistory by viewModel.mergedHistory.collectAsStateWithLifecycle()
+                val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+                val ytPlaylist by viewModel.ytPlaylist.collectAsStateWithLifecycle()
     // Sign-in gate + the personalised Home feed.
     val auth by viewModel.auth.collectAsStateWithLifecycle()
+    // Explore tab: the opened mood's streaming songs.
+    val explore by viewModel.explore.collectAsStateWithLifecycle()
     // One-time "Connect YouTube Music" prompt shown right after a Clerk sign-in.
     val youtubeConnectPrompt by viewModel.youtubeConnectPrompt.collectAsStateWithLifecycle()
+    val youtubeConnectExpired by viewModel.youtubeConnectExpired.collectAsStateWithLifecycle()
     val youtubeConnectEmail by viewModel.youtubeConnectEmail.collectAsStateWithLifecycle()
+    // Foreground is the second refresh trigger: only a six-hour-old session does any work and the
+    // repository's backoff/lock prevents repeats.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshYouTubeSessionIfStale() }
     // Heart state reads the YouTube like table for remote tracks, local favorites otherwise.
     val mergedFavorites by remember(favorites, youtubeLikedIds) {
         derivedStateOf { favorites + youtubeLikedIds.map { YOUTUBE_TRACK_PREFIX + it } }
@@ -178,6 +265,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
         { track -> if (track.id.startsWith(YOUTUBE_TRACK_PREFIX)) viewModel.toggleYouTubeLike(track) else viewModel.toggleFavorite(track) }
     }
     var youtubeLoginOpen by rememberSaveable { mutableStateOf(false) }
+    var youtubeForceSignIn by rememberSaveable { mutableStateOf(false) }
     var nowPlayingOpen by rememberSaveable { mutableStateOf(false) }
     // Build the id lookup once per library change; track lookups are O(1) instead of a scan per frame.
     // Streamed tracks are merged in so Now Playing, lyrics, dock and the notification resolve them.
@@ -190,16 +278,43 @@ fun AuralisRoot(viewModel: AppViewModel) {
     var folderPickerPending by rememberSaveable { mutableStateOf(false) }
     var permissionRequestPending by rememberSaveable { mutableStateOf(false) }
 
-    // Shared dock state + the backdrop window the dock blurs (glass only, Android 12+).
+    // Shared dock state + the backdrop window every glass surface blurs (glass only, Android 12+).
     val dockScroll = rememberDockScrollState()
     val hazeState = rememberHazeState()
     val dockStyle = if (settings.themeStyle == ThemeStyle.GLASSMORPHIC) DockStyle.GLASS else DockStyle.SOLID
-    // Glass dock tuning (Glassmorphism only; SOLID ignores it). Everything — tint, blur radius,
-    // refraction, outlines, shadow scale — comes from ONE resolved style so the sliders, the
-    // mini-player, cards and dialogs can never disagree.
-    val clarity = settings.glassClarity.coerceIn(0, 100) / 100f
-    val dockGlass = remember(settings, profile, performanceReason) {
-        resolveDockGlass(settings, profile, performanceReason)
+
+    // Destination transitions keep the outgoing screen composed until the incoming screen has
+    // produced its first frame; see the AnimatedContent transitionSpec below. The previous
+    // "fade out, swap, fade in" sequence drove the content alpha to zero *before* the destination
+    // was composed, so a slow first composition (Home feed, large Library, Glass blur capture)
+    // left the window showing only the bare backdrop for that whole time.
+
+    // The three Appearance controls, in one place. Committed values come from DataStore; while a
+    // slider is dragged the Appearance screen writes a transient GlassDragState so the whole app
+    // updates live, and only the drag end is persisted.
+    val persistedGlass = remember(
+        settings.dockGlassTransparency,
+        settings.glassClarity,
+        settings.dockGlassBlur,
+    ) {
+        GlassSettings.fromPercent(
+            settings.dockGlassTransparency,
+            settings.glassClarity,
+            settings.dockGlassBlur,
+        )
+    }
+    val glassDrag = remember { GlassDragState() }
+    val glassSettings = glassDrag.value ?: persistedGlass
+    // Once DataStore catches up with the committed drag, drop the transient copy.
+    LaunchedEffect(persistedGlass) {
+        if (glassDrag.value == persistedGlass) glassDrag.value = null
+    }
+
+    // Dock fill/blur for the Appearance preview + performance flags. Surface fills are derived
+    // separately by GlassKind inside glassSurface, so Glass clarity can never move the dock.
+    val clarity = glassSettings.glassClarity
+    val dockGlass = remember(settings, glassSettings, profile, performanceReason) {
+        resolveDockGlass(settings, glassSettings, profile, performanceReason)
     }
     val glassOptics = remember(clarity, settings.glassOutlines, dockGlass) {
         GlassOptics(
@@ -215,17 +330,26 @@ fun AuralisRoot(viewModel: AppViewModel) {
         LyricsFontPreloader()
         SystemBarsAppearance(dark || settings.themeStyle == ThemeStyle.GLASSMORPHIC)
 
-        // Sign-in gate. Only active when a Clerk publishable key was configured at build time, so a
-        // keyless build behaves exactly like it did before authentication existed.
-        if (auth.configured && !auth.signedIn) {
-            com.auralis.app.ui.screens.LoginScreen(
-                auth = auth,
-                onGoogleSignIn = viewModel::signInWithGoogle,
-                onRequestCode = viewModel::requestEmailCode,
-                onVerifyCode = viewModel::verifyEmailCode,
-                onEditEmail = viewModel::editEmail,
-                onClearError = viewModel::clearAuthError,
-            )
+        // Sign-in gate. When a Clerk publishable key was configured at build time, this shows the
+        // login screen until a session exists. A keyless build shows a clear "sign-in isn't
+        // configured" notice with a continue-without-an-account escape hatch, so local playback is
+        // never blocked and auth is never silently skipped.
+        if (!auth.signedIn && !auth.authBypassed) {
+            if (auth.configured) {
+                com.auralis.app.ui.screens.LoginScreen(
+                    auth = auth,
+                    onGoogleSignIn = viewModel::signInWithGoogle,
+                    onRequestCode = viewModel::requestEmailCode,
+                    onVerifyCode = viewModel::verifyEmailCode,
+                    onEditEmail = viewModel::editEmail,
+                    onClearError = viewModel::clearAuthError,
+                    onRetryInit = viewModel::retryAuthInitialization,
+                )
+            } else {
+                com.auralis.app.ui.screens.SignInUnavailable(
+                    onContinue = viewModel::continueWithoutAccount,
+                )
+            }
             return@AuralisTheme
         }
 
@@ -257,6 +381,12 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 else if (!permissionRequestPending) { permissionRequestPending = true; scanPermission.launch(permission) }
             }
         }
+        // Re-read on each recomposition: the launcher callback flips permissionRequestPending, so a
+        // grant immediately updates the Library's inline "Allow access" card.
+        val audioPermissionGranted = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        val requestAudioPermission = {
+            if (!permissionRequestPending) { permissionRequestPending = true; scanPermission.launch(permission) }
+        }
         val spotifyPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isNotEmpty()) viewModel.importSpotify(uris)
         }
@@ -272,8 +402,13 @@ fun AuralisRoot(viewModel: AppViewModel) {
             onOpenLogs = { viewModel.push(Destination.Logs) },
             onOpenPrivacyAbout = { viewModel.push(Destination.About) },
             onCheckForUpdates = viewModel::checkForUpdates,
-            onYouTubeSignIn = { youtubeLoginOpen = true },
+            onYouTubeSignIn = { youtubeForceSignIn = false; youtubeLoginOpen = true },
             onYouTubeSignOut = viewModel::signOutYouTube,
+            onYouTubeDifferentAccount = {
+                viewModel.switchYouTubeAccount()
+                youtubeForceSignIn = true
+                youtubeLoginOpen = true
+            },
             onClearCache = viewModel::clearCache,
             onClearLyricsCache = viewModel::clearLyricsMetadataCache,
             onRemoveAllDownloads = viewModel::removeAllDownloads,
@@ -285,6 +420,18 @@ fun AuralisRoot(viewModel: AppViewModel) {
             updateAvailableVersion = updateState.available?.version,
             youtubeSignedIn = youtubeAuth?.signedIn == true,
             youtubeName = youtubeAuth?.name.orEmpty(),
+            youtubeExpired = youtubeAuth?.expired == true,
+            youtubeReadError = youtubeSessionReadError,
+            youtubeLastRefreshedAt = youtubeAuth?.lastRefreshedAt ?: 0L,
+            onYouTubeHeal = viewModel::healYouTubeSession,
+            onYouTubeTest = viewModel::testYouTubeConnection,
+            youTubeTestRunning = youTubeTestRunning,
+            youTubeTestLines = youTubeTestLines,
+            liveSyncEnabled = settings.liveSyncEnabled,
+            liveSyncState = liveSyncUi.state,
+            liveSyncLastSyncedAt = liveSyncUi.lastSyncedAt,
+            onToggleLiveSync = viewModel::setLiveSyncEnabled,
+            onSyncLiveNow = viewModel::syncLiveNow,
         )
 
         BackHandler(enabled = nowPlayingOpen || nav.stack.isNotEmpty()) { if (nowPlayingOpen) nowPlayingOpen = false else viewModel.back() }
@@ -296,10 +443,19 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 profile
             }
         }
+        // Every glass surface samples this one captured layer. It stays registered even at blur 0
+        // so dragging the slider up starts blurring immediately, without remounting the content.
+        // No SDK gate: Haze 1.6 uses RenderEffect on Android 12+ and RenderScript on Android 11
+        // and below, so the dock can blur on every supported API level.
+        val glassHazeAllowed = settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
+            effectiveProfile.blurEnabled
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colorScheme.onBackground,
             LocalGlassOptics provides glassOptics,
             LocalDockGlassStyle provides dockGlass,
+            LocalGlassSettings provides glassSettings,
+            LocalHazeState provides hazeState,
+            LocalGlassDrag provides glassDrag,
             LocalPerformanceProfile provides effectiveProfile,
             LocalPerformanceMode provides performanceMode,
             LocalPerformanceReason provides performanceReason,
@@ -353,30 +509,51 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onOpenBackup = { nowPlayingOpen = false; viewModel.push(Destination.Backup) },
                     onEditMetadata = { nowPlayingOpen = false; viewModel.push(Destination.MetadataEditor(currentTrack.id)) },
                     onOpenAudioAnalysis = { id -> nowPlayingOpen = false; viewModel.push(Destination.AudioAnalysis(id)) },
+                    // The full player draws its own backdrop source (the chosen player background);
+                    // an app-source here would be an ancestor of every panel, and Haze excludes
+                    // ancestor sources, so it would only waste a full-screen capture.
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
                 Box(Modifier.fillMaxSize().nestedScroll(dockScroll)) {
-                    // Everything the dock may blur sits in this pane. Normal (SOLID) never consumes
-                    // the haze, so skip the capture layer there.
+                    // App-wide chosen player background (Glass theme only): drawn once behind
+                    // every pushed screen and tab, fixed while content scrolls. It is its own
+                    // low-zIndex capture layer, a *sibling* of the content pane, so the glass
+                    // cards inside that pane can sample it (Haze excludes an ancestor source).
+                    if (settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
+                        settings.playerBackground != PlayerBackground.NONE
+                    ) {
+                        Crossfade(
+                            targetState = settings.playerBackground,
+                            animationSpec = tween(360),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .then(
+                                    if (glassHazeAllowed) {
+                                        Modifier.hazeSource(hazeState, zIndex = 0f)
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
+                            label = "appBackground",
+                        ) { background -> PlayerBackgroundImage(background) }
+                    }
+                    // Everything else the glass may blur sits in this pane. It is registered as
+                    // the capture source in glass mode regardless of the blur slider, so raising
+                    // Live blur takes effect in the same frame; Normal (SOLID) never consumes the
+                    // haze. zIndex 1 lets the dock sample the scrolling content while surfaces
+                    // *inside* the pane exclude it and fall back to the zIndex-0 background layer.
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .then(if (dockStyle == DockStyle.GLASS && dockGlass.blurEnabled) Modifier.hazeSource(hazeState) else Modifier),
+                            .then(
+                                if (glassHazeAllowed) {
+                                    Modifier.hazeSource(hazeState, zIndex = 1f)
+                                } else {
+                                    Modifier
+                                },
+                            ),
                     ) {
-                        // App-wide chosen player background (Glass theme only): drawn once behind
-                        // every pushed screen and tab, fixed while content scrolls, and included in
-                        // the Haze capture so the dock/cards blur it.
-                        if (settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
-                            settings.playerBackground != PlayerBackground.NONE
-                        ) {
-                            Crossfade(
-                                targetState = settings.playerBackground,
-                                animationSpec = tween(360),
-                                modifier = Modifier.fillMaxSize(),
-                                label = "appBackground",
-                            ) { background -> PlayerBackgroundImage(background) }
-                        }
                         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                             // Glass Settings owns its own collapsing header + back chevron.
                             val glassSettings = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC &&
@@ -394,20 +571,36 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     }
                                 } else null
                                 TopBar(
+                                    // The back affordance follows the requested destination; the
+                                    // old screen is only a short crossfade behind the new one.
                                     showBack = nav.top != null,
                                     onBack = viewModel::back,
                                     collapseProgress = { dockScroll.progress },
                                     trailing = headerTrailing,
                                 )
                             }
-                            Crossfade(
+                            // Per-destination saveable state. Without a holder, AnimatedContent
+                            // disposes the outgoing screen (contentKey = nav), so switching tabs and
+                            // coming back resets scroll positions and screen-local state and forces
+                            // a full re-layout/re-decode. This keeps the state per NavState, the same
+                            // unit the transition already keys on, so returning to a tab is instant.
+                            val saveableStateHolder = rememberSaveableStateHolder()
+                            AnimatedContent(
                                 targetState = nav,
-                                // Glass motion is spring-based; Normal keeps its original tween.
-                                animationSpec = if (dockStyle == DockStyle.GLASS) {
-                                    spring(dampingRatio = 0.86f, stiffness = 420f)
-                                } else {
-                                    androidx.compose.animation.core.tween(240)
+                                transitionSpec = {
+                                    // Keep the outgoing destination composed and visible until the
+                                    // incoming one has been composed. The incoming screen reaches
+                                    // full opacity before the outgoing fade ends, so the content
+                                    // pane is never empty and the overlap stays short enough that
+                                    // translucent glass does not visibly ghost the old screen.
+                                    val spec = if (dockStyle == DockStyle.GLASS) {
+                                        fadeIn(tween(150)) togetherWith fadeOut(tween(210))
+                                    } else {
+                                        fadeIn(tween(140)) togetherWith fadeOut(tween(190))
+                                    }
+                                    spec.using(SizeTransform(clip = false))
                                 },
+                                contentKey = { it },
                                 // Glass draws edge-to-edge under the dock (lists reserve the inset);
                                 // Normal keeps its opaque, padded-below-dock layout.
                                 modifier = Modifier
@@ -415,157 +608,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     .then(if (dockStyle == DockStyle.GLASS) Modifier else Modifier.dockBottomSpace(dockScroll, currentTrack != null)),
                                 label = "screen",
                             ) { state ->
-                                when (state.top) {
-                                    Destination.Settings -> SettingsHubScreen(
-                                        settings = settings,
-                                        sources = sources,
-                                        actions = settingsActions,
-                                        onNavigate = viewModel::push,
-                                        onBack = viewModel::back,
-                                        onAddFolder = addMusic,
-                                        onRemoveSource = viewModel::removeSource,
-                                        clerkSignedIn = auth.signedIn,
-                                        clerkName = auth.account?.displayName.orEmpty(),
-                                        clerkEmail = auth.account?.email.orEmpty(),
-                                        accountImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
-                                        onClerkSignOut = viewModel::signOutClerk,
-                                    )
-                                    Destination.SettingsPlayback,
-                                    Destination.SettingsMetadataLyrics,
-                                    Destination.SettingsDownloads,
-                                    Destination.SettingsYouTubeMusic,
-                                    Destination.SettingsAppearance,
-                                    Destination.SettingsPerformance,
-                                    Destination.SettingsStorage,
-                                    Destination.SettingsAbout,
-                                    -> SettingsSubScreen(
-                                        destination = state.top!!,
-                                        settings = settings,
-                                        sources = sources,
-                                        actions = settingsActions,
-                                        onBack = viewModel::back,
-                                    )
-                                    Destination.About -> AboutScreen()
-                                    Destination.Equalizer -> EqualizerScreen(settings, viewModel::updateSettings)
-                                    Destination.Wrapped -> {
-                                        val events by viewModel.playEvents.collectAsStateWithLifecycle()
-                                        WrappedScreen(events, viewModel::wrappedStats)
-                                    }
-                                    Destination.Backup -> BackupScreen(viewModel::exportBackup, viewModel::restoreBackup)
-                                    Destination.History -> HistoryScreen(
-                                        entries = youtubeHistory,
-                                        currentId = playbackTrackId,
-                                        onPlay = viewModel::playHistoryEntry,
-                                        onClear = viewModel::clearHistory,
-                                    )
-                                    Destination.Logs -> LogsDiagnosticsScreen(settings, sources, currentTrack)
-                                    is Destination.MetadataEditor -> {
-                                        val destination = state.top as Destination.MetadataEditor
-                                        val track = trackById[destination.trackId]
-                                        if (track == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                            Text("This song is not in the library anymore.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        } else {
-                                            val candidates = viewModel.metadataCandidates.collectAsStateWithLifecycle().value
-                                            val metadataLoading = viewModel.metadataLoading.collectAsStateWithLifecycle().value
-                                            MetadataEditorScreen(
-                                                track = track,
-                                                readTags = viewModel::readTags,
-                                                writeTags = viewModel::writeTags,
-                                                onSaved = { viewModel.clearMetadataCandidates(); viewModel.back() },
-                                                remote = track.isRemote,
-                                                metadataCandidates = candidates,
-                                                metadataLoading = metadataLoading,
-                                                onFetchMetadata = viewModel::fetchMetadata,
-                                                onClearCandidates = viewModel::clearMetadataCandidates,
-                                                onSaveRemoteMetadata = viewModel::saveRemoteMetadataOverride,
-                                            )
-                                        }
-                                    }
-                                    is Destination.AudioAnalysis -> {
-                                        val destination = state.top as Destination.AudioAnalysis
-                                        val track = tracks.firstOrNull { it.id == destination.trackId }
-                                        if (track == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                            Text("This song is not in the library anymore.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        } else AudioAnalysisScreen(track)
-                                    }
-                                    is Destination.PlaylistDetail -> {
-                                        val destination = state.top as Destination.PlaylistDetail
-                                        PlaylistDetailScreen(
-                                            playlistName = playlists.firstOrNull { it.id == destination.playlistId }?.name ?: "Playlist",
-                                            items = viewModel.playlistItems(destination.playlistId),
-                                            currentId = playbackTrackId,
-                                            onPlayIndex = { index -> viewModel.playPlaylist(destination.playlistId, index) },
-                                            onRemove = { item -> viewModel.removePlaylistItem(destination.playlistId, item) },
-                                            onMove = { item, delta -> viewModel.movePlaylistItem(destination.playlistId, item, delta) },
-                                            onRename = { newName -> viewModel.renamePlaylist(destination.playlistId, newName) },
-                                            onDelete = { viewModel.deletePlaylist(destination.playlistId); viewModel.back() },
-                                        )
-                                    }
-                                    is Destination.SpotifyImport -> {
-                                        val destination = state.top as Destination.SpotifyImport
-                                        val review by viewModel.observeImportReview(destination.importId)
-                                            .collectAsStateWithLifecycle(initialValue = emptyList())
-                                        SpotifyImportScreen(
-                                            importRow = spotifyImports.firstOrNull { it.id == destination.importId },
-                                            reviewItems = review,
-                                            candidatesOf = viewModel::decodeCandidates,
-                                            onPick = { item, candidate -> viewModel.resolveImportItem(destination.importId, item.id, candidate) },
-                                            onSkip = { item -> viewModel.resolveImportItem(destination.importId, item.id, null) },
-                                            onRetry = { item -> viewModel.retryImportItem(destination.importId, item) },
-                                            onOpenPlaylist = { id -> viewModel.push(Destination.PlaylistDetail(id)) },
-                                        )
-                                    }
-                                    null -> when (state.tab) {
-                                        Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = mergedFavorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = likeTrack, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, settingsBadge = updateState.available != null, youtubeEnabled = settings.youtubeIntegration, home = home, youtubeAvatarUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl), youtubeAccountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName, youtubeSignedIn = youtubeAuth?.signedIn == true, onOpenHome = { viewModel.loadHome() }, onRefreshHome = viewModel::refreshYouTubeHome, onSelectHomeCategory = viewModel::selectHomeCategory, onPlayYtTrack = viewModel::playYouTubeTrack, onOpenYtCard = viewModel::openHomeCard, onLikeYtTrack = viewModel::toggleYouTubeLike, onLoadMoreHomeRow = viewModel::loadMoreHomeRow, onCloseHomeCollection = viewModel::closeHomeCollection, onYouTubeSignIn = { youtubeLoginOpen = true }, onYouTubeSignOut = viewModel::signOutYouTube)
-                                        Tab.SEARCH -> SearchScreen(
-                                            tracks, mergedFavorites, playbackTrackId, { viewModel.play(it, tracks) }, likeTrack, playlists, viewModel::addToPlaylist,
-                                            onQueue = viewModel::enqueue, sources = sources, onPlayNext = viewModel::playNext,
-                                            youtubeResults = youtubeSearch.results,
-                                            youtubeLoading = youtubeSearch.loading,
-                                            youtubeError = youtubeSearch.error,
-                                            youtubeResolvingId = youtubeResolvingId,
-                                            onSearchYouTube = viewModel::searchYouTube,
-                                            onPlayYouTube = viewModel::playYouTube,
-                                            youtubeEnabled = settings.youtubeIntegration,
-                                        )
-                                        Tab.LIBRARY -> LibraryScreen(
-                                            tracks, mergedFavorites, sources, playlists, playbackTrackId, addMusic, scan,
-                                            { viewModel.play(it, tracks) }, likeTrack, viewModel::createPlaylist, viewModel::addToPlaylist,
-                                            onQueue = viewModel::enqueue,
-                                            onPlayNext = viewModel::playNext,
-                                            onPlayAlbum = { album -> album.firstOrNull()?.let { viewModel.play(it, album) } },
-                                            onQueueAlbum = viewModel::enqueueAll,
-                                            onQueuePlaylist = viewModel::enqueuePlaylist,
-                                            scanning = scanning,
-                                            onOpenSettings = { viewModel.push(Destination.Settings) },
-                                            youtubeEnabled = settings.youtubeIntegration,
-                                            youtubeLiked = youtubeLikedTracks,
-                                            youtubePlaylists = youtubePlaylists,
-                                            onPlayYouTubeTrack = viewModel::playYouTubeTrack,
-                                            onOpenYouTubePlaylist = viewModel::openYouTubePlaylist,
-                                            onRefreshYouTubeLibrary = viewModel::refreshYouTubeLibrary,
-                                            downloads = downloads,
-                                            onOpenHistory = { viewModel.push(Destination.History) },
-                                            onOpenPlaylist = { id -> viewModel.push(Destination.PlaylistDetail(id)) },
-                                            onImportSpotify = importSpotify,
-                                            spotifyImports = spotifyImports,
-                                            onOpenImport = { id -> viewModel.push(Destination.SpotifyImport(id)) },
-                                            onAutoFixTags = viewModel::autoFixTags,
-                                            playlistEntries = playlistEntries,
-                                            playlistYtEntries = playlistYtEntries,
-                                            profileImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
-                                            accountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName,
-                                            librarySort = settings.librarySort,
-                                            libraryGridView = settings.libraryGridView,
-                                            onLibrarySortChange = { value -> viewModel.updateSettings { s -> s.copy(librarySort = value) } },
-                                            onLibraryGridChange = { value -> viewModel.updateSettings { s -> s.copy(libraryGridView = value) } },
-                                            onRenamePlaylist = { id, name -> viewModel.renamePlaylist(id, name) },
-                                            onDeletePlaylist = viewModel::deletePlaylist,
-                                            onPlayPlaylist = { id -> viewModel.playPlaylist(id) },
-                                            onShufflePlaylist = viewModel::shufflePlaylist,
-                                        )
-                                        Tab.EQUALIZER -> EqualizerScreen(settings, viewModel::updateSettings)
-                                        Tab.SETTINGS -> SettingsHubScreen(
+                                saveableStateHolder.SaveableStateProvider(state) {
+                                    when (state.top) {
+                                        Destination.Settings -> SettingsHubScreen(
                                             settings = settings,
                                             sources = sources,
                                             actions = settingsActions,
@@ -579,6 +624,221 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             accountImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
                                             onClerkSignOut = viewModel::signOutClerk,
                                         )
+                                        Destination.SettingsPlayback,
+                                        Destination.SettingsMetadataLyrics,
+                                        Destination.SettingsDownloads,
+                                        Destination.SettingsYouTubeMusic,
+                                        Destination.SettingsAppearance,
+                                        Destination.SettingsPerformance,
+                                        Destination.SettingsStorage,
+                                        Destination.SettingsAbout,
+                                        -> SettingsSubScreen(
+                                            destination = state.top!!,
+                                            settings = settings,
+                                            sources = sources,
+                                            actions = settingsActions,
+                                            onBack = viewModel::back,
+                                        )
+                                        Destination.About -> AboutScreen()
+                                        Destination.Equalizer -> EqualizerScreen(settings, viewModel::updateSettings)
+                                        Destination.Wrapped -> {
+                                            val events by viewModel.playEvents.collectAsStateWithLifecycle()
+                                            WrappedScreen(events, viewModel::wrappedStats)
+                                        }
+                                        Destination.Backup -> BackupScreen(viewModel::exportBackup, viewModel::restoreBackup)
+                                        Destination.History -> HistoryScreen(
+                                            entries = mergedHistory,
+                                            currentId = playbackTrackId,
+                                            onPlay = viewModel::playHistoryEntry,
+                                            onClear = viewModel::clearHistory,
+                                        )
+                                        Destination.Logs -> LogsDiagnosticsScreen(
+                                settings,
+                                sources,
+                                currentTrack,
+                                youtubeAuth = youtubeAuth,
+                                youtubeReadError = youtubeSessionReadError,
+                                youtubeHasSnapshot = youtubeSessionSnapshot,
+                            )
+                                        is Destination.ExploreMood -> {
+                                            val moodId = (state.top as Destination.ExploreMood).moodId
+                                            ExploreMoodScreen(
+                                                mood = ExploreMoods.byId(moodId) ?: ExploreMoods.all.first(),
+                                                state = explore,
+                                                favorites = mergedFavorites,
+                                                currentId = playbackTrackId,
+                                                playlists = playlists,
+                                                onPlay = viewModel::playExploreTrack,
+                                                onFavorite = likeTrack,
+                                                onAddToPlaylist = viewModel::addToPlaylist,
+                                                onQueue = viewModel::enqueue,
+                                                onPlayNext = viewModel::playNext,
+                                                onRetry = { viewModel.loadExploreMood(moodId, force = true) },
+                                            )
+                                        }
+                                        is Destination.MetadataEditor -> {
+                                            val destination = state.top as Destination.MetadataEditor
+                                            val track = trackById[destination.trackId]
+                                            if (track == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                Text("This song is not in the library anymore.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            } else {
+                                                val candidates = viewModel.metadataCandidates.collectAsStateWithLifecycle().value
+                                                val metadataLoading = viewModel.metadataLoading.collectAsStateWithLifecycle().value
+                                                MetadataEditorScreen(
+                                                    track = track,
+                                                    readTags = viewModel::readTags,
+                                                    writeTags = viewModel::writeTags,
+                                                    onSaved = { viewModel.clearMetadataCandidates(); viewModel.back() },
+                                                    remote = track.isRemote,
+                                                    metadataCandidates = candidates,
+                                                    metadataLoading = metadataLoading,
+                                                    onFetchMetadata = viewModel::fetchMetadata,
+                                                    onClearCandidates = viewModel::clearMetadataCandidates,
+                                                    onSaveRemoteMetadata = viewModel::saveRemoteMetadataOverride,
+                                                )
+                                            }
+                                        }
+                                        is Destination.AudioAnalysis -> {
+                                            val destination = state.top as Destination.AudioAnalysis
+                                            val track = tracks.firstOrNull { it.id == destination.trackId }
+                                            if (track == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                Text("This song is not in the library anymore.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            } else AudioAnalysisScreen(track)
+                                        }
+                                        is Destination.PlaylistDetail -> {
+                                            val destination = state.top as Destination.PlaylistDetail
+                                            PlaylistDetailScreen(
+                                                playlistName = playlists.firstOrNull { it.id == destination.playlistId }?.name ?: "Playlist",
+                                                items = viewModel.playlistItems(destination.playlistId),
+                                                currentId = playbackTrackId,
+                                                onPlayIndex = { index -> viewModel.playPlaylist(destination.playlistId, index) },
+                                                onRemove = { item -> viewModel.removePlaylistItem(destination.playlistId, item) },
+                                                onMove = { item, delta -> viewModel.movePlaylistItem(destination.playlistId, item, delta) },
+                                                onRename = { newName -> viewModel.renamePlaylist(destination.playlistId, newName) },
+                                                onDelete = { viewModel.deletePlaylist(destination.playlistId); viewModel.back() },
+                                            )
+                                        }
+                                        is Destination.YouTubePlaylist -> {
+                                            val destination = state.top as Destination.YouTubePlaylist
+                                            YouTubePlaylistScreen(
+                                                title = destination.title,
+                                                owner = destination.owner,
+                                                coverUrl = ytPlaylist.coverUrl ?: destination.coverUrl,
+                                                tracks = ytPlaylist.tracks,
+                                                loading = ytPlaylist.loading,
+                                                error = ytPlaylist.error,
+                                                loaded = ytPlaylist.loaded,
+                                                currentId = playbackTrackId,
+                                                favorites = mergedFavorites,
+                                                onPlay = viewModel::playYouTubePlaylistTrack,
+                                                onShuffle = { viewModel.playYouTubePlaylist(shuffle = true) },
+                                                onPlayNext = viewModel::playNext,
+                                                onQueue = viewModel::enqueue,
+                                                onFavorite = likeTrack,
+                                                onRetry = viewModel::retryYouTubePlaylist,
+                                            )
+                                        }
+                                        is Destination.SpotifyImport -> {
+                                            val destination = state.top as Destination.SpotifyImport
+                                            val review by viewModel.observeImportReview(destination.importId)
+                                                .collectAsStateWithLifecycle(initialValue = emptyList())
+                                            SpotifyImportScreen(
+                                                importRow = spotifyImports.firstOrNull { it.id == destination.importId },
+                                                reviewItems = review,
+                                                candidatesOf = viewModel::decodeCandidates,
+                                                onPick = { item, candidate -> viewModel.resolveImportItem(destination.importId, item.id, candidate) },
+                                                onSkip = { item -> viewModel.resolveImportItem(destination.importId, item.id, null) },
+                                                onRetry = { item -> viewModel.retryImportItem(destination.importId, item) },
+                                                onOpenPlaylist = { id -> viewModel.push(Destination.PlaylistDetail(id)) },
+                                            )
+                                        }
+                                        null -> when (state.tab) {
+                                            Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = mergedFavorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = likeTrack, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, settingsBadge = updateState.available != null, youtubeEnabled = settings.youtubeIntegration, home = home, youtubeAvatarUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl), youtubeAccountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName, youtubeSignedIn = youtubeAuth?.signedIn == true, onOpenHome = { viewModel.loadHome() }, onRefreshHome = viewModel::refreshYouTubeHome, onSelectHomeCategory = viewModel::selectHomeCategory, onPlayYtTrack = viewModel::playYouTubeTrack, onOpenYtCard = viewModel::openHomeCard, onLikeYtTrack = viewModel::toggleYouTubeLike, onLoadMoreHomeRow = viewModel::loadMoreHomeRow, onCloseHomeCollection = viewModel::closeHomeCollection, onYouTubeSignIn = { youtubeForceSignIn = false; youtubeLoginOpen = true }, onYouTubeSignOut = viewModel::signOutYouTube, onYouTubeSwitchAccount = { viewModel.switchYouTubeAccount(); youtubeForceSignIn = true; youtubeLoginOpen = true }, onOpenExplore = { viewModel.selectTab(Tab.EXPLORE) })
+                                            Tab.EXPLORE -> ExploreScreen(
+                                                onOpenMood = { mood ->
+                                                    viewModel.loadExploreMood(mood.id)
+                                                    viewModel.push(Destination.ExploreMood(mood.id))
+                                                },
+                                            )
+                                            Tab.SEARCH -> SearchScreen(
+                                                tracks, mergedFavorites, playbackTrackId, { viewModel.play(it, tracks) }, likeTrack, playlists, viewModel::addToPlaylist,
+                                                onQueue = viewModel::enqueue, sources = sources, onPlayNext = viewModel::playNext,
+                                                youtubeResults = youtubeSearch.results,
+                                                youtubeLoading = youtubeSearch.loading,
+                                                youtubeError = youtubeSearch.error,
+                                                youtubeResolvingId = youtubeResolvingId,
+                                                onSearchYouTube = viewModel::searchYouTube,
+                                                onPlayYouTube = viewModel::playYouTube,
+                                                youtubeEnabled = settings.youtubeIntegration,
+                                                recentSearches = searchHistory,
+                                                onSubmitSearch = viewModel::submitSearch,
+                                                onDeleteRecent = viewModel::deleteSearch,
+                                                onClearRecent = viewModel::clearSearchHistory,
+                                            )
+                                            Tab.LIBRARY -> LibraryScreen(
+                                                tracks, mergedFavorites, sources, playlists, playbackTrackId, addMusic, scan,
+                                                { viewModel.playLibraryTrack(it, tracks) }, likeTrack, viewModel::createPlaylist, viewModel::addToPlaylist,
+                                                onQueue = viewModel::enqueue,
+                                                onPlayNext = viewModel::playNext,
+                                                onPlayAlbum = { album -> album.firstOrNull()?.let { viewModel.play(it, album) } },
+                                                onQueueAlbum = viewModel::enqueueAll,
+                                                onQueuePlaylist = viewModel::enqueuePlaylist,
+                                                scanning = scanning,
+                                                onOpenSettings = { viewModel.push(Destination.Settings) },
+                                                youtubeEnabled = settings.youtubeIntegration,
+                                                youtubeLiked = youtubeLikedTracks,
+                                                youtubePlaylists = youtubePlaylists,
+                                                onPlayYouTubeTrack = viewModel::playYouTubeTrack,
+                                                onOpenYouTubePlaylist = viewModel::openYouTubePlaylist,
+                                                onPlayYouTubePlaylist = viewModel::playYouTubePlaylistCard,
+                                                youtubeResolvingId = youtubeResolvingId,
+                                                onRefreshYouTubeLibrary = viewModel::refreshYouTubeLibrary,
+                                                downloads = downloads,
+                                                onOpenHistory = { viewModel.push(Destination.History) },
+                                                onOpenPlaylist = { id -> viewModel.push(Destination.PlaylistDetail(id)) },
+                                                onImportSpotify = importSpotify,
+                                                spotifyImports = spotifyImports,
+                                                onOpenImport = { id -> viewModel.push(Destination.SpotifyImport(id)) },
+                                                onAutoFixTags = viewModel::autoFixTags,
+                                                playlistEntries = playlistEntries,
+                                                playlistYtEntries = playlistYtEntries,
+                                                profileImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
+                                                accountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName,
+                                                librarySort = settings.librarySort,
+                                                libraryGridView = settings.libraryGridView,
+                                                onLibrarySortChange = { value -> viewModel.updateSettings { s -> s.copy(librarySort = value) } },
+                                                onLibraryGridChange = { value -> viewModel.updateSettings { s -> s.copy(libraryGridView = value) } },
+                                                onRenamePlaylist = { id, name -> viewModel.renamePlaylist(id, name) },
+                                                onDeletePlaylist = viewModel::deletePlaylist,
+                                                onPlayPlaylist = { id -> viewModel.playPlaylist(id) },
+                                                onShufflePlaylist = viewModel::shufflePlaylist,
+                                                youtubeLibraryError = youtubeLibraryError,
+                                                onRetryYouTubeLibrary = viewModel::retryYouTubeLibrary,
+                                                youtubeSignedIn = youtubeAuth?.signedIn == true,
+                                                youtubeLibraryLoading = youtubeLibraryLoading,
+                                                libraryReady = settingsLoaded,
+                                                hasAudioPermission = audioPermissionGranted,
+                                                onRequestAudioPermission = requestAudioPermission,
+                                                onPlayYouTubeTrackFrom = viewModel::playYouTubeTrackFrom,
+                                                liveSyncState = liveSyncUi.state,
+                                                liveSyncPulse = liveSyncUi.newItemsPulse,
+                                            )
+                                            Tab.EQUALIZER -> EqualizerScreen(settings, viewModel::updateSettings)
+                                            Tab.SETTINGS -> SettingsHubScreen(
+                                                settings = settings,
+                                                sources = sources,
+                                                actions = settingsActions,
+                                                onNavigate = viewModel::push,
+                                                onBack = viewModel::back,
+                                                onAddFolder = addMusic,
+                                                onRemoveSource = viewModel::removeSource,
+                                                clerkSignedIn = auth.signedIn,
+                                                clerkName = auth.account?.displayName.orEmpty(),
+                                                clerkEmail = auth.account?.email.orEmpty(),
+                                                accountImageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
+                                                onClerkSignOut = viewModel::signOutClerk,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -608,6 +868,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
                         style = dockStyle,
                         progress = { dockScroll.progress },
                         hasTrack = currentTrack != null,
+                        // The indicator follows the requested destination. Navigation composes the
+                        // incoming screen in the same transition, so the selected tab always has
+                        // visible content behind it.
                         selected = if (nav.top == null) nav.tab else null,
                         track = currentTrack,
                         playing = isPlaying,
@@ -656,8 +919,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
             if (youtubeConnectPrompt) {
                 ConnectYouTubePrompt(
                     email = youtubeConnectEmail,
+                    expired = youtubeConnectExpired,
                     onConnect = {
                         viewModel.dismissYouTubeConnectPrompt(dontAskAgain = false)
+                        youtubeForceSignIn = false
                         youtubeLoginOpen = true
                     },
                     onNotNow = { viewModel.dismissYouTubeConnectPrompt(dontAskAgain = false) },
@@ -668,8 +933,13 @@ fun AuralisRoot(viewModel: AppViewModel) {
             if (youtubeLoginOpen) {
                 com.auralis.app.ui.screens.YouTubeLoginDialog(
                     onSession = viewModel::saveYouTubeSession,
-                    onDismiss = { youtubeLoginOpen = false },
+                    onDismiss = {
+                        youtubeLoginOpen = false
+                        youtubeForceSignIn = false
+                    },
                     loginHint = youtubeConnectEmail ?: auth.account?.email,
+                    savedSession = youtubeAuth,
+                    forceSignIn = youtubeForceSignIn,
                 )
             }
         }
@@ -681,32 +951,39 @@ fun AuralisRoot(viewModel: AppViewModel) {
 @Composable
 private fun ConnectYouTubePrompt(
     email: String?,
+    expired: Boolean = false,
     onConnect: () -> Unit,
     onNotNow: () -> Unit,
     onDontAskAgain: () -> Unit,
 ) {
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onNotNow,
-        title = { Text("Connect YouTube Music") },
-        text = {
-            Text(
-                buildString {
-                    append("Sign in to YouTube Music to see your liked songs, playlists and history in AURALIS.")
-                    if (!email.isNullOrBlank()) {
-                        append(" We'll prefill ")
-                        append(email)
-                        append(" on the Google sign-in page.")
-                    }
-                },
-            )
-        },
-        confirmButton = { TextButton(onClick = onConnect) { Text("Connect") } },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onNotNow) { Text("Not now") }
-                TextButton(onClick = onDontAskAgain) { Text("Don't ask again") }
+        title = if (expired) "Session expired" else "Connect YouTube Music",
+        message = if (expired) {
+            buildString {
+                append("Your YouTube Music session expired, so live sync is paused. Sign in again to keep liked songs and playlists up to date.")
+                if (!email.isNullOrBlank()) {
+                    append(" We'll prefill ")
+                    append(email)
+                    append(" on the Google sign-in page.")
+                }
+            }
+        } else {
+            buildString {
+                append("Sign in to YouTube Music to see your liked songs, playlists and history in AURALIS.")
+                if (!email.isNullOrBlank()) {
+                    append(" We'll prefill ")
+                    append(email)
+                    append(" on the Google sign-in page.")
+                }
             }
         },
+        confirmLabel = if (expired) "Sign in" else "Connect",
+        onConfirm = onConnect,
+        dismissLabel = "Not now",
+        onDismiss = onNotNow,
+        extraLabel = "Don't ask again",
+        onExtra = onDontAskAgain,
     )
 }
 
@@ -772,6 +1049,17 @@ private fun Modifier.dockBottomSpace(scroll: DockScrollState, hasTrack: Boolean)
     layout(placeable.width, placeable.height + space) {
         placeable.placeRelative(0, 0)
     }
+}
+
+/**
+ * Neutral first frame while the single settings read is in flight. It deliberately matches the
+ * window/splash background instead of Material's Normal surface, so no theme is previewed before
+ * the saved one is known.
+ */
+@Composable
+private fun StartupSurface() {
+    SystemBarsAppearance(darkTheme = true)
+    Box(Modifier.fillMaxSize().background(DarkPalette.background))
 }
 
 /** Keeps status/navigation bar icons readable against the in-app theme, not the system theme. */

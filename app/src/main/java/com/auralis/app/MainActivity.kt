@@ -2,6 +2,7 @@ package com.auralis.app
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +16,7 @@ import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
+import com.auralis.app.logging.CrashHandler
 import com.auralis.app.playback.PlaybackService
 import com.auralis.app.ui.AppViewModel
 import com.auralis.app.ui.AuralisRoot
@@ -31,10 +33,34 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Let Clerk hand OAuth (Google) results back to this Activity once it is attached.
-        (application as AuralisApp).container.clerkAuth.attachActivity(this)
-        requestNotificationPermissionIfNeeded()
-        setContent { AuralisRoot(viewModel) }
+        // TEMP DIAGNOSTIC (Google login bug): records the intent that launched the activity, so a
+        // Clerk/OAuth callback that lands here (instead of the SDK's own receiver) is visible.
+        // Remove once the login bug is fixed.
+        Log.i(TAG, "onCreate intent=${intent?.dataString} action=${intent?.action}")
+        val container = (application as AuralisApp).container
+        // Let Clerk hand OAuth (Google) results back to this Activity once it is attached. This is
+        // non-essential: if it fails the UI must still draw, so the failure is recorded and skipped.
+        runCatching { container.clerkAuth.attachActivity(this) }
+            .onFailure {
+                Log.w(TAG, "Could not attach Clerk activity", it)
+                CrashHandler.writeStartupWarning(this, "clerk.attachActivity", it)
+            }
+        runCatching { requestNotificationPermissionIfNeeded() }
+            .onFailure { Log.w(TAG, "Notification permission request failed", it) }
+        // Open the local database here, once, so a broken migration or corrupt file shows the
+        // recovery screen instead of crashing the launch deep inside the ViewModel.
+        val databaseFailure = container.databaseFailureOrNull()
+        if (databaseFailure != null) {
+            Log.e(TAG, "Local database could not be opened", databaseFailure)
+            CrashHandler.writeStartupWarning(this, "database.open", databaseFailure)
+        }
+        setContent {
+            if (databaseFailure != null) {
+                com.auralis.app.ui.DatabaseRecoveryScreen(container, databaseFailure)
+            } else {
+                AuralisRoot(viewModel)
+            }
+        }
     }
 
     /** Android 13+ needs an explicit grant before download notifications can be shown. */
@@ -44,6 +70,14 @@ class MainActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED
         if (granted) return
         runCatching { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // TEMP DIAGNOSTIC (Google login bug): a Clerk/OAuth callback delivered to this activity
+        // (rather than the SDK's SSOReceiverActivity) shows up here. Remove once fixed.
+        Log.i(TAG, "onNewIntent intent=${intent.dataString} action=${intent.action}")
     }
 
     override fun onStart() {
@@ -62,15 +96,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        (application as AuralisApp).container.autoScanner.onResume()
+        runCatching { (application as AuralisApp).container.autoScanner.onResume() }
+            .onFailure { Log.w(TAG, "autoScanner.onResume failed", it) }
         // Finish an update install after the user granted "install unknown apps", if needed.
-        viewModel.onAppResumed()
+        runCatching { viewModel.onAppResumed() }
+            .onFailure { Log.w(TAG, "onAppResumed failed", it) }
     }
 
     override fun onStop() {
+        runCatching { viewModel.onAppBackgrounded() }
+            .onFailure { Log.w(TAG, "onAppBackgrounded failed", it) }
         val future = controllerFuture
         controllerFuture = null
-        (application as AuralisApp).container.playback.attach(null)
+        runCatching { (application as AuralisApp).container.playback.attach(null) }
+            .onFailure { Log.w(TAG, "playback detach failed", it) }
         future?.let { MediaController.releaseFuture(it) }
         super.onStop()
     }

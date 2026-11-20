@@ -220,7 +220,7 @@ class MusicScanner(
             val artKey=artwork.saveEmbedded(embedded)?:artUri?.let{u->artwork.saveMediaStore(albumId){context.contentResolver.openInputStream(u)}}?:folderArt?.let{artwork.saveFolderArt(it)}
             val artColor=artKey?.let(artwork::colorOf)
             val ext=name.substringAfterLast('.',"").lowercase()
-            return TrackEntity(id=sha(uri.toString()),sourceId=sourceId,uri=uri.toString(),relativePath=path,displayName=name,sizeBytes=size,lastModified=modified,ext=ext,mime=mime,title=title,artist=artist,albumArtist=tag(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)?:artist,album=album,genres=tag(MediaMetadataRetriever.METADATA_KEY_GENRE).orEmpty(),trackNumber=tag(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.substringBefore('/')?.toIntOrNull()?:trackHint,discNumber=null,year=tag(MediaMetadataRetriever.METADATA_KEY_DATE)?.take(4)?.toIntOrNull()?:yearHint,composer=tag(MediaMetadataRetriever.METADATA_KEY_COMPOSER),durationMs=duration,codec=ext.uppercase().ifBlank{null},container=mime.substringAfter('/',"audio"),sampleRateHz=tag(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE)?.toIntOrNull(),bitDepth=null,bitrateBps=tag(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull(),channels=null,lossless=ext=="flac"||ext=="wav",replayGainTrackDb=null,replayGainAlbumDb=null,artKey=artKey,artColor=artColor,addedAt=System.currentTimeMillis(),tagError=error)
+            return TrackEntity(id=sha(uri.toString()),sourceId=sourceId,uri=uri.toString(),relativePath=path,displayName=name,sizeBytes=size,lastModified=modified,ext=ext,mime=mime,title=title,artist=artist,albumArtist=tag(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)?:artist,album=album,genres=tag(MediaMetadataRetriever.METADATA_KEY_GENRE).orEmpty(),trackNumber=tag(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.substringBefore('/')?.toIntOrNull()?:trackHint,discNumber=null,year=tag(MediaMetadataRetriever.METADATA_KEY_DATE)?.take(4)?.toIntOrNull()?:yearHint,composer=tag(MediaMetadataRetriever.METADATA_KEY_COMPOSER),durationMs=duration,codec=ext.uppercase().ifBlank{null},container=mime.substringAfter('/',"audio"),sampleRateHz=tag(SAMPLE_RATE_KEY)?.toIntOrNull(),bitDepth=null,bitrateBps=tag(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull(),channels=null,lossless=ext=="flac"||ext=="wav",replayGainTrackDb=null,replayGainAlbumDb=null,artKey=artKey,artColor=artColor,addedAt=System.currentTimeMillis(),tagError=error)
         } finally { try{r.release()}catch(e:Exception){Log.d(TAG,"Metadata retriever release failed",e)} }
     }
     private fun isExcludedPath(path:String):Boolean {
@@ -285,7 +285,7 @@ class MusicScanner(
         val rawVolume=docId.substring(0,idx)
         val rel=docId.substring(idx+1).trim('/').let{if(it.isEmpty()) "" else "$it/"}
         val primary=rawVolume.equals("primary",true)
-        val volume=if(primary) MediaStore.VOLUME_EXTERNAL_PRIMARY else rawVolume
+        val volume=if(primary) VOLUME_EXTERNAL_PRIMARY_NAME else rawVolume
         val absolutePrefix=if(primary)
             Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')+"/"+rel
         else "/storage/"+rawVolume+"/"+rel
@@ -378,5 +378,5 @@ class MusicScanner(
     private fun mimeFor(name:String)=when(name.substringAfterLast('.',"").lowercase()){ "mp3"->"audio/mpeg";"flac"->"audio/flac";"wav"->"audio/wav";"aac"->"audio/aac";"m4a"->"audio/mp4";"ogg"->"audio/ogg";"opus"->"audio/opus";else->"audio/*" }
     private fun sha(v:String)=java.security.MessageDigest.getInstance("SHA-256").digest(v.toByteArray()).take(16).joinToString(""){"%02x".format(it)}
     data class ScanResult(val tracks:Int,val failedSources:Int)
-    private companion object{const val TAG="AuralisScan";const val BATCH_SIZE=100;const val DELETE_BATCH_SIZE=500;val AUDIO_EXTENSIONS=setOf("mp3","flac","wav","aac","m4a","ogg","opus");val EXCLUDED_SEGMENTS=setOf("ringtones","alarms","notifications","recordings");val FOLDER_ART_NAMES=listOf("folder.jpg","cover.jpg","folder.png")}
+    private companion object{const val TAG="AuralisScan";const val BATCH_SIZE=100;const val DELETE_BATCH_SIZE=500;val AUDIO_EXTENSIONS=setOf("mp3","flac","wav","aac","m4a","ogg","opus");val EXCLUDED_SEGMENTS=setOf("ringtones","alarms","notifications","recordings");val FOLDER_ART_NAMES=listOf("folder.jpg","cover.jpg","folder.png");/** MediaMetadataRetriever.METADATA_KEY_SAMPLERATE, inlined (the field only exists on API 31+). */ const val SAMPLE_RATE_KEY=38;/** MediaStore.VOLUME_EXTERNAL_PRIMARY, inlined (the field only exists on API 29+). */ const val VOLUME_EXTERNAL_PRIMARY_NAME="external_primary"}
 }

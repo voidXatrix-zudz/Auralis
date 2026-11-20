@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.ServiceInfo
+import com.auralis.app.core.notifyIfPermitted
 import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -181,7 +182,7 @@ class AutoTagWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
                 .setContentText(if (changed == 0) "Nothing to change" else "$changed songs updated")
                 .setAutoCancel(true)
                 .build()
-            NotificationManagerCompat.from(applicationContext).notify(AutoTagManager.NOTIFICATION_ID, notification)
+            notifyIfPermitted(applicationContext, AutoTagManager.NOTIFICATION_ID, notification)
         }
     }
 }

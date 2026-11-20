@@ -78,10 +78,10 @@ object AudioAnalyzer {
             extractor.selectTrack(trackIndex)
             val format = extractor.getTrackFormat(trackIndex)
             val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
-            val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE, 44_100)
-            val channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT, 2).coerceAtLeast(1)
-            val bitDepth = format.getInteger(KEY_BITS_PER_SAMPLE, 16).coerceAtLeast(8)
-            val durationUs = format.getLong(MediaFormat.KEY_DURATION, 0L)
+            val sampleRate = format.intOr(MediaFormat.KEY_SAMPLE_RATE, 44_100)
+            val channels = format.intOr(MediaFormat.KEY_CHANNEL_COUNT, 2).coerceAtLeast(1)
+            val bitDepth = format.intOr(KEY_BITS_PER_SAMPLE, 16).coerceAtLeast(8)
+            val durationUs = format.longOr(MediaFormat.KEY_DURATION, 0L)
 
             val state = AnalysisState(sampleRate, channels, durationUs)
             val isRaw = mime == "audio/raw" || mime.startsWith("audio/pcm")
@@ -166,8 +166,8 @@ object AudioAnalyzer {
 
                     outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         val changed = codec.outputFormat
-                        pcmEncoding = changed.getInteger(MediaFormat.KEY_PCM_ENCODING, PCM_16)
-                        outputChannels = changed.getInteger(MediaFormat.KEY_CHANNEL_COUNT, outputChannels)
+                        pcmEncoding = changed.intOr(MediaFormat.KEY_PCM_ENCODING, PCM_16)
+                        outputChannels = changed.intOr(MediaFormat.KEY_CHANNEL_COUNT, outputChannels)
                             .coerceAtLeast(1)
                     }
                 }
@@ -185,8 +185,8 @@ object AudioAnalyzer {
         state: AnalysisState,
         onProgress: suspend (Float, String) -> Unit,
     ): Boolean {
-        val pcmEncoding = format.getInteger(MediaFormat.KEY_PCM_ENCODING, PCM_16)
-        val channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT, state.channels)
+        val pcmEncoding = format.intOr(MediaFormat.KEY_PCM_ENCODING, PCM_16)
+        val channels = format.intOr(MediaFormat.KEY_CHANNEL_COUNT, state.channels)
             .coerceAtLeast(1)
         val buffer = ByteBuffer.allocateDirect(256 * 1024).order(ByteOrder.LITTLE_ENDIAN)
         var lastReported = -1
@@ -424,3 +424,16 @@ object AudioAnalyzer {
         }
     }
 }
+
+/**
+ * Reads an int value from a [MediaFormat].
+ *
+ * `MediaFormat.getInteger(key, default)` / `getLong(key, default)` are API 29+, so on API 26–28 they
+ * would raise NoSuchMethodError. These helpers use the API 16 single-argument getters and fall back
+ * when the key is absent (or holds a different type) instead.
+ */
+private fun MediaFormat.intOr(key: String, fallback: Int): Int =
+    if (containsKey(key)) runCatching { getInteger(key) }.getOrDefault(fallback) else fallback
+
+private fun MediaFormat.longOr(key: String, fallback: Long): Long =
+    if (containsKey(key)) runCatching { getLong(key) }.getOrDefault(fallback) else fallback

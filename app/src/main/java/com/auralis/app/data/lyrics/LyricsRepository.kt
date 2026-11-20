@@ -383,7 +383,7 @@ class LyricsRepository(
         if (directoryPath.isNotBlank()) {
             val relative = directoryPath.trim('/').plus("/")
             runCatching {
-                val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                val collection = MediaStore.Files.getContentUri("external")
                 val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME)
                 context.contentResolver.query(
                     collection,

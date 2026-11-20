@@ -15,6 +15,7 @@ import com.auralis.app.data.update.UpdateManager
 import com.auralis.app.data.youtube.YouTubeRepository
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.performance.DevicePerformanceMonitor
+import java.io.File
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 
@@ -25,7 +26,47 @@ import okhttp3.OkHttpClient
 class AppContainer(context: Context) {
     val appContext: Context = context.applicationContext
 
-    val database: AuralisDatabase by lazy { AuralisDatabase.create(appContext) }
+    // Room opens lazily, so a broken migration or a corrupt file only surfaces on the first DAO call
+    // (deep inside the ViewModel) as a launch crash. Opening it here, once, lets the UI show a
+    // recovery screen instead. See [databaseFailureOrNull] and [resetDatabase].
+    private val databaseLock = Any()
+
+    @Volatile
+    private var databaseResult: Result<AuralisDatabase>? = null
+
+    val database: AuralisDatabase
+        get() = databaseResult?.getOrThrow() ?: synchronized(databaseLock) {
+            databaseResult?.getOrThrow() ?: openDatabase().also { databaseResult = it }.getOrThrow()
+        }
+
+    /** Opens the database once and returns the failure, or null when it opened cleanly. */
+    fun databaseFailureOrNull(): Throwable? {
+        synchronized(databaseLock) {
+            if (databaseResult == null) databaseResult = openDatabase()
+        }
+        return databaseResult?.exceptionOrNull()
+    }
+
+    /**
+     * Closes and deletes the on-device library database after the user explicitly confirms, so the
+     * next [database] access rebuilds an empty one. Only touches the app's own database files.
+     */
+    fun resetDatabase() {
+        synchronized(databaseLock) {
+            runCatching { databaseResult?.getOrNull()?.close() }
+            databaseResult = null
+        }
+        val base = appContext.getDatabasePath(AuralisDatabase.DB_NAME)
+        listOf(base, File("${base.path}-wal"), File("${base.path}-shm"), File("${base.path}-journal"))
+            .forEach { runCatching { if (it.exists()) it.delete() } }
+    }
+
+    private fun openDatabase(): Result<AuralisDatabase> = runCatching {
+        AuralisDatabase.create(appContext).also {
+            // Force the open (and any pending migration) now so a failure is reported here.
+            it.openHelper.writableDatabase
+        }
+    }
     /**
      * Clerk identity layer (Google + email sign-in, session persistence). Inert when no
      * CLERK_PUBLISHABLE_KEY was supplied at build time, so the app keeps working without it.
@@ -100,9 +141,48 @@ class AppContainer(context: Context) {
     }
     /** YouTube source: keyless search + lazily resolved audio stream URLs. */
     val youtubeAuth by lazy { com.auralis.app.data.youtube.YouTubeAuthStore(appContext) }
-    val youtube: YouTubeRepository by lazy { YouTubeRepository(youtubeHttp, youtubeAuth, settings) }
+    /** Off-screen WebView used to recover cookies without a dialog. */
+    val youTubeSilentRefresh by lazy {
+        com.auralis.app.data.youtube.YouTubeSilentRefresh(appContext)
+    }
+    /**
+     * QUICKJS-BACKED YOUTUBE.JS. One engine for the whole process, started on a private worker
+     * thread at launch and reused by every resolve; never touched from the main thread.
+     */
+    val youtubeJsEngine by lazy {
+        com.auralis.app.data.youtube.YouTubeJsEngine(appContext, youtubeHttp)
+    }
+    /** The YouTube.js provider; disabled by the Settings toggle, which the resolver checks. */
+    val youtubeJsProvider by lazy {
+        com.auralis.app.data.youtube.YouTubeJsProvider(youtubeJsEngine)
+    }
+    val youtube: YouTubeRepository by lazy {
+        YouTubeRepository(
+            youtubeHttp,
+            youtubeAuth,
+            settings,
+            database.youtubeCacheDao(),
+            silentRefresh = { youTubeSilentRefresh.refresh() },
+            youtubeJs = youtubeJsProvider,
+            metered = { com.auralis.app.data.network.NetworkQuality.isMetered(appContext) },
+        )
+    }
     /** Offline YouTube downloads: WorkManager jobs into the app's music folder. */
     val downloads by lazy { com.auralis.app.data.download.DownloadManager(appContext) }
+    /**
+     * Keeps the signed-in account live (liked songs, playlists) with efficient InnerTube polling.
+     * Started/stopped by the ViewModel from settings + session state; also drives a WorkManager tier.
+     */
+    val liveSync: com.auralis.app.data.youtube.LiveSyncManager by lazy {
+        com.auralis.app.data.youtube.LiveSyncManager(
+            appContext,
+            youtube,
+            youtubeAuth,
+            settings,
+            database,
+            performance,
+        )
+    }
     /** Spotify (Exportify) CSV imports: background matching into local playlists. */
     val spotifyImport by lazy { com.auralis.app.data.spotify.SpotifyImportManager(appContext) }
     /** Battery Saver + thermal source for Automatic performance. App-lifetime, no polling. */

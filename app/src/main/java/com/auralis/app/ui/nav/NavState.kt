@@ -1,6 +1,6 @@
 package com.auralis.app.ui.nav
 
-enum class Tab { HOME, SEARCH, LIBRARY, EQUALIZER, SETTINGS }
+enum class Tab { HOME, EXPLORE, SEARCH, LIBRARY, EQUALIZER, SETTINGS }
 
 /** Screens pushed on top of the tab content. More are added as their stages land. */
 sealed interface Destination {
@@ -21,8 +21,17 @@ sealed interface Destination {
     data class MetadataEditor(val trackId: String) : Destination
     data class AudioAnalysis(val trackId: String) : Destination
     data class PlaylistDetail(val playlistId: Long) : Destination
+    /** A YouTube Music playlist/album detail page (browse id, no local playlist row). */
+    data class YouTubePlaylist(
+        val id: String,
+        val title: String,
+        val coverUrl: String? = null,
+        val owner: String = "",
+    ) : Destination
     data class SpotifyImport(val importId: Long) : Destination
     data object Logs : Destination
+    /** Explore mood page: the streaming songs for one mood id. */
+    data class ExploreMood(val moodId: String) : Destination
 }
 
 /** Tab plus a back stack, same model as the web reference. Pure so it can be unit tested. */

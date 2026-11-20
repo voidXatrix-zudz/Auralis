@@ -112,7 +112,7 @@ data class PlaylistEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("trackId"), Index(value = ["playlistId", "trackId"], unique = true)],
+    indices = [Index("trackId"), Index(value = ["playlistId", "trackId"], unique = true), Index(value = ["playlistId", "position"])],
 )
 data class PlaylistEntryEntity(
     @PrimaryKey(autoGenerate = true) val entryId: Long = 0,
@@ -136,7 +136,7 @@ data class PlaylistEntryEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index(value = ["playlistId", "videoId"], unique = true)],
+    indices = [Index(value = ["playlistId", "videoId"], unique = true), Index(value = ["playlistId", "position"])],
 )
 data class PlaylistYtEntryEntity(
     @PrimaryKey(autoGenerate = true) val entryId: Long = 0,
@@ -196,7 +196,7 @@ data class FavoriteEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("lastPlayedAt")],
+    indices = [Index("lastPlayedAt"), Index("playCount")],
 )
 data class PlayHistoryEntity(
     @PrimaryKey val trackId: String,
@@ -211,7 +211,7 @@ data class SearchHistoryEntity(
 )
 
 /** YouTube songs hearted in-app. No foreign key: these are not library tracks. */
-@Entity(tableName = "youtube_likes")
+@Entity(tableName = "youtube_likes", indices = [Index("likedAt")])
 data class YouTubeLikeEntity(
     @PrimaryKey val videoId: String,
     val title: String,
@@ -380,4 +380,16 @@ data class ArtistImageEntity(
     val url: String,
     val source: String,
     val fetchedAt: Long,
+)
+
+/**
+ * Cached YouTube Music list responses so Home and Library open instantly, then refresh in the
+ * background. [cacheKey] is a stable list name (for example "home" or "browse:VLLM"); [payload] is
+ * a compact JSON list. Cleared on Disconnect. Never holds a cookie or a signed URL.
+ */
+@Entity(tableName = "youtube_cache", indices = [Index("refreshedAt")])
+data class YouTubeCacheEntity(
+    @PrimaryKey val cacheKey: String,
+    val payload: String,
+    val refreshedAt: Long,
 )

@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.auralis.app.domain.model.ThemeStyle
+import com.auralis.app.ui.theme.GlassTokens
 
 /** Normal / Glassmorphic picker with a static preview of each style (previews use fixed colours). */
 @Composable
@@ -62,7 +63,7 @@ private fun StyleCard(style: ThemeStyle, selected: Boolean, onClick: () -> Unit,
                 .height(84.dp)
                 .clip(previewShape)
                 .background(
-                    if (glass) Brush.linearGradient(listOf(Color(0xFF06070C), Color(0xFF2B2346), Color(0xFF14323F)))
+                    if (glass) Brush.linearGradient(listOf(GlassTokens.Indigo, GlassTokens.Indigo))
                     else Brush.linearGradient(listOf(Color(0xFF2A2D31), Color(0xFF2A2D31))),
                 ),
         ) {
@@ -74,14 +75,16 @@ private fun StyleCard(style: ThemeStyle, selected: Boolean, onClick: () -> Unit,
                         .fillMaxWidth(0.78f)
                         .height(44.dp)
                         .clip(panel)
-                        .background(Color.White.copy(alpha = 0.10f))
-                        .border(1.dp, Color.White.copy(alpha = 0.18f), panel),
+                        .background(GlassTokens.Cream6)
+                        .border(1.dp, GlassTokens.Cream14, panel),
                 )
             } else {
+                val barShape = RoundedCornerShape(5.dp)
+                val barColor = Color(0xFF3B3F45)
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(Modifier.fillMaxWidth(0.9f).height(10.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF3B3F45)))
-                    Box(Modifier.fillMaxWidth(0.6f).height(10.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF3B3F45)))
-                    Box(Modifier.fillMaxWidth(0.4f).height(10.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF4FA3A5)))
+                    Box(Modifier.fillMaxWidth(0.9f).height(10.dp).clip(barShape).background(barColor))
+                    Box(Modifier.fillMaxWidth(0.6f).height(10.dp).clip(barShape).background(barColor))
+                    Box(Modifier.fillMaxWidth(0.4f).height(10.dp).clip(barShape).background(Color(0xFF4FA3A5)))
                 }
             }
         }
@@ -91,7 +94,7 @@ private fun StyleCard(style: ThemeStyle, selected: Boolean, onClick: () -> Unit,
             color = scheme.onSurface,
         )
         Text(
-            if (glass) "Frosted glass, artwork ambience" else "Your existing look",
+            if (glass) "Frosted glass, cream on indigo" else "Your existing look",
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant,
         )

@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.ServiceInfo
+import com.auralis.app.core.notifyIfPermitted
 import android.os.Build
 import android.os.Environment
 import androidx.core.app.NotificationCompat
@@ -265,7 +266,7 @@ class DownloadWorker(appContext: Context, params: WorkerParameters) : CoroutineW
             .setContentText(title)
             .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(applicationContext).notify(DownloadManager.notificationId(videoId), notification) }
+        runCatching { notifyIfPermitted(applicationContext, DownloadManager.notificationId(videoId), notification) }
     }
 
     private companion object {

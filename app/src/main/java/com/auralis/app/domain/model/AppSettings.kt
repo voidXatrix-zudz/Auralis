@@ -40,12 +40,12 @@ data class AppSettings(
     val resumeOnOutputReconnect: Boolean = false,
     val carKeepScreenOn: Boolean = true,
     val themeStyle: ThemeStyle = ThemeStyle.NORMAL,
-    /** Glass dock tuning (Glassmorphism only): surface transparency 0-100%, default ~70%. */
-    val dockGlassTransparency: Int = 70,
-    /** Glass dock tuning: blur strength 0-100% mapping to ~0-30dp radius, default ~40%. */
-    val dockGlassBlur: Int = 40,
-    /** Glassmorphism "Glass clarity": 0 = tinted/smoked, 100 = clear/crystal. Default ~40. */
-    val glassClarity: Int = 40,
+    /** Glass dock tuning (Glassmorphism only): dock transparency 0-100%, default 45%. */
+    val dockGlassTransparency: Int = 45,
+    /** Glass blur strength 0-100% mapping to 0-40dp radius, default 55%. */
+    val dockGlassBlur: Int = 55,
+    /** Glassmorphism "Glass clarity": 0 = frosted/opaque, 100 = clear. Default 50. */
+    val glassClarity: Int = 50,
     /** Draw the 1dp specular hairline on glass surfaces. */
     val glassOutlines: Boolean = true,
     /** Watch MediaStore/folders for new, changed and removed songs and update the library automatically. */
@@ -60,14 +60,23 @@ data class AppSettings(
     val skippedUpdateTag: String = "",
     /** Opt-in YouTube Music integration (account, Home feed, liked songs). Off by default. */
     val youtubeIntegration: Boolean = false,
-    /** Set when the one-time post-sign-in "Connect YouTube Music" prompt was dismissed for good. */
-    val youtubeConnectPromptDismissed: Boolean = false,
+    /** Epoch millis until which the post-sign-in "Connect YouTube Music" prompt stays hidden. */
+    val youtubeConnectPromptSnoozeUntil: Long = 0L,
     /** Sync in-app plays to the YouTube Music account history. Default on once signed in. */
     val youtubeSyncHistory: Boolean = true,
     /** Mirror likes to the YouTube Music account. Default on once signed in. */
     val youtubeSyncLikes: Boolean = true,
     /** Mirror local playlists to the YouTube Music account. Default on once signed in. */
     val youtubeSyncPlaylists: Boolean = true,
+    /** Keep the signed-in account live with a small polling engine. Default on when integration is on. */
+    val liveSyncEnabled: Boolean = true,
+    /** Epoch millis of the last successful live-sync pass, so Settings can show "Last synced". */
+    val liveSyncLastSyncedAt: Long = 0L,
+    /**
+     * Hide anything that is not a catalogue song (music videos, UGC uploads, podcasts, long mixes).
+     * Off by default: the normal filter keeps official videos and typeless tracks under 12 minutes.
+     */
+    val youtubeSongsOnly: Boolean = false,
     /** Lyrics providers in lookup order (ids; includes disabled ones so order survives toggles). */
     val lyricsProviderOrder: List<String> = DEFAULT_LYRICS_PROVIDER_ORDER,
     /** Enabled lyrics providers. Defaults chosen for reliability; the rest are opt-in. */
@@ -92,6 +101,8 @@ data class AppSettings(
     val dataSaverEnabled: Boolean = false,
     /** Which resolver stack to use for YouTube streams. Default Auto (fastest). */
     val streamSource: StreamSourceMode = StreamSourceMode.AUTO,
+    /** Include the embedded YouTube.js provider in the Auto stream race. On by default. */
+    val youtubeJsEnabled: Boolean = true,
     /** Reduce blur and heavy visual effects even on capable devices. */
     val reduceBlurAndEffects: Boolean = false,
     /** Download the matching lyrics alongside a downloaded song. */

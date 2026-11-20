@@ -28,6 +28,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -75,6 +76,8 @@ class PlaybackService : MediaLibraryService() {
     /** Part M: per-song stream-resolve retries before giving up and skipping. */
     private var retryMediaId: String? = null
     private var retryCount = 0
+    /** Tap generation for which a "tap → audible" line was logged, so it is written once per tap. */
+    private var audibleLoggedGeneration: Int = -1
     /** Set for the next data-source open when a stream error triggers a re-resolve. */
     @Volatile private var forcedResolver: ResolverKind? = null
     @Volatile private var bypassResolveCache = false
@@ -144,7 +147,8 @@ class PlaybackService : MediaLibraryService() {
         ownedPlayer.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 Log.i(TAG, "audio session changed to $audioSessionId")
-                AudioEffectsEngine.attach(audioSessionId, settings)
+                runCatching { AudioEffectsEngine.attach(audioSessionId, settings) }
+                    .onFailure { Log.w(TAG, "Could not attach audio effects", it) }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -159,12 +163,23 @@ class PlaybackService : MediaLibraryService() {
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                // Live sync uses a slower cadence while a song is playing (still inside this FGS, so
+                // no second notification is ever created).
+                runCatching { (application as AuralisApp).container.liveSync.setPlaybackActive(isPlaying) }
                 if (isPlaying) {
                     // A skip's play landed; the latch is no longer needed.
                     autoPlayOnReady = false
+                    // One end-to-end "tap → audible" line per tap, for the Logs screen. The
+                    // generation (not the media id) is the key so re-tapping the same song logs again.
+                    val gen = PlaybackTiming.tapGeneration()
+                    if (gen != audibleLoggedGeneration && PlaybackTiming.isFreshTap()) {
+                        audibleLoggedGeneration = gen
+                        AppLog.i("Timing", "tap→audible in ${PlaybackTiming.sinceTap()} ms")
+                    }
                     // Some devices only expose a valid session id once the first frame is rendered,
                     // so make sure the effects are attached even if the change callback was missed.
-                    AudioEffectsEngine.attach(ownedPlayer.audioSessionId, settings)
+                    runCatching { AudioEffectsEngine.attach(ownedPlayer.audioSessionId, settings) }
+                        .onFailure { Log.w(TAG, "Could not attach audio effects", it) }
                     crossfade?.onPlaybackResumed()
                     startTicker()
                 } else {
@@ -176,6 +191,9 @@ class PlaybackService : MediaLibraryService() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     skipRetries = 0
+                    if (PlaybackTiming.isFreshTap()) {
+                        AppLog.i("Timing", "tap→ready in ${PlaybackTiming.sinceTap()} ms")
+                    }
                     // Lazy resolution finished: honour a pending user skip by starting playback
                     // unless the user paused it in the meantime (which clears the latch).
                     if (autoPlayOnReady) {
@@ -233,7 +251,8 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
         })
-        AudioEffectsEngine.attach(ownedPlayer.audioSessionId, settings)
+        runCatching { AudioEffectsEngine.attach(ownedPlayer.audioSessionId, settings) }
+            .onFailure { Log.w(TAG, "Could not attach audio effects", it) }
 
         val sessionActivity = packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
             PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -262,7 +281,8 @@ class PlaybackService : MediaLibraryService() {
                     if (!p.isPlaying) p.volume = newSettings.volume
                     runCatching { p.playbackParameters = PlaybackParameters(newSettings.speed.coerceIn(0.5f, 2f), 1f) }
                 }
-                AudioEffectsEngine.apply(newSettings)
+                runCatching { AudioEffectsEngine.apply(newSettings) }
+                    .onFailure { Log.w(TAG, "Could not apply audio effects", it) }
             }
         }
     }
@@ -353,7 +373,7 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<LibraryResult<MediaItem>> {
             val item = runBlocking(Dispatchers.IO) { itemFor(mediaId) }
             return Futures.immediateFuture(
-                if (item == null) LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                if (item == null) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
                 else LibraryResult.ofItem(item, null),
             )
         }
@@ -392,7 +412,7 @@ class PlaybackService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo,
             customCommand: androidx.media3.session.SessionCommand,
             args: android.os.Bundle,
-        ): ListenableFuture<SessionResult> = Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
+        ): ListenableFuture<SessionResult> = Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
     }
 
     private fun children(parentId: String, page: Int, pageSize: Int): List<MediaItem> {
@@ -500,13 +520,21 @@ class PlaybackService : MediaLibraryService() {
         bypassResolveCache = false
         val url = (application as AuralisApp).container.youtube
             .resolveStreamBlocking(videoId, quality, force, bypass)
-        AppLog.i("Timing", "stream URL ready in ${System.currentTimeMillis() - startedAt} ms")
+        val resolveMs = System.currentTimeMillis() - startedAt
+        AppLog.i(
+            "Timing",
+            if (PlaybackTiming.isFreshTap()) "tap→stream URL in ${PlaybackTiming.sinceTap()} ms (race ${resolveMs} ms)"
+            else "stream URL ready in ${resolveMs} ms",
+        )
         return dataSpec.withUri(Uri.parse(url))
     }
 
     /** Which resolver produced the last successful URL; the retry then prefers the other one. */
-    private fun resolverFromStatus(): ResolverKind =
-        if (StreamResolverStatus.lastResolver.contains("InnerTube")) ResolverKind.INNERTUBE else ResolverKind.NEWPIPE
+    private fun resolverFromStatus(): ResolverKind = when {
+        StreamResolverStatus.lastResolver.contains("InnerTube") -> ResolverKind.INNERTUBE
+        StreamResolverStatus.lastResolver.contains("YouTube.js") -> ResolverKind.YOUTUBEJS
+        else -> ResolverKind.NEWPIPE
+    }
 
     /**
      * True for failures a different stream URL can plausibly fix: an expired/blocked HTTP status

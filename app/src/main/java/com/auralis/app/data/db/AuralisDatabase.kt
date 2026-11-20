@@ -29,8 +29,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         YouTubeSyncOpEntity::class,
         ProviderCacheEntity::class,
         ArtistImageEntity::class,
+        YouTubeCacheEntity::class,
     ],
-    version = 10,
+    version = 12,
     exportSchema = true,
 ) abstract class AuralisDatabase : RoomDatabase() {
     abstract fun sourceDao(): SourceDao
@@ -48,6 +49,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     abstract fun youtubeSyncDao(): YouTubeSyncDao
     abstract fun providerCacheDao(): ProviderCacheDao
     abstract fun artistImageDao(): ArtistImageDao
+    abstract fun youtubeCacheDao(): YouTubeCacheDao
 
     companion object {
         /** Adds the play-event log without touching the existing library, queues or settings. */
@@ -282,9 +284,43 @@ import androidx.sqlite.db.SupportSQLiteDatabase
             }
         }
 
+        /** Adds the YouTube Music response cache. Existing user data untouched. */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `youtube_cache` (
+                        `cacheKey` TEXT NOT NULL,
+                        `payload` TEXT NOT NULL,
+                        `refreshedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`cacheKey`)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_youtube_cache_refreshedAt` ON `youtube_cache` (`refreshedAt`)")
+            }
+        }
+
+        /**
+         * Adds covering indexes for the hot ORDER BY clauses (playlist ordering, most-played,
+         * liked-by-date). Additive only: every index is created with IF NOT EXISTS and no table,
+         * column or row is touched, so existing user data is untouched.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_entries_playlistId_position` ON `playlist_entries` (`playlistId`, `position`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_yt_entries_playlistId_position` ON `playlist_yt_entries` (`playlistId`, `position`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_play_history_playCount` ON `play_history` (`playCount`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_youtube_likes_likedAt` ON `youtube_likes` (`likedAt`)")
+            }
+        }
+
         fun create(context: Context): AuralisDatabase =
-            Room.databaseBuilder(context.applicationContext, AuralisDatabase::class.java, "auralis.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+            Room.databaseBuilder(context.applicationContext, AuralisDatabase::class.java, DB_NAME)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 .build()
+
+        /** On-device library database file name (also used by the recovery screen). */
+        const val DB_NAME = "auralis.db"
     }
 }

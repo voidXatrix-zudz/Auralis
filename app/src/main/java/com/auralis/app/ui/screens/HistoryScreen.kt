@@ -1,7 +1,6 @@
 package com.auralis.app.ui.screens
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,27 +11,36 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.auralis.app.data.db.YouTubeRecentEntity
-import com.auralis.app.data.db.toDomain
 import com.auralis.app.domain.model.ThemeStyle
+import com.auralis.app.ui.HistoryEntry
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.glass.GlassHistoryScreen
+import com.auralis.app.ui.performance.LocalPerformanceProfile
+import com.auralis.app.ui.performance.listContentType
 import com.auralis.app.ui.theme.LocalThemeStyle
 
-/** Play history of streamed songs: last played time and play count, with a clear-all button. */
+/**
+ * One merged history: local library songs and streamed YouTube songs, newest first. Only plays of
+ * ten seconds or more are stored, and tapping a row queues the rest of the list.
+ */
 @Composable
 fun HistoryScreen(
-    entries: List<YouTubeRecentEntity>,
+    entries: List<HistoryEntry>,
     currentId: String?,
-    onPlay: (YouTubeRecentEntity) -> Unit,
+    onPlay: (HistoryEntry) -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -40,40 +48,45 @@ fun HistoryScreen(
         GlassHistoryScreen(entries, currentId, onPlay, onClear, modifier)
         return
     }
+    var confirmingClear by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("History", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-            TextButton(onClick = onClear, enabled = entries.isNotEmpty()) { Text("Clear history") }
+            TextButton(onClick = { confirmingClear = true }, enabled = entries.isNotEmpty()) {
+                Text("Clear history")
+            }
         }
         if (entries.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    "Songs you play for 30 seconds or more show up here.",
+                    "Songs you listen to for 10 seconds or more appear here",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         } else {
+            val profile = LocalPerformanceProfile.current
             LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-                items(entries, key = { it.videoId }) { entry ->
-                    val track = entry.toDomain()
+                items(entries, key = { "${it.track.id}:${it.playedAt}" }, contentType = profile.listContentType("history")) { entry ->
                     Row(
-                        Modifier.fillMaxWidth().clickable { onPlay(entry) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                        Modifier.fillMaxWidth().clickable { onPlay(entry) }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        ArtworkImage(track, Modifier.size(48.dp))
+                        ArtworkImage(entry.track, Modifier.size(48.dp))
                         Column(Modifier.weight(1f).padding(start = 12.dp, end = 4.dp)) {
                             Text(
-                                entry.title.ifBlank { "Unknown title" },
+                                entry.track.title.ifBlank { entry.track.displayName.ifBlank { "Unknown title" } },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.titleSmall,
-                                color = if ("yt:${entry.videoId}" == currentId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                color = if (entry.track.id == currentId) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                entry.artist.ifBlank { "Unknown artist" },
+                                entry.track.artist.ifBlank { "Unknown artist" },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,
@@ -81,7 +94,7 @@ fun HistoryScreen(
                             )
                         }
                         Text(
-                            "${timeAgo(entry.playedAt)} · ${entry.playCount}×",
+                            timeAgo(entry.playedAt),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -89,6 +102,19 @@ fun HistoryScreen(
                 }
             }
         }
+    }
+    if (confirmingClear) {
+        AlertDialog(
+            onDismissRequest = { confirmingClear = false },
+            title = { Text("Clear history?") },
+            text = { Text("This removes every local and YouTube song from your History. Your songs and playlists stay.") },
+            confirmButton = {
+                TextButton(onClick = { confirmingClear = false; onClear() }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingClear = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 

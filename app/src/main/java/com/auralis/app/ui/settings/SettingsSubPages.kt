@@ -7,19 +7,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
@@ -45,7 +43,6 @@ import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,12 +64,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.auralis.app.data.lyrics.LyricsProviderCatalog
 import com.auralis.app.data.metadata.MetadataProviderCatalog
+import com.auralis.app.data.youtube.LiveSyncState
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.PerformanceMode
@@ -80,15 +77,18 @@ import com.auralis.app.domain.model.ReplayGainMode
 import com.auralis.app.domain.model.StreamQuality
 import com.auralis.app.domain.model.StreamSourceMode
 import com.auralis.app.domain.model.ThemeMode
-import com.auralis.app.domain.model.ThemeStyle
+import com.auralis.app.logging.refreshAgeText
+import com.auralis.app.ui.debugCrashTrigger
 import com.auralis.app.ui.components.PlayerBackgroundSelector
 import com.auralis.app.ui.components.ThemeStyleSelector
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
 import com.auralis.app.ui.theme.Accents
-import com.auralis.app.ui.theme.GlassTokens
+import com.auralis.app.ui.theme.auralisSliderColors
+import com.auralis.app.ui.theme.auralisSwitchColors
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 @Composable
 private fun qualityValue(q: StreamQuality): String =
@@ -142,8 +142,6 @@ private fun StreamQualityRow(
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-
 @Composable
 private fun PlaybackSettingsPage(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
     SettingsPage("Playback & Quality", onBack) {
@@ -158,6 +156,13 @@ private fun PlaybackSettingsPage(settings: AppSettings, actions: SettingsActions
                     actions.onUpdate { it.copy(dataSaverEnabled = on) }
                 }
                 SettingsDivider()
+                SettingsSwitchRow(
+                    Icons.Rounded.Bolt,
+                    "YouTube.js source",
+                    "Race the embedded YouTube.js engine alongside the others",
+                    settings.youtubeJsEnabled,
+                ) { on -> actions.onUpdate { it.copy(youtubeJsEnabled = on) } }
+                SettingsDivider()
                 var open by remember { mutableStateOf(false) }
                 SettingsValueRow(
                     Icons.Rounded.SwapHoriz,
@@ -166,17 +171,19 @@ private fun PlaybackSettingsPage(settings: AppSettings, actions: SettingsActions
                         StreamSourceMode.AUTO -> "Auto"
                         StreamSourceMode.NEWPIPE -> "NewPipeExtractor only"
                         StreamSourceMode.INNERTUBE -> "InnerTube only"
+                        StreamSourceMode.YOUTUBEJS -> "YouTube.js only"
                     },
                     summary = "Auto picks the fastest resolver",
                 ) { open = true }
                 if (open) {
                     ChoiceDialog(
                         title = "Stream source",
-                        helper = "Auto races both resolvers and keeps the first result.",
+                        helper = "Auto races every enabled resolver and keeps the first result.",
                         options = listOf(
                             StreamSourceMode.AUTO to "Auto (fastest)",
                             StreamSourceMode.NEWPIPE to "NewPipeExtractor only",
                             StreamSourceMode.INNERTUBE to "InnerTube only",
+                            StreamSourceMode.YOUTUBEJS to "YouTube.js only",
                         ),
                         selected = settings.streamSource,
                         onSelect = { picked -> actions.onUpdate { it.copy(streamSource = picked) } },
@@ -247,11 +254,9 @@ private fun SliderSetting(title: String, valueLabel: String, value: Float, range
             Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
             Text(valueLabel, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Slider(value = value, onValueChange = onChange, valueRange = range, steps = steps)
+        Slider(value = value, onValueChange = onChange, valueRange = range, steps = steps, colors = auralisSliderColors())
     }
 }
-
-// ---------------------------------------------------------------------------------------------
 
 @Composable
 private fun MetadataLyricsSettingsPage(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
@@ -274,11 +279,15 @@ private fun MetadataLyricsSettingsPage(settings: AppSettings, actions: SettingsA
                         IconButton(onClick = { actions.onMoveLyricsProvider(id, 1) }, enabled = index < order.lastIndex) {
                             Icon(Icons.Rounded.KeyboardArrowDown, "Move down")
                         }
-                        Switch(checked = id in settings.lyricsProvidersEnabled, onCheckedChange = { on ->
-                            val next = if (on) settings.lyricsProvidersEnabled + id else settings.lyricsProvidersEnabled - id
-                            actions.onUpdate { it.copy(lyricsProvidersEnabled = next) }
-                            actions.onLyricsSettingsChanged()
-                        })
+                        Switch(
+                            checked = id in settings.lyricsProvidersEnabled,
+                            onCheckedChange = { on ->
+                                val next = if (on) settings.lyricsProvidersEnabled + id else settings.lyricsProvidersEnabled - id
+                                actions.onUpdate { it.copy(lyricsProvidersEnabled = next) }
+                                actions.onLyricsSettingsChanged()
+                            },
+                            colors = auralisSwitchColors(),
+                        )
                     }
                 }
             }
@@ -354,8 +363,6 @@ private fun LastFmKeyDialog(current: String, onSave: (String) -> Unit, onDismiss
     )
 }
 
-// ---------------------------------------------------------------------------------------------
-
 @Composable
 private fun DownloadsSettingsPage(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -377,27 +384,99 @@ private fun DownloadsSettingsPage(settings: AppSettings, actions: SettingsAction
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-
 @Composable
 private fun YouTubeMusicSettingsPage(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
+    // Opening the page is one of the two moments a flagged session is re-checked.
+    LaunchedEffect(Unit) { actions.onYouTubeHeal() }
     SettingsPage("YouTube Music", onBack) {
         item {
             SettingsGroupCard {
-                SettingsSwitchRow(Icons.Rounded.MusicNote, "YouTube Music integration", "Home feed, liked songs and playlists", settings.youtubeIntegration) { on -> actions.onUpdate { it.copy(youtubeIntegration = on) } }
-                if (settings.youtubeIntegration) {
-                    SettingsDivider()
-                    if (actions.youtubeSignedIn) {
-                        SettingsRow(Icons.Rounded.Person, actions.youtubeName.ifBlank { "Signed in" }, onClick = actions.onYouTubeSignOut) {
-                            Text("Sign out", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                SettingsSwitchRow(
+                    Icons.Rounded.MusicNote,
+                    "YouTube Music integration",
+                    "Home feed, liked songs and playlists",
+                    settings.youtubeIntegration,
+                ) { on -> actions.onUpdate { it.copy(youtubeIntegration = on) } }
+                SettingsDivider()
+                when {
+                    // A stored blob that cannot be decrypted: ask for a fresh login instead of
+                    // silently claiming "Not connected".
+                    actions.youtubeReadError != null -> {
+                        SettingsRow(
+                            Icons.Rounded.Login,
+                            "Session unreadable, log in again",
+                            summary = "Stored session could not be decrypted (${actions.youtubeReadError})",
+                            onClick = actions.onYouTubeSignIn,
+                        )
+                    }
+                    // A stored cookie that YouTube rejected: keep the switch on, offer a re-login.
+                    actions.youtubeExpired -> {
+                        SettingsRow(
+                            Icons.Rounded.Login,
+                            if (actions.youtubeName.isBlank()) {
+                                "Session expired, log in again"
+                            } else {
+                                "Continue as ${actions.youtubeName}"
+                            },
+                            summary = "Session expired — last refresh " +
+                                refreshAgeText(actions.youtubeLastRefreshedAt),
+                            onClick = actions.onYouTubeSignIn,
+                        )
+                    }
+                    actions.youtubeSignedIn -> {
+                        SettingsRow(
+                            Icons.Rounded.Person,
+                            "Connected as ${actions.youtubeName.ifBlank { "YouTube Music" }}",
+                            summary = "Signed in with Google",
+                            onClick = actions.onYouTubeSignOut,
+                        ) {
+                            Text(
+                                "Disconnect",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.error,
+                            )
                         }
-                    } else {
-                        SettingsRow(Icons.Rounded.Login, "Sign in with Google", summary = "Connects your YouTube Music account", onClick = actions.onYouTubeSignIn)
+                        SettingsDivider()
+                        SettingsRow(
+                            Icons.Rounded.SwapHoriz,
+                            "Use a different account",
+                            summary = "Signs out on this device and opens the Google chooser",
+                            onClick = actions.onYouTubeDifferentAccount,
+                        )
+                    }
+                    settings.youtubeIntegration -> {
+                        SettingsRow(
+                            Icons.Rounded.Login,
+                            "Log in to YouTube Music",
+                            summary = "Connects your YouTube Music account",
+                            onClick = actions.onYouTubeSignIn,
+                        )
+                    }
+                    else -> {
+                        SettingsRow(
+                            Icons.Rounded.Login,
+                            "Sign in with Google",
+                            summary = "Turn on YouTube Music integration to connect",
+                            onClick = null,
+                        )
                     }
                 }
             }
         }
-        if (settings.youtubeIntegration && actions.youtubeSignedIn) {
+        if (settings.youtubeIntegration) {
+            item { SettingsSectionLabel("Library filter") }
+            item {
+                SettingsGroupCard {
+                    SettingsSwitchRow(
+                        Icons.Rounded.MusicNote,
+                        "Songs only (strict)",
+                        "Hide music videos, uploads, podcasts and long mixes",
+                        settings.youtubeSongsOnly,
+                    ) { on -> actions.onUpdate { it.copy(youtubeSongsOnly = on) } }
+                }
+            }
+        }
+        if (actions.youtubeSignedIn) {
             item { SettingsSectionLabel("Sync to YouTube") }
             item {
                 SettingsGroupCard {
@@ -408,11 +487,64 @@ private fun YouTubeMusicSettingsPage(settings: AppSettings, actions: SettingsAct
                     SettingsSwitchRow(Icons.Rounded.PlaylistPlay, "Sync playlists", "Mirror local playlists to your account", settings.youtubeSyncPlaylists) { on -> actions.onUpdate { it.copy(youtubeSyncPlaylists = on) } }
                 }
             }
+            item { SettingsSectionLabel("Account and sync") }
+            item {
+                SettingsGroupCard {
+                    SettingsSwitchRow(
+                        Icons.Rounded.Sync,
+                        "Live sync",
+                        "Keep liked songs and playlists up to date automatically",
+                        actions.liveSyncEnabled,
+                    ) { on -> actions.onToggleLiveSync(on) }
+                    if (actions.liveSyncEnabled) {
+                        SettingsDivider()
+                        val status = liveSyncStatus(actions.liveSyncState, actions.liveSyncLastSyncedAt)
+                        SettingsRow(
+                            Icons.Rounded.Insights,
+                            "Last synced",
+                            summary = status,
+                        )
+                        SettingsDivider()
+                        SettingsRow(
+                            Icons.Rounded.Refresh,
+                            "Sync now",
+                            summary = "Check likes and playlists immediately",
+                            onClick = actions.onSyncLiveNow,
+                        )
+                    }
+                }
+            }
+            item { SettingsSectionLabel("Diagnostics") }
+            item {
+                SettingsGroupCard {
+                    SettingsRow(
+                        Icons.Rounded.Wifi,
+                        "Test YouTube connection",
+                        summary = if (actions.youTubeTestRunning) {
+                            "Checking account, playlists and liked songs..."
+                        } else {
+                            "Checks account, playlists and liked songs in order"
+                        },
+                        onClick = if (actions.youTubeTestRunning) null else actions.onYouTubeTest,
+                    )
+                    if (actions.youTubeTestLines.isNotEmpty()) {
+                        SettingsDivider()
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            actions.youTubeTestLines.forEach { line ->
+                                Text(
+                                    line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
-
-// ---------------------------------------------------------------------------------------------
 
 @Composable
 private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
@@ -466,10 +598,6 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
     }
 }
 
-
-
-// ---------------------------------------------------------------------------------------------
-
 @Composable
 private fun PerformanceSettingsPage(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
     val profile = LocalPerformanceProfile.current
@@ -492,8 +620,6 @@ private fun PerformanceSettingsPage(settings: AppSettings, actions: SettingsActi
         }
     }
 }
-
-// ---------------------------------------------------------------------------------------------
 
 @Composable
 private fun StorageSettingsPage(settings: AppSettings, sources: List<MusicSource>, actions: SettingsActions, onBack: () -> Unit) {
@@ -556,14 +682,17 @@ private fun StorageSettingsPage(settings: AppSettings, sources: List<MusicSource
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-
 @Composable
 private fun AboutSettingsPage(actions: SettingsActions, onBack: () -> Unit) {
     SettingsPage("About", onBack) {
         item {
             SettingsGroupCard {
-                SettingsRow(Icons.Rounded.Info, "AURALIS ${com.auralis.app.BuildConfig.VERSION_NAME}", summary = "Local-first music player")
+                SettingsRow(
+                    Icons.Rounded.Info,
+                    "AURALIS ${com.auralis.app.BuildConfig.VERSION_NAME}",
+                    modifier = Modifier.debugCrashTrigger("settings-version"),
+                    summary = "Local-first music player",
+                )
                 SettingsDivider()
                 SettingsRow(Icons.Rounded.Refresh, "Check for updates", summary = updateSubtitle(actions), onClick = actions.onCheckForUpdates)
                 SettingsDivider()
@@ -585,3 +714,34 @@ private fun updateSubtitle(actions: SettingsActions): String = when {
 }
 
 private fun label(raw: String): String = raw.lowercase().replaceFirstChar { it.uppercase() }
+
+/** "Live · synced 12s ago". Re-reads the clock calmly (every 5 s); never animates continuously. */
+@Composable
+private fun liveSyncStatus(state: LiveSyncState, lastSyncedAt: Long): String {
+    val now by produceState(initialValue = System.currentTimeMillis(), lastSyncedAt, state) {
+        while (true) {
+            delay(5_000)
+            value = System.currentTimeMillis()
+        }
+    }
+    val label = when (state) {
+        LiveSyncState.Disabled -> "Off"
+        LiveSyncState.Idle -> "Paused"
+        LiveSyncState.Syncing -> "Syncing"
+        LiveSyncState.Live -> "Live"
+        LiveSyncState.Offline -> "Offline"
+        LiveSyncState.AuthExpired -> "Reconnect needed"
+        LiveSyncState.Error -> "Retrying"
+    }
+    val age = if (lastSyncedAt <= 0L) {
+        "never"
+    } else {
+        val seconds = (now - lastSyncedAt).coerceAtLeast(0L) / 1000L
+        when {
+            seconds < 60 -> "${seconds}s ago"
+            seconds < 3600 -> "${seconds / 60}m ago"
+            else -> "${seconds / 3600}h ago"
+        }
+    }
+    return "$label · synced $age"
+}

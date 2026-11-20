@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.QueueMusic
@@ -45,11 +46,14 @@ import com.auralis.app.data.db.PlaylistYtEntryEntity
 import com.auralis.app.data.db.SpotifyImportEntity
 import com.auralis.app.data.db.toDomain
 import com.auralis.app.data.youtube.YtPlaylist
+import com.auralis.app.data.youtube.routeLibraryPlay
+import com.auralis.app.data.youtube.LiveSyncState
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.components.ArtistAvatar
+import com.auralis.app.ui.components.LiveDot
 
 /** The three persisted library orderings (Part R). */
 enum class LibrarySortOption(val id: String, val label: String) {
@@ -185,6 +189,10 @@ fun LibraryScreen(
     youtubePlaylists: List<YtPlaylist> = emptyList(),
     onPlayYouTubeTrack: (Track) -> Unit = onPlay,
     onOpenYouTubePlaylist: (YtPlaylist) -> Unit = {},
+    /** The card's small play button: streams the playlist without opening the detail page. */
+    onPlayYouTubePlaylist: (YtPlaylist) -> Unit = onOpenYouTubePlaylist,
+    /** The YouTube song currently resolving a stream; its row shows a spinner instead of Play. */
+    youtubeResolvingId: String? = null,
     onRefreshYouTubeLibrary: () -> Unit = {},
     downloads: List<Track> = emptyList(),
     onOpenHistory: () -> Unit = {},
@@ -206,6 +214,23 @@ fun LibraryScreen(
     onDeletePlaylist: (Long) -> Unit = {},
     onPlayPlaylist: (Long) -> Unit = {},
     onShufflePlaylist: (Long) -> Unit = {},
+    /** Non-null when the account playlist fetch failed; the list shows a retry row instead of "none". */
+    youtubeLibraryError: String? = null,
+    onRetryYouTubeLibrary: () -> Unit = {},
+    /** True when YouTube Music is connected *and* a session is usable. Suppresses the empty hero. */
+    youtubeSignedIn: Boolean = false,
+    /** First-load / background refresh indicator; keeps the hero from flashing before data lands. */
+    youtubeLibraryLoading: Boolean = false,
+    /** False until persisted settings have been read once. */
+    libraryReady: Boolean = true,
+    /** False when local audio access was denied: the Local Files tile offers the permission instead. */
+    hasAudioPermission: Boolean = true,
+    onRequestAudioPermission: () -> Unit = {},
+    /** Starts a YouTube song *and* queues the rest of the list it was tapped in. */
+    onPlayYouTubeTrackFrom: (Track, List<Track>) -> Unit = { track, _ -> onPlayYouTubeTrack(track) },
+    /** Live-sync state shown as a tiny marker on the Liked Songs tile (both themes). */
+    liveSyncState: LiveSyncState = LiveSyncState.Disabled,
+    liveSyncPulse: Long = 0L,
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
         GlassLibraryScreen(
@@ -216,6 +241,13 @@ fun LibraryScreen(
             onOpenPlaylist, onImportSpotify, spotifyImports, onOpenImport, onAutoFixTags,
             playlistEntries, playlistYtEntries, profileImageUrl, accountName, librarySort, libraryGridView,
             onLibrarySortChange, onLibraryGridChange, onRenamePlaylist, onDeletePlaylist, onPlayPlaylist, onShufflePlaylist,
+            youtubeLibraryError, onRetryYouTubeLibrary,
+            youtubeSignedIn, youtubeLibraryLoading, libraryReady, hasAudioPermission, onRequestAudioPermission,
+            onPlayYouTubeTrackFrom,
+            onPlayYouTubePlaylist = onPlayYouTubePlaylist,
+            youtubeResolvingId = youtubeResolvingId,
+            liveSyncState = liveSyncState,
+            liveSyncPulse = liveSyncPulse,
         )
         return
     }
@@ -256,8 +288,28 @@ fun LibraryScreen(
         (youtubeLiked + tracks.filter { it.id in favorites }).distinctBy { it.id }
     }
 
-    val libraryEmpty = tracks.isEmpty() && playlists.isEmpty() && youtubePlaylists.isEmpty() &&
-        downloads.isEmpty() && youtubeLiked.isEmpty() && spotifyImports.isEmpty()
+    // With YouTube Music connected and signed in the Library always has something to show, so the
+    // "add music / scan" hero must never replace it — including when local access was denied.
+    val youtubeActive = youtubeEnabled && youtubeSignedIn
+    val libraryEmpty = isLibraryEmpty(
+        youtubeEnabled = youtubeEnabled,
+        youtubeSignedIn = youtubeSignedIn,
+        localTracks = tracks.size,
+        playlists = playlists.size,
+        youtubePlaylists = youtubePlaylists.size,
+        downloads = downloads.size,
+        youtubeLiked = youtubeLiked.size,
+        spotifyImports = spotifyImports.size,
+        youtubeError = youtubeLibraryError,
+    )
+    // Liked Songs mixes YouTube streams and local favourites: the tap must follow the row's kind.
+    val likedOnPlay: (Track) -> Unit = { track ->
+        routeLibraryPlay(
+            track,
+            playLocal = onPlay,
+            playYouTube = { onPlayYouTubeTrackFrom(it, likedMerged) },
+        )
+    }
 
     Column(modifier.fillMaxSize()) {
         // Large title + "+" pill, library search, and the profile avatar (opens Settings).
@@ -274,6 +326,32 @@ fun LibraryScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            Box {
+                Row(
+                    Modifier
+                        .heightIn(min = 40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f), CircleShape)
+                        .clickable { onOpenHistory() }
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.History,
+                        null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "History",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
             Box {
                 Row(
                     Modifier
@@ -354,12 +432,12 @@ fun LibraryScreen(
         }
 
         when {
-            filter == null && section == null && libraryEmpty ->
+            filter == null && section == null && libraryEmpty && libraryReady ->
                 EmptyLibraryHero(onAddMusic, onScan, Modifier.weight(1f), scanning, onOpenSettings, sources.isEmpty())
             section != null -> {
-                SectionHeader(section!!, onBack = { section = null })
+                SectionHeader(section!!, onBack = { section = null }, liveState = liveSyncState, livePulse = liveSyncPulse)
                 when (section) {
-                    LibrarySection.LIKED -> TrackRows(likedMerged, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                    LibrarySection.LIKED -> TrackRows(likedMerged, favorites, currentId, likedOnPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext, resolvingId = youtubeResolvingId)
                     LibrarySection.LOCAL -> TrackRows(localSongs, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
                     LibrarySection.DOWNLOADED -> TrackRows(downloads, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
                     else -> Unit
@@ -369,30 +447,68 @@ fun LibraryScreen(
             filter == LibraryFilter.ALBUMS -> AlbumsList(tracks, onPlayAlbum, onQueueAlbum, Modifier.weight(1f))
             else -> {
                 val showTiles = filter == null
+                // First frame, or a signed-in library whose playlists are still arriving: show a
+                // thin bar so the hero cannot flash before cached data is read.
+                val firstLoad = !libraryReady ||
+                    (youtubeActive && youtubeLibraryLoading && youtubePlaylists.isEmpty())
                 LazyColumn(
                     Modifier.weight(1f),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    if (firstLoad) {
+                        item {
+                            LinearProgressIndicator(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
                     if (showTiles) {
                         val tiles = listOf(
                             LibraryTile(LibraryTileType.LIKED, "Liked Songs", "${likedMerged.size} songs"),
-                            LibraryTile(LibraryTileType.LOCAL, "Local Files", "${localSongs.size} songs"),
+                            LibraryTile(
+                                LibraryTileType.LOCAL,
+                                "Local Files",
+                                if (hasAudioPermission) "${localSongs.size} songs" else "Allow access",
+                            ),
                             LibraryTile(LibraryTileType.DOWNLOADED, "Downloaded", "${downloads.size} songs"),
                         )
+                        val openTile: (LibraryTile) -> Unit = { tile ->
+                            if (tile.type == LibraryTileType.LOCAL && !hasAudioPermission) onRequestAudioPermission()
+                            else section = tile.type.toSection()
+                        }
                         if (libraryGridView) {
-                            items(tiles.chunked(2)) { pair ->
+                            items(tiles.chunked(2), key = { it.first().type }) { pair ->
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                    pair.forEach { tile -> LibraryTileCard(tile, Modifier.weight(1f)) { section = tile.type.toSection() } }
+                                    pair.forEach { tile -> LibraryTileCard(tile, Modifier.weight(1f), liveSyncState, liveSyncPulse) { openTile(tile) } }
                                     if (pair.size == 1) Spacer(Modifier.weight(1f))
                                 }
                             }
                         } else {
-                            items(tiles) { tile -> LibraryTileRow(tile) { section = tile.type.toSection() } }
+                            items(tiles, key = { it.type }) { tile -> LibraryTileRow(tile, liveSyncState, liveSyncPulse) { openTile(tile) } }
                         }
                     }
 
-                    if (playlistRows.isEmpty() && !showTiles) {
+                    // A failed account fetch is not an empty library: say so and offer a retry,
+                    // otherwise the user sees "No playlists yet" and believes their data is gone.
+                    if (youtubeLibraryError != null) {
+                        item {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    youtubeLibraryError,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = onRetryYouTubeLibrary) { Text("Retry") }
+                            }
+                        }
+                    }
+
+                    if (playlistRows.isEmpty() && !showTiles && youtubeLibraryError == null) {
                         item {
                             Box(Modifier.fillMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) {
                                 Text("No playlists yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -408,7 +524,7 @@ fun LibraryScreen(
                                         row = row,
                                         modifier = Modifier.weight(1f),
                                         onOpen = { openPlaylist(row, onOpenPlaylist, onOpenYouTubePlaylist) },
-                                        onPlay = { row.localPlaylistId?.let(onPlayPlaylist) ?: row.ytPlaylist?.let(onOpenYouTubePlaylist) },
+                                        onPlay = { row.localPlaylistId?.let(onPlayPlaylist) ?: row.ytPlaylist?.let(onPlayYouTubePlaylist) },
                                         onShuffle = { row.localPlaylistId?.let(onShufflePlaylist) },
                                         onRename = { renameTarget = row },
                                         onDelete = { deleteTarget = row },
@@ -422,7 +538,7 @@ fun LibraryScreen(
                             LibraryPlaylistRowItem(
                                 row = row,
                                 onOpen = { openPlaylist(row, onOpenPlaylist, onOpenYouTubePlaylist) },
-                                onPlay = { row.localPlaylistId?.let(onPlayPlaylist) ?: row.ytPlaylist?.let(onOpenYouTubePlaylist) },
+                                onPlay = { row.localPlaylistId?.let(onPlayPlaylist) ?: row.ytPlaylist?.let(onPlayYouTubePlaylist) },
                                 onShuffle = { row.localPlaylistId?.let(onShufflePlaylist) },
                                 onRename = { renameTarget = row },
                                 onDelete = { deleteTarget = row },
@@ -484,7 +600,12 @@ private fun LibraryTileType.toSection(): LibrarySection = when (this) {
 }
 
 @Composable
-private fun SectionHeader(section: LibrarySection, onBack: () -> Unit) {
+private fun SectionHeader(
+    section: LibrarySection,
+    onBack: () -> Unit,
+    liveState: LiveSyncState = LiveSyncState.Disabled,
+    livePulse: Long = 0L,
+) {
     val title = when (section) {
         LibrarySection.LIKED -> "Liked Songs"
         LibrarySection.LOCAL -> "Local Files"
@@ -493,11 +614,20 @@ private fun SectionHeader(section: LibrarySection, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Back to library") }
         Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (section == LibrarySection.LIKED) {
+            Spacer(Modifier.size(8.dp))
+            LiveDot(liveState, livePulse)
+        }
     }
 }
 
 @Composable
-private fun LibraryTileRow(tile: LibraryTile, onClick: () -> Unit) {
+private fun LibraryTileRow(
+    tile: LibraryTile,
+    liveState: LiveSyncState = LiveSyncState.Disabled,
+    livePulse: Long = 0L,
+    onClick: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -505,17 +635,35 @@ private fun LibraryTileRow(tile: LibraryTile, onClick: () -> Unit) {
         LibraryTileArt(tile.type, Modifier.size(64.dp))
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(tile.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(tile.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(tile.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (tile.type == LibraryTileType.LIKED) {
+                    Spacer(Modifier.size(6.dp))
+                    LiveDot(liveState, livePulse)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun LibraryTileCard(tile: LibraryTile, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun LibraryTileCard(
+    tile: LibraryTile,
+    modifier: Modifier = Modifier,
+    liveState: LiveSyncState = LiveSyncState.Disabled,
+    livePulse: Long = 0L,
+    onClick: () -> Unit,
+) {
     Column(modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(8.dp)) {
         LibraryTileArt(tile.type, Modifier.fillMaxWidth().aspectRatio(1f))
         Text(tile.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
-        Text(tile.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(tile.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (tile.type == LibraryTileType.LIKED) {
+                Spacer(Modifier.size(6.dp))
+                LiveDot(liveState, livePulse)
+            }
+        }
     }
 }
 
@@ -633,7 +781,7 @@ private fun PlaylistMosaic(row: LibraryPlaylistRow, modifier: Modifier = Modifie
 private fun ArtistsList(tracks: List<Track>, modifier: Modifier = Modifier) {
     val values = remember(tracks) { tracks.map { it.artist }.filter { it.isNotBlank() }.distinct().sorted() }
     LazyColumn(modifier, contentPadding = PaddingValues(16.dp)) {
-        items(values) { artist ->
+        items(values, key = { it }) { artist ->
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 ArtistAvatar(name = artist, size = 44.dp)
                 Text(artist, Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)

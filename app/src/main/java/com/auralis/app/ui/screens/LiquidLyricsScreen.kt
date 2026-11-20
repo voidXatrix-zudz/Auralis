@@ -114,6 +114,7 @@ import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.LrcLine
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.LyricsSource
+import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.glass.rememberReduceMotion
@@ -121,6 +122,8 @@ import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.VisualPerformanceTier
 import com.auralis.app.ui.theme.ArtworkPalette
 import com.auralis.app.ui.theme.Auralis
+import com.auralis.app.ui.theme.GlassTokens
+import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.theme.LyricsTypography
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -144,10 +147,10 @@ private sealed interface LyricRow {
 }
 
 /**
- * Full-screen lyrics surface. Line-synced LRC drives a spring auto-follow at ~30% from the top;
- * the active line grows/brightens while neighbours shrink, fade and blur. Enhanced LRC word tags
- * highlight word by word. Everything reads the real player position plus the global offset, so
- * seeking and pausing never desync.
+ * Full-screen lyrics surface. Line-synced LRC drives a spring auto-follow to the middle of the
+ * viewport; the active line grows/brightens while neighbours shrink, fade and blur. Enhanced LRC
+ * word tags highlight word by word. Everything reads the real player position plus the global
+ * offset, so seeking and pausing never desync.
  */
 @Composable
 fun LiquidLyricsScreen(
@@ -182,11 +185,14 @@ fun LiquidLyricsScreen(
     }
     val listState = rememberLazyListState()
     val colors = MaterialTheme.colorScheme
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
     val profile = LocalPerformanceProfile.current
     val reduceMotion = rememberReduceMotion()
     val motionEnabled = profile.ambientMotionEnabled && !reduceMotion
     val gradientScale = if (profile.tier == VisualPerformanceTier.MEDIUM) 1.7f else 1f
-    val blurAvailable = profile.blurEnabled && Build.VERSION.SDK_INT >= 31 && !reduceMotion
+    // Full-screen artwork blur is the single most expensive effect; it is governed by
+    // [PerformanceProfile.backgroundBlurEnabled], not by Live blur, so Low/Medium stay cheap.
+    val blurAvailable = profile.backgroundBlurEnabled && Build.VERSION.SDK_INT >= 31 && !reduceMotion
 
     // Manual scrolling pauses auto-follow and clears the blur; both resume after ~3 s idle.
     var manualScroll by remember { mutableStateOf(false) }
@@ -208,7 +214,11 @@ fun LiquidLyricsScreen(
     val accent by animateColorAsState(targetAccent, tween(900), label = "lyricsAccent")
     val accent2 = Color(ArtworkPalette.mix(accent.toArgb(), colors.tertiary.toArgb(), 0.55f))
     val accent3 = Color(ArtworkPalette.mix(accent.toArgb(), colors.secondary.toArgb(), 0.45f))
-    val base = if (Auralis.extras.isDark) Color(0xFF06070B) else colors.background
+    val base = when {
+        glass -> GlassTokens.Indigo
+        Auralis.extras.isDark -> Color(0xFF06070B)
+        else -> colors.background
+    }
     val baseTypography = MaterialTheme.typography
     val lyricsTypography = remember(baseTypography) {
         LyricsTypography.withFamily(baseTypography)
@@ -256,7 +266,7 @@ fun LiquidLyricsScreen(
         }
     }
 
-    // Spring auto-follow: put the active line a bit above one third of the viewport.
+    // Spring auto-follow: keep the active line near the middle of the viewport.
     LaunchedEffect(active, autoScroll, lines.size, clearForTouch) {
         if (!autoScroll || clearForTouch || active < 0 || rows.isEmpty()) return@LaunchedEffect
         val rowIndex = rows.indexOfFirst { it is LyricRow.Line && it.index == active }
@@ -298,7 +308,12 @@ fun LiquidLyricsScreen(
             // Animated artwork-colour wash.
             Canvas(Modifier.fillMaxSize()) {
                 val r = min(size.width, size.height)
-                drawRect(Brush.verticalGradient(listOf(base, Color(0xFF0A0C12), base)))
+                if (glass) {
+                    // Glass keeps the flat indigo field; no off-palette vertical wash.
+                    drawRect(GlassTokens.Indigo)
+                } else {
+                    drawRect(Brush.verticalGradient(listOf(base, Color(0xFF0A0C12), base)))
+                }
                 val p = phase * 2f * Math.PI.toFloat()
                 val topCenter = Offset(
                     size.width * (0.22f + 0.10f * sin(p)),
@@ -447,8 +462,7 @@ fun LiquidLyricsScreen(
                 }
 
                 BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-                    val topPadding = maxHeight * 0.50f
-                    val bottomPadding = maxHeight * 0.50f
+                    val centerPadding = maxHeight * 0.50f
                     when {
                         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -468,7 +482,7 @@ fun LiquidLyricsScreen(
                         lines.isNotEmpty() -> LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                            contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
+                            contentPadding = PaddingValues(top = centerPadding, bottom = centerPadding),
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             items(rows, key = { it.key }, contentType = { it::class.simpleName }) { row ->
@@ -631,6 +645,7 @@ private fun LyricLineRow(
     onSeek: (Long) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
     val alpha by animateFloatAsState(
         targetValue = when {
             active -> 1f
@@ -652,14 +667,10 @@ private fun LyricLineRow(
         animationSpec = tween(motionMs),
         label = "lineScale",
     )
-    val fixedBlur = when {
-        distance == 1 -> 0f
-        distance == 2 -> 1f
-        else -> 2.5f
-    }
     val targetBlur = when {
         !blurAvailable || clearForTouch || active -> 0f
-        distance <= 2 -> fixedBlur * blurScale
+        distance == 1 -> 0f
+        distance == 2 -> blurScale
         else -> 2.5f * blurScale
     }
     val blurDp by animateDpAsState(targetBlur.dp, tween(motionMs), label = "lineBlur")
@@ -671,7 +682,11 @@ private fun LyricLineRow(
 
     val shape = RoundedCornerShape(14.dp)
     val clickable = line.timeMs > 0 || line.words.isNotEmpty()
-    val activeColor = if (Auralis.extras.isDark) Color.White else colors.onBackground
+    val activeColor = when {
+        glass -> GlassTokens.Cream
+        Auralis.extras.isDark -> Color.White
+        else -> colors.onBackground
+    }
     val family = remember(line.text) { LyricsTypography.familyFor(line.text) }
     val activeTextStyle = remember(sizeSp, family, activeColor, accentGlow, accent) {
         TextStyle(
@@ -732,7 +747,10 @@ private fun LyricLineRow(
                             cornerRadius = CornerRadius(2.dp.toPx()),
                         )
                     } else {
-                        drawRoundRect(color = Color.White.copy(alpha = 0.05f), cornerRadius = CornerRadius(14.dp.toPx()))
+                        drawRoundRect(
+                            color = if (glass) GlassTokens.Cream6 else Color.White.copy(alpha = 0.05f),
+                            cornerRadius = CornerRadius(14.dp.toPx()),
+                        )
                     }
                 }
             }

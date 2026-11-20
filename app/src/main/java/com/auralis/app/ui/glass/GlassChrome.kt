@@ -108,7 +108,7 @@ fun GlassAvatarButton(imageUrl: String?, name: String?, onClick: () -> Unit) {
             iconTint = GlassTokens.Silver,
             modifier = Modifier.matchParentSize().background(GlassTokens.Surface2),
         )
-        Box(Modifier.matchParentSize().border(2.dp, GlassTokens.Obsidian.copy(alpha = 0.45f), CircleShape))
+        Box(Modifier.matchParentSize().border(2.dp, GlassTokens.Cream14, CircleShape))
     }
 }
 
@@ -120,7 +120,7 @@ private val GlassNavItems = listOf(
     GlassNavItem(Tab.LIBRARY, "Library", Icons.Rounded.LibraryMusic),
 )
 
-/** Floating glass pill; the active tab gets a luminous violet-cyan capsule with specular highlight. */
+/** Floating glass pill; the active tab inverts to cream fill with an indigo icon and label. */
 @Composable
 fun GlassNavBar(selected: Tab?, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier) {
     GlassPanel(
@@ -130,7 +130,7 @@ fun GlassNavBar(selected: Tab?, onSelect: (Tab) -> Unit, modifier: Modifier = Mo
         Row(Modifier.fillMaxWidth().padding(6.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             GlassNavItems.forEach { item ->
                 val active = item.tab == selected
-                val tint = if (active) GlassTokens.Violet else MaterialTheme.colorScheme.onSurfaceVariant
+                val tint = if (active) GlassTokens.Indigo else GlassTokens.Cream55
                 Column(
                     Modifier
                         .weight(1f)
@@ -138,23 +138,10 @@ fun GlassNavBar(selected: Tab?, onSelect: (Tab) -> Unit, modifier: Modifier = Mo
                         .clip(CircleShape)
                         .background(
                             if (active) {
-                                Brush.horizontalGradient(
-                                    listOf(GlassTokens.Violet.copy(alpha = 0.28f), GlassTokens.Ice.copy(alpha = 0.18f)),
-                                )
+                                Brush.horizontalGradient(listOf(GlassTokens.Cream, GlassTokens.Cream))
                             } else {
                                 Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
                             },
-                        )
-                        .border(
-                            1.dp,
-                            if (active) {
-                                Brush.linearGradient(
-                                    listOf(GlassTokens.Violet.copy(alpha = 0.70f), GlassTokens.Ice.copy(alpha = 0.45f)),
-                                )
-                            } else {
-                                Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
-                            },
-                            CircleShape,
                         )
                         .selectable(selected = active, role = Role.Tab, onClick = { onSelect(item.tab) })
                         .padding(vertical = 8.dp),
@@ -164,7 +151,7 @@ fun GlassNavBar(selected: Tab?, onSelect: (Tab) -> Unit, modifier: Modifier = Mo
                     Icon(item.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
                     Text(
                         item.label,
-                        color = if (active) GlassTokens.Silver else tint,
+                        color = if (active) GlassTokens.Indigo else GlassTokens.Cream55,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Medium,
                     )
@@ -175,8 +162,8 @@ fun GlassNavBar(selected: Tab?, onSelect: (Tab) -> Unit, modifier: Modifier = Mo
 }
 
 /**
- * Glass mini-player: floating frosted glass bar with subtle artwork ambience,
- * sleek controls, and glowing play hero button.
+ * Glass mini-player: frosted cream surface, cream transport controls, cream play hero with an
+ * indigo glyph. Artwork ambience is a plain cream wash — no artwork hues in the chrome.
  */
 @Composable
 fun GlassMiniPlayer(
@@ -194,7 +181,7 @@ fun GlassMiniPlayer(
 ) {
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(GlassTokens.RadiusLg)
-    val tint = track.artColor?.let { Color(it) } ?: GlassTokens.Violet
+    val tint = GlassTokens.Cream
     GlassPanel(
         modifier = modifier
             .fillMaxWidth()
@@ -227,16 +214,16 @@ fun GlassMiniPlayer(
                     )
                 }
                 if (!compact) {
-                    GlassIconAction(Icons.Rounded.Shuffle, "Shuffle", toggleShuffle, tint = if (shuffle) GlassTokens.Violet else colors.onSurfaceVariant)
+                    GlassIconAction(Icons.Rounded.Shuffle, "Shuffle", toggleShuffle, tint = if (shuffle) GlassTokens.Cream else GlassTokens.Cream55)
                     GlassIconAction(Icons.Rounded.SkipPrevious, "Previous", previous, tint = colors.onSurface)
                 }
                 Box(
                     Modifier
                         .size(48.dp)
-                        .shadow(8.dp, CircleShape, clip = false, ambientColor = GlassTokens.Violet.copy(alpha = 0.35f), spotColor = GlassTokens.Violet.copy(alpha = 0.50f))
+                        .shadow(8.dp, CircleShape, clip = false, ambientColor = Color.Black.copy(alpha = 0.30f), spotColor = Color.Black.copy(alpha = 0.40f))
                         .clip(CircleShape)
                         .background(GlassTokens.AccentGradient)
-                        .border(1.dp, Color.White.copy(alpha = 0.30f), CircleShape)
+                        .border(1.dp, Color.Transparent, CircleShape)
                         .clickable(role = Role.Button, onClick = toggle),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -244,7 +231,7 @@ fun GlassMiniPlayer(
                 }
                 if (!compact) {
                     GlassIconAction(Icons.Rounded.SkipNext, "Next", next, tint = colors.onSurface)
-                    GlassIconAction(Icons.Rounded.Repeat, "Repeat", cycleRepeat, tint = if (repeat != 0) GlassTokens.Violet else colors.onSurfaceVariant)
+                    GlassIconAction(Icons.Rounded.Repeat, "Repeat", cycleRepeat, tint = if (repeat != 0) GlassTokens.Cream else GlassTokens.Cream55)
                 }
             }
         }

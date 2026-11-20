@@ -6,7 +6,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -48,7 +47,6 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.CloudUpload
@@ -109,7 +107,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -135,10 +132,11 @@ import com.auralis.app.ui.components.PlayerBackgroundImage
 import com.auralis.app.ui.components.QualityBadgeContent
 import com.auralis.app.ui.components.qualityBadgeContent
 import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
+import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.screens.LiquidLyricsScreen
-import com.auralis.app.ui.theme.ArtworkPalette
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LyricsTypography
+import dev.chrisbanes.haze.hazeSource
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -232,17 +230,12 @@ fun GlassNowPlayingScreen(
     BackHandler(enabled = queueOpen) { queueOpen = false }
     BackHandler(enabled = lyricsOpen && !queueOpen && !fullLyricsOpen) { applyLyricsMode(false) }
 
-    val accentTarget = track.artColor?.let { Color(ArtworkPalette.readableAccent(it, true)) } ?: GlassTokens.Violet
-    val accent by animateColorAsState(accentTarget, tween(850), label = "glassNowPlayingAccent")
-    // Play/pause circle takes the album-art colour (already extracted off the main thread at scan
-    // time), with a safe fallback to the theme accent when the art colour is missing.
-    val playButtonTarget = track.artColor?.let { Color(ArtworkPalette.readableAccent(it, true)) } ?: colors.primary
-    val playButtonColor by animateColorAsState(playButtonTarget, tween(300), label = "glassPlayButtonColor")
+    // The two-colour palette has no artwork-derived accent: player chrome is cream on indigo.
+    val playButtonColor = GlassTokens.Cream
 
     Box(modifier.fillMaxSize()) {
         when {
             queueOpen -> {
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.18f), Color.Transparent))))
                 Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                     Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back to Now Playing", { queueOpen = false })
@@ -336,8 +329,29 @@ fun GlassNowPlayingScreen(
                 )
             }
             else -> {
-                if (settings.playerBackground != PlayerBackground.NONE) PlayerBackgroundImage(settings.playerBackground)
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.30f), Color.Transparent, Color.Transparent))))
+                // The chosen player background is the full player's Haze source. It is a sibling
+                // of the scrolling column, so every glass panel over it gets a real backdrop
+                // blur (a source that is an ancestor would be excluded by Haze).
+                if (settings.playerBackground != PlayerBackground.NONE) {
+                    val hazeState = LocalHazeState.current
+                    // The full-screen capture is an expensive extra, so it follows
+                    // backgroundBlurEnabled (off in Low/Medium) rather than Live blur alone.
+                    val blurEnabled = LocalPerformanceProfile.current.backgroundBlurEnabled &&
+                        Build.VERSION.SDK_INT >= 31
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (hazeState != null && blurEnabled) {
+                                    Modifier.hazeSource(hazeState)
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                    ) {
+                        PlayerBackgroundImage(settings.playerBackground)
+                    }
+                }
                 Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
                     Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Close now playing", onBack)
@@ -377,7 +391,13 @@ fun GlassNowPlayingScreen(
                                         transformOrigin = TransformOrigin(0f, 0f)
                                         translationY = -8.dp.toPx() * pr
                                     }
-                                    .shadow(28.dp, RoundedCornerShape(34.dp), clip = false, ambientColor = accent, spotColor = accent)
+                                    .shadow(
+                                        28.dp,
+                                        RoundedCornerShape(34.dp),
+                                        clip = false,
+                                        ambientColor = Color.Black.copy(alpha = 0.30f),
+                                        spotColor = Color.Black.copy(alpha = 0.40f),
+                                    )
                                     .then(
                                         if (gesturesEnabled) Modifier.pointerInput(track.id, doubleTapSeekSeconds) {
                                             detectTapGestures(onDoubleTap = { offset ->
@@ -469,7 +489,7 @@ fun GlassNowPlayingScreen(
                                                 Icons.Rounded.MoreHoriz,
                                                 "Lyrics options",
                                                 { lyricsMenuOpen = true },
-                                                tint = Color.White.copy(alpha = 0.82f),
+                                                tint = GlassTokens.Cream,
                                                 size = 36.dp,
                                             )
                                             DropdownMenu(expanded = lyricsMenuOpen, onDismissRequest = { lyricsMenuOpen = false }) {
@@ -577,18 +597,18 @@ fun GlassNowPlayingScreen(
                     Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(
                             time(if (dragging != null) (dragging ?: 0f).toLong() else playback.positionMs),
-                            color = Color.White,
+                            color = GlassTokens.Cream,
                             fontSize = 12.sp,
                         )
                         Text(
                             time(duration.coerceAtLeast(0L)),
-                            color = Color.White.copy(alpha = 0.75f),
+                            color = GlassTokens.Cream65,
                             fontSize = 12.sp,
                         )
                     }
                     Spacer(Modifier.height(24.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        GlassIconAction(Icons.Rounded.Shuffle, "Shuffle", onShuffle, tint = if (playback.shuffle) GlassTokens.Violet else colors.onSurfaceVariant)
+                        GlassIconAction(Icons.Rounded.Shuffle, "Shuffle", onShuffle, tint = if (playback.shuffle) GlassTokens.Cream else GlassTokens.Cream55)
                         GlassIconAction(Icons.Rounded.SkipPrevious, "Previous", onPrevious, tint = colors.onSurface)
                         Box(
                             Modifier
@@ -597,24 +617,24 @@ fun GlassNowPlayingScreen(
                                     elevation = 10.dp,
                                     shape = CircleShape,
                                     clip = false,
-                                    ambientColor = playButtonColor.copy(alpha = 0.45f),
-                                    spotColor = playButtonColor.copy(alpha = 0.65f),
+                                    ambientColor = Color.Black.copy(alpha = 0.30f),
+                                    spotColor = Color.Black.copy(alpha = 0.40f),
                                 )
                                 .clip(CircleShape)
-                                .background(playButtonColor.copy(alpha = 0.85f), CircleShape)
-                                .border(1.dp, Color.White.copy(alpha = 0.30f), CircleShape)
+                                .background(playButtonColor, CircleShape)
+                                .border(1.dp, Color.Transparent, CircleShape)
                                 .clickable(role = Role.Button, onClick = onPlayPause),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 if (playback.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                 if (playback.playing) "Pause" else "Play",
-                                tint = if (playButtonColor.luminance() > 0.55f) Color.Black else Color.White,
+                                tint = GlassTokens.Indigo,
                                 modifier = Modifier.size(40.dp),
                             )
                         }
                         GlassIconAction(Icons.Rounded.SkipNext, "Next", onNext, tint = colors.onSurface)
-                        GlassIconAction(Icons.Rounded.Repeat, "Repeat", onRepeat, tint = if (playback.repeat != 0) GlassTokens.Violet else colors.onSurfaceVariant)
+                        GlassIconAction(Icons.Rounded.Repeat, "Repeat", onRepeat, tint = if (playback.repeat != 0) GlassTokens.Cream else GlassTokens.Cream55)
                     }
                     playback.error?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), textAlign = TextAlign.Center) }
                     Spacer(Modifier.height(20.dp))
@@ -807,8 +827,8 @@ private fun InlineLyricsOverlay(
                 drawRect(
                     brush = Brush.verticalGradient(
                         0f to Color.Transparent,
-                        0.10f to Color.White,
-                        0.88f to Color.White,
+                        0.10f to GlassTokens.Cream,
+                        0.88f to GlassTokens.Cream,
                         1f to Color.Transparent,
                     ),
                     blendMode = BlendMode.DstIn,
@@ -1042,13 +1062,12 @@ private fun PlainLyricList(
     }
 }
 
-
 @Composable
 private fun CenteredLyricMessage(text: String, sizeSp: Int) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
             text = text,
-            color = Color.White,
+            color = GlassTokens.Cream,
             fontFamily = LyricsTypography.familyFor(text),
             fontSize = sizeSp.sp,
             fontWeight = FontWeight.Bold,
@@ -1057,7 +1076,7 @@ private fun CenteredLyricMessage(text: String, sizeSp: Int) {
     }
 }
 
-/** Empty lyrics state with the two recovery actions required by the fix (Part Q). */
+/** Empty lyrics state with the two recovery actions. */
 @Composable
 private fun EmptyLyricActions(onTryAnother: () -> Unit, onRetry: () -> Unit, sizeSp: Int) {
     Column(
@@ -1067,7 +1086,7 @@ private fun EmptyLyricActions(onTryAnother: () -> Unit, onRetry: () -> Unit, siz
     ) {
         Text(
             "No lyrics found",
-            color = Color.White,
+            color = GlassTokens.Cream,
             fontFamily = LyricsTypography.familyFor("No lyrics found"),
             fontSize = sizeSp.sp,
             fontWeight = FontWeight.Bold,
@@ -1076,14 +1095,14 @@ private fun EmptyLyricActions(onTryAnother: () -> Unit, onRetry: () -> Unit, siz
         Spacer(Modifier.height(6.dp))
         Text(
             "No provider had lyrics for this song.",
-            color = Color.White.copy(alpha = 0.72f),
+            color = GlassTokens.Cream.copy(alpha = 0.72f),
             style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onTryAnother) { Text("Try another source", color = Color.White) }
-            TextButton(onClick = onRetry) { Text("Retry", color = Color.White) }
+            TextButton(onClick = onTryAnother) { Text("Try another source", color = GlassTokens.Cream) }
+            TextButton(onClick = onRetry) { Text("Retry", color = GlassTokens.Cream) }
         }
     }
 }
@@ -1141,7 +1160,7 @@ private fun InlineLyricLine(
     val blurRadius = maxOf(baseBlur, enterBlur)
     Text(
         text = text.ifBlank { "♪" },
-        color = Color.White,
+        color = GlassTokens.Cream,
         fontFamily = family,
         fontSize = sizeSp.sp,
         fontWeight = FontWeight.Bold,

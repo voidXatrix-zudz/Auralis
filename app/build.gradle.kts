@@ -47,6 +47,14 @@ android {
 
         // Blank when no key was supplied; ClerkAuthRepository skips auth in that case.
         buildConfigField("String", "CLERK_PUBLISHABLE_KEY", "\"$clerkPublishableKey\"")
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // The embedded QuickJS engine (YouTube.js provider) ships libquickjs.so per ABI. Keep the
+        // three ABIs real devices use; drop x86 (32-bit emulator-only) to trim ~880 KB of APK.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -90,6 +98,12 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+
+    // The exported Room schemas ship with the instrumentation tests so MigrationTestHelper can load
+    // the expected schema for each version.
+    sourceSets {
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
 }
 
 kotlin {
@@ -109,12 +123,14 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.haze)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.newpipe.extractor)
+    implementation(libs.quickjs.kt)
     implementation(libs.clerk.android.api)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
@@ -141,4 +157,11 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // Instrumentation tests (Room migration validation). Kept as direct coordinates so the shared
+    // version catalog stays untouched.
+    androidTestImplementation("androidx.room:room-testing:2.7.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
 }

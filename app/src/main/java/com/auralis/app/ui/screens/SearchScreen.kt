@@ -4,19 +4,30 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassSearchScreen
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -30,7 +41,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.domain.model.MusicSource
@@ -60,12 +73,17 @@ fun SearchScreen(
     onSearchYouTube: (String) -> Unit = {},
     onPlayYouTube: (Track) -> Unit = {},
     youtubeEnabled: Boolean = false,
+    recentSearches: List<String> = emptyList(),
+    onSubmitSearch: (String) -> Unit = onSearchYouTube,
+    onDeleteRecent: (String) -> Unit = {},
+    onClearRecent: () -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
         GlassSearchScreen(
             tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, modifier,
             onQueue, sources, onPlayNext, youtubeResults, youtubeLoading, youtubeError,
             youtubeResolvingId, onSearchYouTube, onPlayYouTube, youtubeEnabled,
+            recentSearches, onSubmitSearch, onDeleteRecent, onClearRecent,
         )
         return
     }
@@ -107,6 +125,10 @@ fun SearchScreen(
             singleLine = true,
             shape = CircleShape,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = {
+                if (normalizedQuery.isNotBlank()) onSubmitSearch(normalizedQuery)
+            }),
         )
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -122,10 +144,20 @@ fun SearchScreen(
 
         if (youtube) {
             when {
-                normalizedQuery.isBlank() -> SearchHint(
-                    title = "Search YouTube Music",
-                    body = "Find songs by title or artist. Results stream over the internet.",
-                )
+                normalizedQuery.isBlank() -> if (recentSearches.isNotEmpty()) {
+                    RecentSearches(
+                        queries = recentSearches,
+                        modifier = Modifier.weight(1f),
+                        onPick = { picked -> query = picked; onSubmitSearch(picked) },
+                        onDelete = onDeleteRecent,
+                        onClear = onClearRecent,
+                    )
+                } else {
+                    SearchHint(
+                        title = "Search YouTube Music",
+                        body = "Find songs by title or artist. Results stream over the internet.",
+                    )
+                }
                 youtubeLoading -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
@@ -167,6 +199,65 @@ fun SearchScreen(
                 onQueue = onQueue,
                 onPlayNext = onPlayNext,
             )
+        } else if (recentSearches.isNotEmpty()) {
+            RecentSearches(
+                queries = recentSearches,
+                modifier = Modifier.weight(1f),
+                onPick = { picked -> query = picked; onSubmitSearch(picked) },
+                onDelete = onDeleteRecent,
+                onClear = onClearRecent,
+            )
+        }
+    }
+}
+
+/** Empty-box state: the newest 20 searches, tap to fill and run, X to forget one. */
+@Composable
+private fun RecentSearches(
+    queries: List<String>,
+    modifier: Modifier = Modifier,
+    onPick: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Recent searches", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            TextButton(onClick = onClear) { Text("Clear all") }
+        }
+        LazyColumn {
+            items(queries, key = { it.lowercase() }) { item ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { onPick(item) }.padding(start = 16.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.History,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        item,
+                        Modifier.weight(1f).padding(vertical = 14.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    IconButton(onClick = { onDelete(item) }) {
+                        Icon(
+                            Icons.Rounded.Close,
+                            "Remove “$item” from recent searches",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 }

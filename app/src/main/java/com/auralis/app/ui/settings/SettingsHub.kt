@@ -15,15 +15,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Lyrics
@@ -35,7 +33,6 @@ import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,7 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -62,11 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
-import com.auralis.app.domain.model.StreamQuality
-import com.auralis.app.domain.model.StreamSourceMode
-import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.domain.model.ThemeStyle
-import com.auralis.app.ui.glass.GlassChip
 import com.auralis.app.ui.glass.GlassIconButton
 import com.auralis.app.ui.glass.GlassPanel
 import com.auralis.app.ui.glass.GlassSearchField
@@ -75,6 +67,7 @@ import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LocalThemeStyle
+import com.auralis.app.ui.theme.auralisSwitchColors
 
 /** Callbacks every Settings sub-page needs; grouped so the signature stays manageable. */
 data class SettingsActions(
@@ -88,6 +81,8 @@ data class SettingsActions(
     val onCheckForUpdates: () -> Unit,
     val onYouTubeSignIn: () -> Unit,
     val onYouTubeSignOut: () -> Unit,
+    /** Clears the stored session and browser cookies, then opens the account chooser. */
+    val onYouTubeDifferentAccount: () -> Unit = {},
     val onClearCache: () -> Unit,
     val onClearLyricsCache: () -> Unit,
     val onRemoveAllDownloads: () -> Unit,
@@ -99,11 +94,28 @@ data class SettingsActions(
     val updateAvailableVersion: String?,
     val youtubeSignedIn: Boolean,
     val youtubeName: String,
+    /** True when a stored session was rejected (401/403) and a re-login is needed. */
+    val youtubeExpired: Boolean = false,
+    /** Decrypt/Keystore failure type when the stored blob exists but cannot be read. */
+    val youtubeReadError: String? = null,
+    /** Last successful sign-in/refresh/rotation; shown on the expired row as an age. */
+    val youtubeLastRefreshedAt: Long = 0L,
+    /** Re-checks an expired session when the Settings page opens (respects the 30-min backoff). */
+    val onYouTubeHeal: () -> Unit = {},
+    /** Settings → "Test YouTube connection": account_menu, then playlists, then liked songs. */
+    val onYouTubeTest: () -> Unit = {},
+    val youTubeTestRunning: Boolean = false,
+    /** One non-secret line per endpoint, e.g. "liked_playlists  OK  HTTP 200  parsed: 42". */
+    val youTubeTestLines: List<String> = emptyList(),
+    /** Live sync: on/off, current engine state, last successful pass and the manual "Sync now". */
+    val liveSyncEnabled: Boolean = true,
+    val liveSyncState: com.auralis.app.data.youtube.LiveSyncState = com.auralis.app.data.youtube.LiveSyncState.Disabled,
+    val liveSyncLastSyncedAt: Long = 0L,
+    val onToggleLiveSync: (Boolean) -> Unit = {},
+    val onSyncLiveNow: () -> Unit = {},
 )
 
-// ---------------------------------------------------------------------------------------------
 // Shared, theme-aware primitives (Normal + Glass).
-// ---------------------------------------------------------------------------------------------
 
 @Composable
 internal fun glass(): Boolean = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
@@ -190,7 +202,7 @@ fun SettingsSwitchRow(
     onCheckedChange: (Boolean) -> Unit,
 ) {
     SettingsRow(icon, title, summary = summary) {
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = onCheckedChange, colors = auralisSwitchColors())
     }
 }
 
@@ -257,9 +269,7 @@ internal fun <T> ChoiceDialog(
     )
 }
 
-// ---------------------------------------------------------------------------------------------
 // Collapsing page chrome.
-// ---------------------------------------------------------------------------------------------
 
 @Composable
 internal fun SettingsPage(
@@ -308,9 +318,7 @@ internal fun SettingsPage(
     }
 }
 
-// ---------------------------------------------------------------------------------------------
 // Hub (main Settings page).
-// ---------------------------------------------------------------------------------------------
 
 private data class SettingsCategory(val label: String, val summary: String, val icon: ImageVector, val destination: Destination, val group: Int)
 
@@ -334,6 +342,7 @@ fun SettingsHubScreen(
     var normalSearchOpen by remember { mutableStateOf(false) }
     val categories = remember {
         listOf(
+            SettingsCategory("History", "Songs you played", Icons.Rounded.History, Destination.History, 1),
             SettingsCategory("Playback & Quality", "Streaming quality, data saver, gestures", Icons.Rounded.PlayArrow, Destination.SettingsPlayback, 1),
             SettingsCategory("Metadata & Lyrics", "Providers, tag fixes, lyrics display", Icons.Rounded.Lyrics, Destination.SettingsMetadataLyrics, 1),
             SettingsCategory("Downloads", "Location, quality and lyrics", Icons.Rounded.Download, Destination.SettingsDownloads, 1),
@@ -413,7 +422,7 @@ fun SettingsHubScreen(
             }
         }
 
-        // Account area stays at the top, unchanged in look and position.
+        // Account area.
         item {
             if (isGlass) {
                 GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusCard)) {
