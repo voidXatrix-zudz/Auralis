@@ -3,8 +3,6 @@ package com.auralis.app.data.lyrics
 import com.auralis.app.domain.model.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
-import org.json.JSONArray
-import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -56,7 +54,7 @@ class LrclibClient {
         }
         val exactReply = request("/api/get", exact) ?: return@runInterruptible null
         if (exactReply.first == HttpURLConnection.HTTP_OK) {
-            parseItem(exactReply.second)?.let { return@runInterruptible it }
+            LrclibParser.parseGetBody(exactReply.second)?.let { return@runInterruptible it }
         } else if (exactReply.first == HTTP_TOO_MANY_REQUESTS || exactReply.first >= 500) {
             // Rate limit / server problem: do not remember this as "no lyrics".
             return@runInterruptible null
@@ -70,7 +68,7 @@ class LrclibClient {
         }
         val searchReply = request("/api/search", search) ?: return@runInterruptible null
         if (searchReply.first != HttpURLConnection.HTTP_OK) return@runInterruptible null
-        bestSearchHit(searchReply.second, title, seconds)
+        LrclibParser.parseSearchBody(searchReply.second, title, seconds)
     }
 
     /** Returns (HTTP status, body) or `null` when the request could not be made at all. */
@@ -98,38 +96,6 @@ class LrclibClient {
         } finally {
             connection?.disconnect()
         }
-    }
-
-    private fun parseItem(body: String?): LrclibResult.Found? = runCatching {
-        parseItem(JSONObject(body.orEmpty()))
-    }.getOrNull()
-
-    private fun parseItem(json: JSONObject): LrclibResult.Found? {
-        val synced = json.optString("syncedLyrics").trim().takeIf { it.isNotEmpty() }
-        val plain = json.optString("plainLyrics").trim().takeIf { it.isNotEmpty() }
-        return if (synced != null || plain != null) LrclibResult.Found(synced, plain) else null
-    }
-
-    /** Picks the closest-duration result, preferring one that has timestamps. */
-    private fun bestSearchHit(body: String?, title: String, seconds: Int?): LrclibResult {
-        val array = runCatching { JSONArray(body.orEmpty()) }.getOrNull() ?: return LrclibResult.NotFound
-        var best: LrclibResult.Found? = null
-        var bestScore = Int.MIN_VALUE
-        for (index in 0 until array.length()) {
-            val json = array.optJSONObject(index) ?: continue
-            val found = runCatching { parseItem(json) }.getOrNull() ?: continue
-            var score = if (found.synced != null) 1_000 else 0
-            if (json.optString("trackName").trim().equals(title, ignoreCase = true)) score += 200
-            val duration = json.optDouble("duration", -1.0)
-            if (seconds != null && duration > 0) {
-                score -= kotlin.math.abs(duration - seconds).toInt().coerceAtMost(120)
-            }
-            if (score > bestScore) {
-                bestScore = score
-                best = found
-            }
-        }
-        return best ?: LrclibResult.NotFound
     }
 
     private fun cleanField(value: String): String? = value.trim()
