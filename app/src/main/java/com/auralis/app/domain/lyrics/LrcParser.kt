@@ -20,6 +20,8 @@ object LrcParser {
     private val speakerTagRegex = Regex("^\\s*[vV]\\d+:\\s*")
     // Bracketed form of the same label ("[v1: Don't cry]") is a real lyric, not file metadata.
     private val speakerBracketRegex = Regex("^\\s*\\[[vV]\\d+:\\s*")
+    // Shortest word fill, so a zero/negative word duration still lights visibly instead of snapping.
+    private const val MIN_WORD_MS = 90L
 
     fun parse(raw: String): Lyrics {
         val text = raw.removePrefix("\uFEFF").replace("\r\n", "\n").replace('\r', '\n')
@@ -66,7 +68,7 @@ object LrcParser {
             }
         }
         val sorted = lines.sortedBy { it.timeMs }
-        val synced = withEnds(sorted).takeIf { it.isNotEmpty() }
+        val synced = normalize(sorted).takeIf { it.isNotEmpty() }
         val plainText = plain.toString().trim().takeIf { it.isNotBlank() }
         val syncLevel = when {
             synced == null -> LyricsSync.PLAIN
@@ -77,19 +79,37 @@ object LrcParser {
     }
 
     /**
-     * Fills in end times from the following line/word start. A word's end is the next word's start;
-     * the last word of a line keeps a null end (it lights when reached) rather than stretching
-     * across a possible instrumental gap to the next line. Line-only data never gains word timings.
+     * Normalises every timestamp so the render can never go backwards: lines are ordered and
+     * non-negative, a line's end is never before its start, words are ordered, a word's end is the
+     * next word's start (never zero or negative), and the last word of a line keeps a null end so it
+     * lights on arrival instead of stretching across a possible instrumental gap. A line whose words
+     * no longer reproduce its display text (broken/duplicated tags) has its words dropped, so broken
+     * word timings never render and the line falls back to line-level sync.
      */
-    private fun withEnds(lines: List<LrcLine>): List<LrcLine> = lines.mapIndexed { index, line ->
-        val lineEnd = lines.getOrNull(index + 1)?.timeMs
-        if (line.words.isEmpty()) {
-            line.copy(endMs = lineEnd)
-        } else {
-            val words = line.words.mapIndexed { wordIndex, word ->
-                word.copy(endMs = line.words.getOrNull(wordIndex + 1)?.timeMs)
+    private fun normalize(lines: List<LrcLine>): List<LrcLine> {
+        val sorted = lines.sortedBy { it.timeMs }
+        return sorted.mapIndexed { index, line ->
+            val start = line.timeMs.coerceAtLeast(0L)
+            val nextStart = sorted.getOrNull(index + 1)?.timeMs?.coerceAtLeast(start)
+            val words = normalizeWords(line.words, start)
+            val usable = words.isNotEmpty() && words.joinToString(" ") { it.text } == line.text.trim()
+            line.copy(timeMs = start, words = if (usable) words else emptyList(), endMs = nextStart)
+        }
+    }
+
+    /** Sorts a line's words by start and widens any zero/negative duration to at least [MIN_WORD_MS]. */
+    private fun normalizeWords(words: List<LrcWord>, lineStart: Long): List<LrcWord> {
+        if (words.isEmpty()) return words
+        val sorted = words.sortedBy { it.timeMs }
+        return sorted.mapIndexed { index, word ->
+            val start = word.timeMs.coerceAtLeast(lineStart)
+            val nextStart = sorted.getOrNull(index + 1)?.timeMs
+            val end = when {
+                word.endMs != null && word.endMs > start -> word.endMs
+                nextStart != null -> maxOf(nextStart, start + MIN_WORD_MS)
+                else -> null
             }
-            line.copy(words = words, endMs = lineEnd)
+            word.copy(timeMs = start, endMs = end)
         }
     }
 
@@ -179,6 +199,27 @@ object LrcParser {
         while (low <= high) {
             val middle = (low + high) ushr 1
             if (lines[middle].timeMs <= positionMs) {
+                result = middle
+                low = middle + 1
+            } else {
+                high = middle - 1
+            }
+        }
+        return result
+    }
+
+    /**
+     * Index of the word active at [positionMs] within an already-sorted line, or -1 before the first
+     * word. O(log n) so the per-frame render never scans the word list.
+     */
+    fun activeWord(words: List<LrcWord>, positionMs: Long): Int {
+        if (words.isEmpty() || positionMs < words.first().timeMs) return -1
+        var low = 0
+        var high = words.lastIndex
+        var result = 0
+        while (low <= high) {
+            val middle = (low + high) ushr 1
+            if (words[middle].timeMs <= positionMs) {
                 result = middle
                 low = middle + 1
             } else {

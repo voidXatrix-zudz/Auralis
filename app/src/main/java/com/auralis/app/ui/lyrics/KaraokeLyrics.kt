@@ -16,27 +16,78 @@ import androidx.compose.ui.text.withStyle
 import com.auralis.app.domain.model.LrcLine
 import kotlinx.coroutines.isActive
 
+/**
+ * Audio/frame latency compensation: the sung word lights up this far before it is heard, so the
+ * highlight lands on the beat rather than just after it (as Spotify/Apple Music do). 60 ms is the
+ * median output latency of Android audio plus a frame; larger values looked visibly early.
+ */
+const val LYRICS_LOOKAHEAD_MS = 60L
+
 /** True when a line's joined words reproduce its display text, so word timings can drive the render. */
 fun canKaraoke(line: LrcLine): Boolean =
     line.words.isNotEmpty() && line.words.joinToString(" ") { it.text } == line.text.trim()
 
 /**
+ * Playback-rate estimate between two player-position snapshots, so the highlight interpolates at the
+ * right rate when the user plays at 0.5x-2x. Returns 1.0 whenever the interval cannot be trusted
+ * (first sample, pause, seek jump, paused interval, implausible ratio), so a bad estimate never
+ * speeds the highlight up or down.
+ */
+internal fun estimatePlaybackSpeed(
+    prevPositionMs: Long,
+    prevWallMs: Long,
+    positionMs: Long,
+    wallMs: Long,
+    prevPlaying: Boolean,
+    playing: Boolean,
+): Float {
+    if (!prevPlaying || !playing) return 1f
+    if (prevPositionMs < 0L || prevWallMs <= 0L) return 1f
+    val deltaPosition = positionMs - prevPositionMs
+    val deltaWall = wallMs - prevWallMs
+    if (deltaPosition <= 0L || deltaWall <= 0L || deltaWall > 2_000L) return 1f
+    val speed = deltaPosition.toDouble() / deltaWall
+    if (speed.isNaN() || speed < 0.25 || speed > 3.0) return 1f
+    return speed.toFloat()
+}
+
+/** Carries the previous snapshot across [rememberLyricsPosition]'s effect restarts to estimate speed. */
+internal class PlaybackSpeedTracker {
+    private var lastPositionMs = -1L
+    private var lastWallMs = 0L
+    private var lastPlaying = false
+
+    fun observe(positionMs: Long, playing: Boolean, wallMs: Long): Float {
+        val speed = estimatePlaybackSpeed(lastPositionMs, lastWallMs, positionMs, wallMs, lastPlaying, playing)
+        lastPositionMs = positionMs
+        lastWallMs = wallMs
+        lastPlaying = playing
+        return speed
+    }
+}
+
+/**
  * A player position that advances every frame while [playing], re-based on each [positionMs]
- * snapshot so seeking and pausing stay in sync, and including [offsetMs]. Read it only inside the
- * active line: only composables that read it recompose, so the rest of the list is untouched.
+ * snapshot so seeking, pausing, resuming and song changes re-sync instantly, and including
+ * [offsetMs] plus [LYRICS_LOOKAHEAD_MS]. The frame clock interpolates between the 500 ms snapshots
+ * at the estimated playback speed, so the highlight glides instead of stepping. Read it only inside
+ * the active line: only composables that read it recompose, so the rest of the list is untouched.
  */
 @Composable
 fun rememberLyricsPosition(positionMs: Long, playing: Boolean, offsetMs: Int): State<Long> {
-    val state = remember { mutableLongStateOf((positionMs + offsetMs).coerceAtLeast(0L)) }
+    val state = remember { mutableLongStateOf(0L) }
+    val tracker = remember { PlaybackSpeedTracker() }
     LaunchedEffect(positionMs, playing, offsetMs) {
-        val base = (positionMs + offsetMs).coerceAtLeast(0L)
+        val base = (positionMs + offsetMs + LYRICS_LOOKAHEAD_MS).coerceAtLeast(0L)
+        val speed = tracker.observe(positionMs, playing, System.nanoTime() / 1_000_000L).toDouble()
         state.longValue = base
         if (!playing) return@LaunchedEffect
         var frameBase = -1L
         while (isActive) {
             withFrameNanos { now ->
                 if (frameBase < 0L) frameBase = now
-                state.longValue = base + (now - frameBase) / 1_000_000L
+                val elapsedNs = (now - frameBase).toDouble() * speed
+                state.longValue = base + (elapsedNs / 1_000_000.0).toLong()
             }
         }
     }

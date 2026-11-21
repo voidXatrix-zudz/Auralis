@@ -77,6 +77,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -182,13 +183,16 @@ fun LiquidLyricsScreen(
     val lines = lyrics?.synced.orEmpty()
     val plain = lyrics?.plain
     val effectivePosition = (positionMs + lyricsOffsetMs).coerceAtLeast(0L)
-    val active = remember(lines, effectivePosition) {
-        LrcParser.activeLine(lines, effectivePosition)
-    }
     // Per-frame player position, read only by the active word-timed line so the rest of the list
     // never recomposes on a frame. Advances while playing, freezes on pause, re-bases on every
-    // position snapshot (seek) and includes the user's timing offset.
+    // position snapshot (seek) and includes the user's timing offset plus a small lookahead.
     val livePosition = rememberLyricsPosition(positionMs, playing, lyricsOffsetMs)
+    // The active line follows the same smooth clock as the word fill, so line emphasis and the word
+    // highlight never disagree. derivedStateOf only notifies readers when the line index changes, so
+    // neither the list nor the auto-scroll run every frame.
+    val active by remember(lines, lyricsOffsetMs) {
+        derivedStateOf { LrcParser.activeLine(lines, livePosition.value) }
+    }
     val listState = rememberLazyListState()
     val colors = MaterialTheme.colorScheme
     val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC

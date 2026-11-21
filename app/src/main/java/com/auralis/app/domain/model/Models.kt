@@ -1,5 +1,7 @@
 package com.auralis.app.domain.model
 
+import androidx.compose.runtime.Immutable
+
 /** Where a library track was discovered. */
 enum class SourceKind { MEDIA_STORE, TREE }
 
@@ -21,6 +23,7 @@ enum class LyricsSource { EMBEDDED, LRC, USER, LRCLIB }
 enum class LyricsSync { PLAIN, LINE, WORD }
 
 /** One timed word inside an enhanced-LRC line. [endMs] is the word's end, when known. */
+@Immutable
 data class LrcWord(
     val timeMs: Long,
     val text: String,
@@ -32,6 +35,7 @@ data class LrcWord(
  * it stays empty for ordinary line-synced lyrics so existing behaviour is unchanged. [endMs] is the
  * line's end, derived from the next line's start when the source does not state it.
  */
+@Immutable
 data class LrcLine(
     val timeMs: Long,
     val text: String,
@@ -43,6 +47,7 @@ data class LrcLine(
  * Lyrics for a track. [raw] is the original text (LRC or plain) so the user can edit it;
  * [synced] is non-null only when timestamps were parsed.
  */
+@Immutable
 data class Lyrics(
     val source: LyricsSource,
     val raw: String,
