@@ -10,9 +10,8 @@ import androidx.compose.runtime.Immutable
  * the source of truth at render time.
  *
  * Rule: animation durations, curves and spring constants are identical in every profile. A lower
- * profile reduces the cost of expensive extras (blur radius, shaders, secondary glow, looping
- * decoration), it never changes the feel of navigation or the dock morph. Backdrop blur itself is
- * never switched off by a profile while the user has Live blur on — only its radius scales.
+ * profile removes expensive extras (backdrop blur, shaders, secondary glow, looping decoration),
+ * it never changes the feel of navigation or the dock morph.
  */
 @Immutable
 data class PerformanceProfile(
@@ -20,7 +19,7 @@ data class PerformanceProfile(
     // --- Glass material -----------------------------------------------------
     /** Live backdrop blur is allowed at all. */
     val blurEnabled: Boolean,
-    /** Multiplier on the user's chosen blur radius: 1.0 / 0.7 / 0.4 (never 0 while Live blur is on). */
+    /** Multiplier on the user's chosen dock blur radius: 1.0 / 0.6 / 0.0. */
     val blurScale: Float,
     /** Haze backdrop downsampling: 1.0 = full resolution, 0.5 = half. */
     val blurDownsample: Float,
@@ -78,7 +77,7 @@ object PerformanceProfiles {
     val Medium = PerformanceProfile(
         tier = VisualPerformanceTier.MEDIUM,
         blurEnabled = true,
-        blurScale = 0.7f,
+        blurScale = 0.6f,
         blurDownsample = 0.5f,
         refractionEnabled = false,
         glassSheenEnabled = true,
@@ -94,11 +93,9 @@ object PerformanceProfiles {
 
     val Low = PerformanceProfile(
         tier = VisualPerformanceTier.LOW,
-        // Blur stays on at ~40% radius: never zero while the user has Live blur on, so the glass
-        // still reads as glass. The saved cost comes from a coarser downsample and simpler shadows.
-        blurEnabled = true,
-        blurScale = 0.4f,
-        blurDownsample = 0.5f,
+        blurEnabled = false,
+        blurScale = 0f,
+        blurDownsample = 1f,
         refractionEnabled = false,
         glassSheenEnabled = false,
         glowEnabled = false,

@@ -68,9 +68,8 @@ class AuralisApp : Application() {
     }
 
     /**
-     * Bound the artwork memory cache to ~25% of the app heap (Coil's own default ceiling). Large
-     * album art is the biggest single allocation in the app, so a full-res library browse is the
-     * case this cache is sized for; Coil trims it as pressure rises.
+     * Bound the artwork memory cache to 15% of the heap. Large album art is the biggest single
+     * allocation in the app, so this keeps a full-res library browse from pressuring the GC.
      * A small disk cache lets remote YouTube artwork survive process restarts and scroll-backs.
      */
     private fun configureImageLoader() {
@@ -90,7 +89,7 @@ class AuralisApp : Application() {
                 }
                 .memoryCache {
                     MemoryCache.Builder()
-                        .maxSizePercent(context, 0.25)
+                        .maxSizePercent(context, 0.15)
                         .build()
                 }
                 .diskCache {

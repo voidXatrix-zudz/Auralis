@@ -1,8 +1,5 @@
 package com.auralis.app.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -51,7 +48,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -95,11 +91,9 @@ fun LoginScreen(
     onVerifyCode: (String) -> Unit,
     onEditEmail: () -> Unit,
     onClearError: () -> Unit,
-    onRetryInit: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
-    val context = LocalContext.current
     val accent = if (glass) GlassTokens.Cream else MaterialTheme.colorScheme.primary
     // Glass uses cream text/steps; Normal keeps the original whites and accent.
     val onBg = if (glass) GlassTokens.Cream else Color.White
@@ -355,39 +349,15 @@ fun LoginScreen(
                     }
                 }
 
-                // Init-time failure (Clerk never became ready): show the real reason plus Copy/Retry
-                // so the gate is never a dead end. Other errors keep the plain message.
-                val errorText = auth.error
-                if (errorText != null) {
+                if (auth.error != null) {
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        errorText,
+                        auth.error,
                         color = if (glass) GlassTokens.Cream else MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (auth.initFailed) {
-                        Spacer(Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            TextButton(onClick = {
-                                val clipboard = context
-                                    .getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                clipboard?.setPrimaryClip(
-                                    ClipData.newPlainText("AURALIS sign-in error", errorText),
-                                )
-                            }) {
-                                Text("Copy", color = onBg)
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            TextButton(onClick = onRetryInit, enabled = !auth.busy) {
-                                Text("Retry", color = onBg)
-                            }
-                        }
-                    }
                 }
             }
 

@@ -31,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ArtistImageEntity::class,
         YouTubeCacheEntity::class,
     ],
-    version = 12,
+    version = 11,
     exportSchema = true,
 ) abstract class AuralisDatabase : RoomDatabase() {
     abstract fun sourceDao(): SourceDao
@@ -301,23 +301,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
             }
         }
 
-        /**
-         * Adds covering indexes for the hot ORDER BY clauses (playlist ordering, most-played,
-         * liked-by-date). Additive only: every index is created with IF NOT EXISTS and no table,
-         * column or row is touched, so existing user data is untouched.
-         */
-        val MIGRATION_11_12 = object : Migration(11, 12) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_entries_playlistId_position` ON `playlist_entries` (`playlistId`, `position`)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_yt_entries_playlistId_position` ON `playlist_yt_entries` (`playlistId`, `position`)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_play_history_playCount` ON `play_history` (`playCount`)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_youtube_likes_likedAt` ON `youtube_likes` (`likedAt`)")
-            }
-        }
-
         fun create(context: Context): AuralisDatabase =
             Room.databaseBuilder(context.applicationContext, AuralisDatabase::class.java, DB_NAME)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                 .build()
 
         /** On-device library database file name (also used by the recovery screen). */

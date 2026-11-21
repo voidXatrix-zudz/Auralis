@@ -478,14 +478,14 @@ fun LibraryScreen(
                             else section = tile.type.toSection()
                         }
                         if (libraryGridView) {
-                            items(tiles.chunked(2), key = { it.first().type }) { pair ->
+                            items(tiles.chunked(2)) { pair ->
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                     pair.forEach { tile -> LibraryTileCard(tile, Modifier.weight(1f), liveSyncState, liveSyncPulse) { openTile(tile) } }
                                     if (pair.size == 1) Spacer(Modifier.weight(1f))
                                 }
                             }
                         } else {
-                            items(tiles, key = { it.type }) { tile -> LibraryTileRow(tile, liveSyncState, liveSyncPulse) { openTile(tile) } }
+                            items(tiles) { tile -> LibraryTileRow(tile, liveSyncState, liveSyncPulse) { openTile(tile) } }
                         }
                     }
 
@@ -781,7 +781,7 @@ private fun PlaylistMosaic(row: LibraryPlaylistRow, modifier: Modifier = Modifie
 private fun ArtistsList(tracks: List<Track>, modifier: Modifier = Modifier) {
     val values = remember(tracks) { tracks.map { it.artist }.filter { it.isNotBlank() }.distinct().sorted() }
     LazyColumn(modifier, contentPadding = PaddingValues(16.dp)) {
-        items(values, key = { it }) { artist ->
+        items(values) { artist ->
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 ArtistAvatar(name = artist, size = 44.dp)
                 Text(artist, Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -112,7 +112,7 @@ data class PlaylistEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("trackId"), Index(value = ["playlistId", "trackId"], unique = true), Index(value = ["playlistId", "position"])],
+    indices = [Index("trackId"), Index(value = ["playlistId", "trackId"], unique = true)],
 )
 data class PlaylistEntryEntity(
     @PrimaryKey(autoGenerate = true) val entryId: Long = 0,
@@ -136,7 +136,7 @@ data class PlaylistEntryEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index(value = ["playlistId", "videoId"], unique = true), Index(value = ["playlistId", "position"])],
+    indices = [Index(value = ["playlistId", "videoId"], unique = true)],
 )
 data class PlaylistYtEntryEntity(
     @PrimaryKey(autoGenerate = true) val entryId: Long = 0,
@@ -196,7 +196,7 @@ data class FavoriteEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("lastPlayedAt"), Index("playCount")],
+    indices = [Index("lastPlayedAt")],
 )
 data class PlayHistoryEntity(
     @PrimaryKey val trackId: String,
@@ -211,7 +211,7 @@ data class SearchHistoryEntity(
 )
 
 /** YouTube songs hearted in-app. No foreign key: these are not library tracks. */
-@Entity(tableName = "youtube_likes", indices = [Index("likedAt")])
+@Entity(tableName = "youtube_likes")
 data class YouTubeLikeEntity(
     @PrimaryKey val videoId: String,
     val title: String,

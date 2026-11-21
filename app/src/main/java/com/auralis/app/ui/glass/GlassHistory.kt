@@ -29,8 +29,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.auralis.app.ui.HistoryEntry
 import com.auralis.app.ui.components.LocalDockBottomInset
-import com.auralis.app.ui.performance.LocalPerformanceProfile
-import com.auralis.app.ui.performance.listContentType
 import com.auralis.app.ui.screens.timeAgo
 import com.auralis.app.ui.theme.GlassTokens
 
@@ -62,13 +60,12 @@ fun GlassHistoryScreen(
                 )
             }
         } else {
-            val profile = LocalPerformanceProfile.current
             LazyColumn(
                 Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(entries, key = { "${it.track.id}:${it.playedAt}" }, contentType = profile.listContentType("history")) { entry ->
+                items(entries, key = { "${it.track.id}:${it.playedAt}" }) { entry ->
                     GlassPanel(
                         Modifier.fillMaxWidth(),
                         RoundedCornerShape(GlassTokens.RadiusMd),

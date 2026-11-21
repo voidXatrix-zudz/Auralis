@@ -2,7 +2,6 @@ package com.auralis.app
 
 import android.Manifest
 import android.content.ComponentName
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -33,10 +32,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // TEMP DIAGNOSTIC (Google login bug): records the intent that launched the activity, so a
-        // Clerk/OAuth callback that lands here (instead of the SDK's own receiver) is visible.
-        // Remove once the login bug is fixed.
-        Log.i(TAG, "onCreate intent=${intent?.dataString} action=${intent?.action}")
         val container = (application as AuralisApp).container
         // Let Clerk hand OAuth (Google) results back to this Activity once it is attached. This is
         // non-essential: if it fails the UI must still draw, so the failure is recorded and skipped.
@@ -70,14 +65,6 @@ class MainActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED
         if (granted) return
         runCatching { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        // TEMP DIAGNOSTIC (Google login bug): a Clerk/OAuth callback delivered to this activity
-        // (rather than the SDK's SSOReceiverActivity) shows up here. Remove once fixed.
-        Log.i(TAG, "onNewIntent intent=${intent.dataString} action=${intent.action}")
     }
 
     override fun onStart() {

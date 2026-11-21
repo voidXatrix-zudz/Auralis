@@ -190,9 +190,7 @@ fun LiquidLyricsScreen(
     val reduceMotion = rememberReduceMotion()
     val motionEnabled = profile.ambientMotionEnabled && !reduceMotion
     val gradientScale = if (profile.tier == VisualPerformanceTier.MEDIUM) 1.7f else 1f
-    // Full-screen artwork blur is the single most expensive effect; it is governed by
-    // [PerformanceProfile.backgroundBlurEnabled], not by Live blur, so Low/Medium stay cheap.
-    val blurAvailable = profile.backgroundBlurEnabled && Build.VERSION.SDK_INT >= 31 && !reduceMotion
+    val blurAvailable = profile.blurEnabled && Build.VERSION.SDK_INT >= 31 && !reduceMotion
 
     // Manual scrolling pauses auto-follow and clears the blur; both resume after ~3 s idle.
     var manualScroll by remember { mutableStateOf(false) }

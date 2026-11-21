@@ -67,7 +67,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp as dpLerp
 import androidx.compose.ui.unit.sp
@@ -577,9 +576,7 @@ private fun DockNavPill(
                         Modifier
                             .fillMaxHeight()
                             .width(slotWidth)
-                            // Deferred to the layout phase: the slide animation no longer
-                            // recomposes this capsule on every frame.
-                            .offset { IntOffset((slotWidth * slide).roundToPx(), 0) }
+                            .offset(x = slotWidth * slide)
                             .graphicsLayer { alpha = capsuleAlpha }
                             .padding(3.dp)
                             .shadow(
@@ -1208,15 +1205,15 @@ private fun GlassNavPill(
                 label = "glassLensSlide",
             )
             val targetIndex = if (selectedIndex >= 0) selectedIndex.toFloat() else 0f
+            // 5-8% stretch in the direction of travel, decaying as the lens lands.
+            val stretch = 1f + 0.07f * abs(slide - targetIndex).coerceIn(0f, 1f)
             if (selectedIndex >= 0) {
                 Box(
                     Modifier
                         .fillMaxHeight()
                         .width(slot)
-                        // Both the slide and the 5-8% travel stretch are read in the layer phase,
-                        // so the lens animation never recomposes this Box.
-                        .offset { IntOffset((slot * slide).roundToPx(), 0) }
-                        .graphicsLayer { scaleX = 1f + 0.07f * abs(slide - targetIndex).coerceIn(0f, 1f) }
+                        .offset(x = slot * slide)
+                        .graphicsLayer { scaleX = stretch }
                         .shadow(
                             elevation = 8.dp,
                             shape = CircleShape,

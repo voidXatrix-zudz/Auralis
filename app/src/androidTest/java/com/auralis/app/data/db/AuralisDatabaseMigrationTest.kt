@@ -53,7 +53,7 @@ class AuralisDatabaseMigrationTest {
     }
 
     private companion object {
-        const val LATEST = 12
+        const val LATEST = 11
 
         val MIGRATIONS = arrayOf(
             AuralisDatabase.MIGRATION_1_2,
@@ -66,7 +66,6 @@ class AuralisDatabaseMigrationTest {
             AuralisDatabase.MIGRATION_8_9,
             AuralisDatabase.MIGRATION_9_10,
             AuralisDatabase.MIGRATION_10_11,
-            AuralisDatabase.MIGRATION_11_12,
         )
 
         /** Every table the v11 schema defines; each must be present and queryable after migration. */

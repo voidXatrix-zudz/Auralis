@@ -84,8 +84,6 @@ import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.LiveDot
 import com.auralis.app.ui.components.LocalDockBottomInset
-import com.auralis.app.ui.performance.LocalPerformanceProfile
-import com.auralis.app.ui.performance.listContentType
 import com.auralis.app.data.youtube.LiveSyncState
 import com.auralis.app.ui.screens.LibraryFilter
 import com.auralis.app.ui.screens.LibraryPlaylistKind
@@ -171,7 +169,6 @@ fun GlassHomeScreen(
                     .sortedBy { it.key.lowercase() }
                     .take(12)
             }
-            val listProfile = LocalPerformanceProfile.current
             LazyColumn(
                 Modifier.weight(1f),
                 contentPadding = PaddingValues(bottom = 24.dp + LocalDockBottomInset.current),
@@ -196,7 +193,7 @@ fun GlassHomeScreen(
                     item { GlassAlbumRow(albums, onPlay) }
                 }
                 item { HomeSectionHeader("All songs · ${tracks.size}") }
-                items(tracks, key = { it.id }, contentType = listProfile.listContentType("track")) { track ->                    GlassTrackRow(
+                items(tracks, key = { it.id }) { track ->                    GlassTrackRow(
                         track, track.id == currentId, track.id in favorites, onPlay, onFavorite, onQueue, onPlayNext, playlists, onAddToPlaylist,
                         Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
@@ -220,13 +217,12 @@ private fun HomeSectionHeader(text: String) {
 
 @Composable
 private fun GlassHeroCarousel(tracks: List<Track>, currentId: String?, onPlay: (Track) -> Unit, modifier: Modifier = Modifier) {
-    val profile = LocalPerformanceProfile.current
     LazyRow(
         modifier,
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(tracks, key = { it.id }, contentType = profile.listContentType("track")) { track ->
+        items(tracks, key = { it.id }) { track ->
             Box(
                 Modifier
                     .width(276.dp)
@@ -288,12 +284,11 @@ private fun GlassHeroCarousel(tracks: List<Track>, currentId: String?, onPlay: (
 /** Rounded artwork cards with a title and a grey subtitle. */
 @Composable
 private fun GlassArtworkRow(tracks: List<Track>, currentId: String?, onPlay: (Track) -> Unit) {
-    val profile = LocalPerformanceProfile.current
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(tracks, key = { it.id }, contentType = profile.listContentType("track")) { track ->
+        items(tracks, key = { it.id }) { track ->
             Column(Modifier.width(132.dp).clickable { onPlay(track) }) {
                 GlassArtwork(track, Modifier.size(132.dp), 20.dp)
                 Text(
@@ -318,12 +313,11 @@ private fun GlassArtworkRow(tracks: List<Track>, currentId: String?, onPlay: (Tr
 
 @Composable
 private fun GlassAlbumRow(albums: List<Map.Entry<String, List<Track>>>, onPlay: (Track) -> Unit) {
-    val profile = LocalPerformanceProfile.current
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(albums, key = { it.key }, contentType = profile.listContentType("album")) { entry ->
+        items(albums, key = { it.key }) { entry ->
             val first = entry.value.firstOrNull() ?: return@items
             Column(Modifier.width(132.dp).clickable { onPlay(first) }) {
                 GlassArtwork(first, Modifier.size(132.dp), 20.dp)
@@ -758,7 +752,7 @@ fun GlassLibraryScreen(
             filter == LibraryFilter.ARTISTS -> {
                 val values = remember(tracks) { tracks.map { it.artist }.filter { it.isNotBlank() }.distinct().sorted() }
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(values, key = { it }) { value ->
+                    items(values) { value ->
                         GlassPanel(Modifier.fillMaxWidth(), RoundedCornerShape(GlassTokens.RadiusMd)) {
                             Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 ArtistAvatar(name = value, size = 40.dp)
@@ -825,14 +819,14 @@ fun GlassLibraryScreen(
                             else section = tile.kind.toSection()
                         }
                         if (libraryGridView) {
-                            items(tiles.chunked(2), key = { it.first().kind }) { pair ->
+                            items(tiles.chunked(2)) { pair ->
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                     pair.forEach { tile -> GlassTileCard(tile, Modifier.weight(1f), liveSyncState, liveSyncPulse) { openTile(tile) } }
                                     if (pair.size == 1) Spacer(Modifier.weight(1f))
                                 }
                             }
                         } else {
-                            items(tiles, key = { it.kind }) { tile -> GlassTileRow(tile, liveSyncState, liveSyncPulse) { openTile(tile) } }
+                            items(tiles) { tile -> GlassTileRow(tile, liveSyncState, liveSyncPulse) { openTile(tile) } }
                         }
                     }
                     if (youtubeLibraryError != null) {

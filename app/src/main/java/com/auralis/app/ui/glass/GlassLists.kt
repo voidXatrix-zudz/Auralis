@@ -39,8 +39,6 @@ import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.components.LocalDownloadActions
-import com.auralis.app.ui.performance.LocalPerformanceProfile
-import com.auralis.app.ui.performance.listContentType
 import com.auralis.app.ui.theme.GlassTokens
 
 @Composable
@@ -66,13 +64,12 @@ fun GlassTrackRows(
         }
         return
     }
-    val profile = LocalPerformanceProfile.current
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(tracks, key = { it.id }, contentType = profile.listContentType("track")) { track ->
+        items(tracks, key = { it.id }) { track ->
             GlassTrackRow(track, track.id == currentId, track.id in favorites, onPlay, onFavorite, onQueue, onPlayNext, playlists, onAddToPlaylist, Modifier.animateItem(), resolving = track.id == resolvingId, downloaded = (track.remoteId ?: track.id.removePrefix("yt:")) in LocalDownloadActions.current.downloadedIds)
         }
     }
@@ -153,9 +150,8 @@ fun GlassTrackRow(
 /** Horizontal artwork carousel used on Home. */
 @Composable
 fun GlassCarousel(tracks: List<Track>, currentId: String?, onPlay: (Track) -> Unit, modifier: Modifier = Modifier) {
-    val profile = LocalPerformanceProfile.current
     LazyRow(modifier, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        items(tracks, key = { it.id }, contentType = profile.listContentType("track")) { track ->
+        items(tracks, key = { it.id }) { track ->
             Column(Modifier.width(136.dp).clickable { onPlay(track) }) {
                 GlassArtwork(track, Modifier.size(136.dp), 26.dp)
                 Text(

@@ -2,8 +2,6 @@ package com.auralis.app.data.auth
 
 import android.app.Activity
 import android.content.Context
-import android.os.Process
-import android.util.Log
 import com.auralis.app.BuildConfig
 import com.auralis.app.logging.AppLog
 import com.clerk.api.Clerk
@@ -82,68 +80,19 @@ class ClerkAuthRepository(context: Context) {
     @Volatile
     private var initialized = false
 
-    /**
-     * The message from the last [initialize] failure, or null. The login screen reads this when its
-     * initialization watchdog expires, so its Retry affordance can show the *real* reason instead of
-     * a generic one. The SDK reports a failed initialization on [Clerk.initializationError]
-     * asynchronously, but a synchronous throw would otherwise only reach the app log — leaving the
-     * UI to spin forever with nothing to show.
-     */
-    @Volatile
-    var initializationFailure: String? = null
-        private set
-
-    /**
-     * Called once from Application.onCreate. A no-op when Clerk is not configured.
-     *
-     * Deliberately wrapped in try/catch and logged under "AuralisClerk": the SDK can throw
-     * synchronously, and if it did, the ready flow the UI waits on would never flip. If the call
-     * succeeds here the SDK may still be loading its environment in the background — the UI's own
-     * timeout (see AppViewModel) is what guarantees the spinner can never hang.
-     */
+    /** Called once from Application.onCreate. A no-op when Clerk is not configured. */
     fun initialize() {
         if (!configured) {
             AppLog.i(TAG, "Clerk disabled: no CLERK_PUBLISHABLE_KEY configured")
             return
         }
         if (initialized) return
-        // TEMP DIAGNOSTIC (Google login bug): a process-start breadcrumb, so a cold start that
-        // happens while the OAuth round-trip is out in the browser is visible in the log. Remove
-        // once the login bug is fixed.
-        AppLog.i(TAG, "Clerk initializing (pid=${Process.myPid()})")
-        try {
-            Clerk.initialize(appContext, publishableKey)
-            initialized = true
-            initializationFailure = null
-            AppLog.i(TAG, "Clerk initialized")
-        } catch (error: Throwable) {
-            initializationFailure = error.localizedMessage ?: error.javaClass.simpleName
-            Log.e("AuralisClerk", "Clerk.initialize failed", error)
-            AppLog.e(TAG, "Clerk initialization failed", error)
-        }
-    }
-
-    /**
-     * Re-attempts initialization after the login screen's timeout watchdog expired (its Retry
-     * button). The SDK ignores a second [Clerk.initialize] once it is configured, so an
-     * already-configured SDK is asked to [Clerk.reinitialize] instead, which restarts the
-     * client/environment refresh that initialization was waiting on.
-     */
-    fun retryInitialize() {
-        if (!configured) return
-        initializationFailure = null
-        try {
-            if (initialized) {
-                Clerk.reinitialize()
-            } else {
-                Clerk.initialize(appContext, publishableKey)
+        runCatching { Clerk.initialize(appContext, publishableKey) }
+            .onSuccess {
                 initialized = true
+                AppLog.i(TAG, "Clerk initialized")
             }
-            Log.i("AuralisClerk", "Clerk initialization retry requested")
-        } catch (error: Throwable) {
-            initializationFailure = error.localizedMessage ?: error.javaClass.simpleName
-            Log.e("AuralisClerk", "Clerk initialization retry failed", error)
-        }
+            .onFailure { AppLog.e(TAG, "Clerk initialization failed", it) }
     }
 
     /** Hands the current Activity to Clerk so browser-based OAuth (Google) can return to the app. */
@@ -170,25 +119,12 @@ class ClerkAuthRepository(context: Context) {
      * back; when the Google account is new to the instance the SDK turns the flow into a sign-up.
      * Either way the session it produced is activated here, because the SDK only *returns* it.
      */
-    suspend fun signInWithGoogle(): Result<Unit> {
-        // TEMP DIAGNOSTIC (Google login bug): breadcrumbs around the browser round-trip. If the
-        // matching "returned"/"failed" line never appears, the coroutine (and so the app process)
-        // did not survive the detour. Remove once the login bug is fixed.
-        AppLog.i(TAG, "Google OAuth: opening browser (pid=${Process.myPid()})")
-        val roundTrip = call("Google sign-in") { Clerk.auth.signInWithOAuth(OAuthProvider.GOOGLE) }
-        val result = roundTrip.fold(
-            onSuccess = {
-                AppLog.i(TAG, "Google OAuth: browser round-trip returned an OAuthResult")
-                activateOAuthResult(it)
-            },
-            onFailure = {
-                AppLog.w(TAG, "Google OAuth: browser round-trip failed: ${it.message}")
-                Result.failure(it)
-            },
-        )
-        AppLog.i(TAG, "Google OAuth: finished success=${result.isSuccess}")
-        return result
-    }
+    suspend fun signInWithGoogle(): Result<Unit> =
+        call("Google sign-in") { Clerk.auth.signInWithOAuth(OAuthProvider.GOOGLE) }
+            .fold(
+                onSuccess = { activateOAuthResult(it) },
+                onFailure = { Result.failure(it) },
+            )
 
     /**
      * Emails a one-time code and returns the in-progress challenge to verify against. An address
@@ -259,14 +195,6 @@ class ClerkAuthRepository(context: Context) {
             is OAuthResult.Outcome.SignUp -> outcome.signUp.createdSessionId
             OAuthResult.Outcome.Empty -> null
         }
-        // TEMP DIAGNOSTIC (Google login bug): outcome kind + whether Clerk actually minted a
-        // session. Remove once the login bug is fixed.
-        val outcomeKind = when (result.outcome) {
-            is OAuthResult.Outcome.SignIn -> "sign_in"
-            is OAuthResult.Outcome.SignUp -> "sign_up"
-            OAuthResult.Outcome.Empty -> "empty"
-        }
-        AppLog.i(TAG, "Google OAuth outcome=$outcomeKind hasSession=${!sessionId.isNullOrBlank()}")
         if (!sessionId.isNullOrBlank()) return activateSession(sessionId, "sign-in session")
 
         // No session normally means the sign-up still needs fields the login screen does not collect.

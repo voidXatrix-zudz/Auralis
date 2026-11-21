@@ -28,8 +28,6 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.HistoryEntry
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.glass.GlassHistoryScreen
-import com.auralis.app.ui.performance.LocalPerformanceProfile
-import com.auralis.app.ui.performance.listContentType
 import com.auralis.app.ui.theme.LocalThemeStyle
 
 /**
@@ -67,9 +65,8 @@ fun HistoryScreen(
                 )
             }
         } else {
-            val profile = LocalPerformanceProfile.current
             LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-                items(entries, key = { "${it.track.id}:${it.playedAt}" }, contentType = profile.listContentType("history")) { entry ->
+                items(entries, key = { "${it.track.id}:${it.playedAt}" }) { entry ->
                     Row(
                         Modifier.fillMaxWidth().clickable { onPlay(entry) }
                             .padding(horizontal = 16.dp, vertical = 8.dp),

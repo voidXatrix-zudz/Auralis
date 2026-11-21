@@ -74,7 +74,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
@@ -978,8 +977,7 @@ private fun GlassSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
     ) {
         Box(
             Modifier
-                // Deferred to layout: the thumb spring no longer recomposes it every frame.
-                .offset { IntOffset(thumbOffset.roundToPx(), 0) }
+                .offset(x = thumbOffset)
                 .size(thumbSize)
                 .clip(CircleShape)
                 .background(if (checked) GlassTokens.Indigo else GlassTokens.Cream60),

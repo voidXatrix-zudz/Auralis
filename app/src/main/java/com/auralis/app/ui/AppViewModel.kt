@@ -74,7 +74,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -179,11 +178,6 @@ data class AuthUiState(
     val email: String = "",
     val busy: Boolean = false,
     val error: String? = null,
-    /**
-     * True when Clerk did not become ready in time (or threw). The login screen then shows the real
-     * reason with Copy + Retry instead of leaving the "Preparing your session..." spinner up forever.
-     */
-    val initFailed: Boolean = false,
     /** True when a keyless build's user chose to skip the "sign-in isn't configured" notice. */
     val authBypassed: Boolean = false,
 )
@@ -208,23 +202,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val settings: StateFlow<AppSettings> = storedSettings
         .map { it ?: AppSettings() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
-    // Every Room-derived flow maps its rows to domain objects on Dispatchers.Default, so the
-    // whole-table `toDomain()` work never runs on the Main collector that stateIn would otherwise
-    // use. Only the resulting immutable list crosses back to the UI thread.
-    val sources: StateFlow<List<MusicSource>> = container.sources.observeSources().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val tracks: StateFlow<List<Track>> = container.database.trackDao().observeAll().map { rows -> rows.map { it.toDomain() } }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val favorites: StateFlow<Set<String>> = container.database.favoriteDao().observeIds().map { it.toSet() }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
-    val playlists = container.database.playlistDao().observePlaylists().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val playlistEntries = container.database.playlistDao().observeEntries().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val playlistYtEntries = container.database.playlistDao().observeYtEntries().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val spotifyImports = container.database.spotifyDao().observeImports().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val history = container.database.historyDao().observeAll().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val playEvents = container.database.playEventDao().observeAll().flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val sources: StateFlow<List<MusicSource>> = container.sources.observeSources().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val tracks: StateFlow<List<Track>> = container.database.trackDao().observeAll().map { rows -> rows.map { it.toDomain() } }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val favorites: StateFlow<Set<String>> = container.database.favoriteDao().observeIds().map { it.toSet() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+    val playlists = container.database.playlistDao().observePlaylists().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val playlistEntries = container.database.playlistDao().observeEntries().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val playlistYtEntries = container.database.playlistDao().observeYtEntries().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val spotifyImports = container.database.spotifyDao().observeImports().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val history = container.database.historyDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val playEvents = container.database.playEventDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     /** Recent YouTube search terms (newest first); a Home recommendation signal, kept hot for reads. */
     val searchHistory: StateFlow<List<String>> = container.database.searchHistoryDao()
         .observeRecent(20)
         .map { rows -> rows.map { it.query } }
-        .flowOn(Dispatchers.Default)
+
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val playback = container.playback.state
     /**
@@ -280,10 +271,6 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         AuthUiState(configured = container.clerkAuth.configured, initializing = container.clerkAuth.configured),
     )
     val auth = _auth.asStateFlow()
-    /** The Clerk init watchdog; see [startAuthInitWatchdog]. Null when Clerk is not configured. */
-    private var authInitWatchdog: Job? = null
-    /** Bounds a single sign-in round-trip so a stuck Clerk call can't leave the buttons disabled. */
-    private var authBusyWatchdog: Job? = null
     /** Explore tab: the currently opened mood and its streamed songs. */
     private val _explore = MutableStateFlow(ExploreUiState())
     val explore = _explore.asStateFlow()
@@ -304,12 +291,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Recently played YouTube songs, mapped to [Track] for Continue Listening and recommendations. */
     val youtubeRecents: StateFlow<List<Track>> = container.database.youtubeDao().observeRecents(20)
         .map { rows -> rows.map { it.toDomain() } }
-        .flowOn(Dispatchers.Default)
+
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     /** Full play history (newest first) for the History screen, with play counts. */
     val youtubeHistory: StateFlow<List<com.auralis.app.data.db.YouTubeRecentEntity>> =
         container.database.youtubeDao().observeHistory()
-            .flowOn(Dispatchers.Default)
+
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     /**
      * History rows from both sources, newest first. Local songs and streamed YouTube songs share one
@@ -324,7 +311,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             HistoryEntry(row.toDomain(), row.playedAt, row.playCount, row.videoId)
         }
         (localEntries + remoteEntries).sortedByDescending { it.playedAt }
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     /** Session cache of `videoId -> musicVideoType` for likes, so read-time filtering is accurate. */
     private val likedMusicTypes = java.util.concurrent.ConcurrentHashMap<String, String>()
 
@@ -353,7 +340,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         combine(container.database.youtubeDao().observeLiked(), settings) { rows, current ->
             rows.filter { likePasses(it.videoId, it.durationMs, current.youtubeSongsOnly) }
                 .map { it.toDomain() }
-        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val _youtubePlaylists = MutableStateFlow<List<com.auralis.app.data.youtube.YtPlaylist>>(emptyList())
     val youtubePlaylists = _youtubePlaylists.asStateFlow()
     /** Live-sync engine snapshot: drives the Liked Songs indicator and the Settings status row. */
@@ -383,11 +370,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Offline YouTube downloads, exposed as local playable tracks. */
     val downloads: StateFlow<List<Track>> = container.database.downloadDao().observeAll()
         .map { rows -> rows.map { it.toDomain() } }
-        .flowOn(Dispatchers.Default)
+
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val downloadedIds: StateFlow<Set<String>> = container.database.downloadDao().observeAll()
         .map { rows -> rows.map { it.videoId }.toSet() }
-        .flowOn(Dispatchers.Default)
+
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
     /**
      * Resolved streamed tracks by id. Session-only by design: the library, favorites, stats and
@@ -824,39 +811,24 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     container.clerkAuth.initializationError,
                 ) { ready, user, error -> Triple(ready, user, error) }
                     .collect { (ready, user, error) ->
-                        // TEMP DIAGNOSTIC (Google login bug): shows whether Clerk ever reports ready
-                        // and/or a signed-in user after the browser round-trip, so a login screen
-                        // that "gets stuck loading" can be traced to initialization vs the OAuth
-                        // flow. Remove once the login bug is fixed.
-                        AppLog.i(
-                            "Clerk",
-                            "auth state: ready=$ready signedIn=${user != null} error=${error != null}",
-                        )
-                        // Clerk is up: the timeout watchdog has nothing left to guard.
-                        if (ready) authInitWatchdog?.cancel()
                         _auth.update { state ->
                             state.copy(
                                 configured = true,
-                                // Stop the spinner once Clerk is ready, reports an error, or the
-                                // watchdog already gave up; otherwise an offline first launch (or a
-                                // stalled refresh) would sit on "Preparing your session..." forever.
-                                initializing = !ready && user == null && error == null && !state.initFailed,
+                                // Stop the spinner once Clerk reports an error, otherwise an offline
+                                // first launch would sit on "Preparing your session..." forever.
+                                initializing = !ready && user == null && error == null,
                                 signedIn = user != null,
                                 account = user?.toAccount(),
                                 error = when {
                                     user != null -> null
-                                    ready -> null
-                                    error != null -> "Couldn't reach the sign-in service. Check your connection."
+                                    error != null && !ready -> "Couldn't reach the sign-in service. Check your connection."
                                     else -> state.error
                                 },
-                                // A ready Clerk clears any earlier watchdog failure.
-                                initFailed = if (ready) false else state.initFailed,
                                 awaitingCode = if (user != null) false else state.awaitingCode,
                             )
                         }
                     }
             }
-            startAuthInitWatchdog()
         } else {
             // Keyless build: nothing to collect. Stay signed out so the gate shows the configuration
             // notice (with a continue-without-an-account escape hatch) rather than faking a session.
@@ -871,71 +843,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     // ---- Clerk authentication -----------------------------------------------------------------
 
-    /**
-     * Guarantees the login gate cannot hang on "Preparing your session..." forever. Clerk's SDK
-     * retries a failed/stalled client+environment refresh in the background with backoff and only
-     * reports readiness through the flows the UI observes, so a refresh that never completes looks
-     * like an infinite spinner with no error. After [AUTH_INIT_TIMEOUT_MS] the spinner is replaced
-     * by the real reason, and the gate's buttons become usable again (Copy / Retry).
-     */
-    private fun startAuthInitWatchdog() {
-        authInitWatchdog?.cancel()
-        authInitWatchdog = viewModelScope.launch {
-            delay(AUTH_INIT_TIMEOUT_MS)
-            if (!_auth.value.initializing) return@launch
-            val reason = container.clerkAuth.initializationFailure
-            val message = "Clerk failed to initialize: " +
-                (reason ?: "no response after ${AUTH_INIT_TIMEOUT_MS / 1000}s")
-            AppLog.w("Clerk", message)
-            _auth.update { it.copy(initializing = false, initFailed = true, error = message) }
-        }
-    }
-
-    /** Retry from the login gate's init-failure notice: re-runs Clerk init and the watchdog. */
-    fun retryAuthInitialization() {
-        if (!_auth.value.initFailed && !_auth.value.initializing) return
-        _auth.update { it.copy(initializing = true, initFailed = false, error = null, busy = false) }
-        container.clerkAuth.retryInitialize()
-        startAuthInitWatchdog()
-    }
-
-    /**
-     * Bounds one sign-in round-trip. The browser OAuth call suspends until the deep link returns;
-     * if it never does (the SDK's pending-redirect state is in-memory only), `busy` would otherwise
-     * stay true forever — greying out "Continue with Google" and spinning the email button. The
-     * generous bound avoids firing while a user is still typing in the browser.
-     */
-    private fun startAuthBusyWatchdog(message: String) {
-        authBusyWatchdog?.cancel()
-        authBusyWatchdog = viewModelScope.launch {
-            delay(AUTH_FLOW_TIMEOUT_MS)
-            if (!_auth.value.busy) return@launch
-            AppLog.w("Clerk", "Auth flow watchdog fired: $message")
-            _auth.update { it.copy(busy = false, error = message) }
-        }
-    }
-
     /** Starts Google sign-in through Clerk (browser OAuth; returns via the app's deep link). */
     fun signInWithGoogle() {
         if (_auth.value.busy) return
-        _auth.update { it.copy(busy = true, error = null, initFailed = false) }
-        // TEMP DIAGNOSTIC (Google login bug): the elapsed time makes a warm return (a few seconds)
-        // vs. a cold start after the app was killed (much longer) obvious in the log. Remove once
-        // the login bug is fixed.
-        val startedAt = System.currentTimeMillis()
-        AppLog.i("Clerk", "Google sign-in requested")
-        startAuthBusyWatchdog("Google sign-in didn't finish. Please try again.")
+        _auth.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             container.clerkAuth.signInWithGoogle()
-                .onSuccess {
-                    AppLog.i("Clerk", "Google sign-in completed in ${System.currentTimeMillis() - startedAt} ms")
-                    _auth.update { it.copy(error = null) }
-                }
+                .onSuccess { AppLog.i("Clerk", "Google sign-in completed") }
                 .onFailure { error ->
-                    AppLog.w("Clerk", "Google sign-in failed after ${System.currentTimeMillis() - startedAt} ms")
                     _auth.update { it.copy(error = error.localizedMessage ?: "Google sign-in failed") }
                 }
-            authBusyWatchdog?.cancel()
             _auth.update { it.copy(busy = false) }
         }
     }
@@ -3330,10 +3247,6 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
     private companion object {
         const val TAG = "AuralisViewModel"
-        /** How long the login gate waits for Clerk before it shows the error + Retry (see watchdog). */
-        const val AUTH_INIT_TIMEOUT_MS = 10_000L
-        /** Upper bound on one sign-in round-trip, so a stuck Clerk call can't freeze the buttons. */
-        const val AUTH_FLOW_TIMEOUT_MS = 90_000L
         const val KIND_METADATA_OVERRIDE = "metadata_override"
         const val SEARCH_DEBOUNCE_MS = 300L
         const val RADIO_INITIAL_SIZE = 15

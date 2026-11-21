@@ -1,5 +1,6 @@
 package com.auralis.app.ui.glass
 
+import android.os.Build
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.auralis.app.domain.model.AppSettings
@@ -47,19 +48,20 @@ fun resolveDockGlass(
     glass: GlassSettings,
     profile: PerformanceProfile,
     systemReason: String? = null,
+    sdkInt: Int = Build.VERSION.SDK_INT,
 ): DockGlassStyle {
     val transparency = glass.dockTransparency.coerceIn(0f, 1f)
     val blurStrength = glass.blurStrength.coerceIn(0f, 1f)
 
     val tint = GlassMapping.dockFillAlpha(transparency)
     val effectiveBlur = GlassMapping.blurDp(blurStrength, profile.blurScale)
-    // Blur runs on every supported API level (Haze uses RenderEffect on 12+ and RenderScript below),
-    // so only the profile and a zero radius can switch it off.
-    val blurEnabled = profile.blurEnabled && effectiveBlur > 0.5f
+    val apiSupportsBlur = sdkInt >= 31
+    val blurEnabled = apiSupportsBlur && profile.blurEnabled && effectiveBlur > 0.5f
 
     val reason = when {
+        sdkInt < 31 -> "Live blur needs Android 12 or newer"
         blurStrength <= 0.005f -> null
-        !profile.blurEnabled -> "Live blur is turned off"
+        !profile.blurEnabled -> "Live blur is off in Low performance mode"
         systemReason != null -> "Reduced by $systemReason"
         profile.blurScale < 1f -> "Reduced by Performance Mode (${profile.tier.label()})"
         else -> null

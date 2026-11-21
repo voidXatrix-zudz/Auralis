@@ -87,7 +87,7 @@ fun HomeScreen(
                 Text(if (scanning) "Scanning" else "Scan device", Modifier.padding(start = if (scanning) 8.dp else 0.dp))
             }
         }
-        if (sources.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 100.dp).padding(horizontal = 16.dp)) { items(sources, key = { it.id }) { FolderRow(it.name) } }
+        if (sources.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 100.dp).padding(horizontal = 16.dp)) { items(sources) { FolderRow(it.name) } }
         if (tracks.isEmpty()) EmptyLibraryHero(onAddMusic, onScan, Modifier.weight(1f), scanning, onOpenSettings, sources.isEmpty())
         else {
             Text("Songs · ${tracks.size}", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.titleMedium)

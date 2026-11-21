@@ -334,9 +334,8 @@ fun GlassNowPlayingScreen(
                 // blur (a source that is an ancestor would be excluded by Haze).
                 if (settings.playerBackground != PlayerBackground.NONE) {
                     val hazeState = LocalHazeState.current
-                    // The full-screen capture is an expensive extra, so it follows
-                    // backgroundBlurEnabled (off in Low/Medium) rather than Live blur alone.
-                    val blurEnabled = LocalPerformanceProfile.current.backgroundBlurEnabled &&
+                    // The full-screen capture is an expensive extra, so it follows Live blur.
+                    val blurEnabled = LocalPerformanceProfile.current.blurEnabled &&
                         Build.VERSION.SDK_INT >= 31
                     Box(
                         Modifier

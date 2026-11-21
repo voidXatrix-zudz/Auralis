@@ -94,13 +94,9 @@ class PerformanceResolverTest {
         val low = PerformanceProfiles.Low
 
         assertTrue(high.blurEnabled)
-        // Blur radius scales High 100% -> Medium 70% -> Low 40%; blur itself stays on so the glass
-        // still reads as glass. Only the radius (and the coarser downsample) scales.
-        assertEquals(1.0f, high.blurScale, 0.001f)
-        assertEquals(0.7f, medium.blurScale, 0.001f)
-        assertEquals(0.4f, low.blurScale, 0.001f)
+        assertEquals(0.6f, medium.blurScale, 0.001f)
         assertTrue(medium.blurEnabled)
-        assertTrue(low.blurEnabled)
+        assertFalse(low.blurEnabled)
 
         assertTrue(high.refractionEnabled)
         assertFalse(medium.refractionEnabled)

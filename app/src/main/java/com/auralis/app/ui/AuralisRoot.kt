@@ -82,7 +82,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -137,7 +136,6 @@ import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.ui.performance.LocalPerformanceMode
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
-import com.auralis.app.ui.performance.RefreshRateEffect
 import com.auralis.app.ui.components.glassSurface
 import com.auralis.app.logging.AppLog
 import dev.chrisbanes.haze.rememberHazeState
@@ -189,11 +187,6 @@ fun AuralisRoot(viewModel: AppViewModel) {
     // the saved appearance applies to the very first frame instead of being applied on top of a
     // visible default Normal theme.
     val loadedSettings by viewModel.loadedSettings.collectAsStateWithLifecycle()
-    // The one resolved workload for the whole app, read here (before the first frame) so the
-    // display refresh-rate request — High 120 / Medium 90 / Low 60 Hz, clamped to the panel's own
-    // supported modes — is in force while the app is still starting up.
-    val profile by viewModel.performanceProfile.collectAsStateWithLifecycle()
-    RefreshRateEffect(profile.tier)
     val settings = loadedSettings
     if (settings == null) {
         StartupSurface()
@@ -217,8 +210,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val queueIds by remember { derivedStateOf { playbackState.queueIds } }
     val upNextIds by remember { derivedStateOf { playbackState.upNextIds } }
     val context = androidx.compose.ui.platform.LocalContext.current
-    // [profile] was collected above the startup gate; it is provided downwards so changing the mode
-    // (or Battery Saver/thermal state) updates every screen without a restart.
+    // The one resolved workload for the whole app. Collected once here, provided downwards, so
+    // changing the mode (or Battery Saver/thermal state) updates every screen without a restart.
+    val profile by viewModel.performanceProfile.collectAsStateWithLifecycle()
     val performanceMode by viewModel.performanceMode.collectAsStateWithLifecycle()
     val performanceReason by viewModel.performanceReason.collectAsStateWithLifecycle()
     // GitHub release state; drives the global dialog, the Settings row and the dock badge.
@@ -343,7 +337,6 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onVerifyCode = viewModel::verifyEmailCode,
                     onEditEmail = viewModel::editEmail,
                     onClearError = viewModel::clearAuthError,
-                    onRetryInit = viewModel::retryAuthInitialization,
                 )
             } else {
                 com.auralis.app.ui.screens.SignInUnavailable(
@@ -579,12 +572,6 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     trailing = headerTrailing,
                                 )
                             }
-                            // Per-destination saveable state. Without a holder, AnimatedContent
-                            // disposes the outgoing screen (contentKey = nav), so switching tabs and
-                            // coming back resets scroll positions and screen-local state and forces
-                            // a full re-layout/re-decode. This keeps the state per NavState, the same
-                            // unit the transition already keys on, so returning to a tab is instant.
-                            val saveableStateHolder = rememberSaveableStateHolder()
                             AnimatedContent(
                                 targetState = nav,
                                 transitionSpec = {
@@ -608,8 +595,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     .then(if (dockStyle == DockStyle.GLASS) Modifier else Modifier.dockBottomSpace(dockScroll, currentTrack != null)),
                                 label = "screen",
                             ) { state ->
-                                saveableStateHolder.SaveableStateProvider(state) {
-                                    when (state.top) {
+                                when (state.top) {
                                         Destination.Settings -> SettingsHubScreen(
                                             settings = settings,
                                             sources = sources,
@@ -840,7 +826,6 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             )
                                         }
                                     }
-                                }
                             }
                         }
                     }
