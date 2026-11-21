@@ -1,10 +1,13 @@
 package com.auralis.app.data.lyrics
 
 import com.auralis.app.logging.AppLog
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -14,10 +17,13 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -32,37 +38,64 @@ class ProviderHttp(base: OkHttpClient) {
         .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
 
-    fun getJson(url: String, headers: Map<String, String> = emptyMap()): JSONObject? =
-        runCatching {
-            val builder = Request.Builder().url(url).header("User-Agent", USER_AGENT)
-            headers.forEach { (k, v) -> builder.header(k, v) }
-            client.newCall(builder.build()).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful || body.isBlank()) null else JSONObject(body)
-            }
-        }.getOrNull()
+    suspend fun getJson(url: String, headers: Map<String, String> = emptyMap()): JSONObject? {
+        val body = getText(url, headers) ?: return null
+        return runCatching { JSONObject(body) }.getOrNull()
+    }
 
-    fun getText(url: String, headers: Map<String, String> = emptyMap()): String? =
-        runCatching {
-            val builder = Request.Builder().url(url).header("User-Agent", USER_AGENT)
-            headers.forEach { (k, v) -> builder.header(k, v) }
-            client.newCall(builder.build()).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful || body.isBlank()) null else body
-            }
-        }.getOrNull()
+    suspend fun getText(url: String, headers: Map<String, String> = emptyMap()): String? {
+        val request = runCatching { request(url = url, headers = headers) }.getOrNull() ?: return null
+        return execute(request)
+    }
 
-    fun postJson(url: String, payload: String, headers: Map<String, String> = emptyMap()): JSONObject? =
-        runCatching {
-            val builder = Request.Builder().url(url)
-                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
-                .header("User-Agent", USER_AGENT)
-            headers.forEach { (k, v) -> builder.header(k, v) }
-            client.newCall(builder.build()).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful || body.isBlank()) null else JSONObject(body)
+    suspend fun postJson(
+        url: String,
+        payload: String,
+        headers: Map<String, String> = emptyMap(),
+    ): JSONObject? {
+        val request = runCatching {
+            request(url = url, headers = headers) { it.post(payload.toRequestBody(JSON_MEDIA_TYPE)) }
+        }.getOrNull() ?: return null
+        val body = execute(request) ?: return null
+        return runCatching { JSONObject(body) }.getOrNull()
+    }
+
+    private fun request(
+        url: String,
+        headers: Map<String, String>,
+        customize: ((Request.Builder) -> Unit)? = null,
+    ): Request {
+        val builder = Request.Builder().url(url).header("User-Agent", USER_AGENT)
+        headers.forEach { (name, value) -> builder.header(name, value) }
+        customize?.invoke(builder)
+        return builder.build()
+    }
+
+    /**
+     * Runs the call off the blocking path and, crucially, cancels the underlying OkHttp call when
+     * the coroutine is cancelled. That is what lets the repository's per-provider timeout and the
+     * "skip song" cancellation actually stop a slow or dead request instead of waiting it out.
+     * Any failure (timeout, DNS, HTTP error, blank body) resolves to null and never throws.
+     */
+    private suspend fun execute(call: Request): String? = suspendCancellableCoroutine { cont ->
+        val httpCall = client.newCall(call)
+        cont.invokeOnCancellation { httpCall.cancel() }
+        httpCall.enqueue(object : Callback {
+            override fun onFailure(call: Call, error: IOException) {
+                if (cont.isActive) cont.resume(null)
             }
-        }.getOrNull()
+
+            override fun onResponse(call: Call, response: Response) {
+                val body = runCatching {
+                    response.use { result ->
+                        val text = result.body?.string().orEmpty()
+                        if (!result.isSuccessful || text.isBlank()) null else text
+                    }
+                }.getOrNull()
+                if (cont.isActive) cont.resume(body)
+            }
+        })
+    }
 
     companion object {
         const val TIMEOUT_SECONDS = 8L
@@ -281,10 +314,10 @@ class KuGouProvider(http: ProviderHttp) : LyricsProvider {
         toResult(content) ?: LyricsResult(id, null, null)
     }
 
-    private fun kugouCandidate(hash: String): Pair<String, String>? =
+    private suspend fun kugouCandidate(hash: String): Pair<String, String>? =
         parseKugouCandidate(http.getText("$CANDIDATE?ver=1&man=yes&client=pc&hash=${ProviderHttp.encode(hash)}"))
 
-    private fun kugouCandidateByKeyword(keyword: String, durationMs: Long?): Pair<String, String>? {
+    private suspend fun kugouCandidateByKeyword(keyword: String, durationMs: Long?): Pair<String, String>? {
         val duration = durationMs?.let { (it / 1000L).toInt().takeIf { s -> s > 0 } }
         val suffix = duration?.let { "&duration=${it * 1000}" }.orEmpty()
         return parseKugouCandidate(
@@ -292,7 +325,7 @@ class KuGouProvider(http: ProviderHttp) : LyricsProvider {
         )
     }
 
-    private fun download(candidate: Pair<String, String>): String? {
+    private suspend fun download(candidate: Pair<String, String>): String? {
         val body = http.getText(
             "$DOWNLOAD?fmt=lrc&charset=utf8&client=pc&ver=1&id=${ProviderHttp.encode(candidate.first)}" +
                 "&accesskey=${ProviderHttp.encode(candidate.second)}",
@@ -596,7 +629,7 @@ class YouTubeMusicLyricsProvider(http: ProviderHttp) : LyricsProvider {
         LyricsResult(id, null, text.takeIf { it.isNotBlank() })
     }
 
-    private fun findLyricsBrowseId(videoId: String): String? {
+    private suspend fun findLyricsBrowseId(videoId: String): String? {
         val payload = buildObject(
             "videoId" to videoId,
             "playlistId" to "RDAMVM$videoId",
@@ -629,7 +662,7 @@ class YouTubeMusicLyricsProvider(http: ProviderHttp) : LyricsProvider {
         return null
     }
 
-    private fun browseLyrics(browseId: String): String? {
+    private suspend fun browseLyrics(browseId: String): String? {
         val root = http.postJson(BROWSE_URL, buildObject("browseId" to browseId), HEADERS) ?: return null
         val description = findDescriptionShelf(root) ?: return null
         return runsText(description)
