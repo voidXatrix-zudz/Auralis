@@ -28,6 +28,49 @@ fun canKaraoke(line: LrcLine): Boolean =
     line.words.isNotEmpty() && line.words.joinToString(" ") { it.text } == line.text.trim()
 
 /**
+ * Character ranges of each word inside [LrcLine.text], precomputed once per line so the draw phase
+ * never searches or allocates. [starts] and [ends] are parallel to the line's word list.
+ */
+internal class WordRanges(val starts: IntArray, val ends: IntArray) {
+    val size: Int get() = starts.size
+}
+
+/**
+ * Maps each word onto the display text by walking the words in order and skipping the separator
+ * whitespace between them. This reproduces the exact display whether the source joins words with
+ * spaces (LRC), with none (KRC/CJK), or leaves trailing spaces (TTML). Returns null when the words do
+ * not reconstruct the text (punctuation mismatch, extra text), so the caller falls back to
+ * line-level highlighting instead of drawing a wrong fill.
+ */
+internal fun wordRanges(line: LrcLine): WordRanges? {
+    val text = line.text
+    if (text.isBlank() || line.words.isEmpty()) return null
+    val starts = IntArray(line.words.size)
+    val ends = IntArray(line.words.size)
+    var cursor = 0
+    for (index in line.words.indices) {
+        val word = line.words[index].text
+        while (cursor < text.length && text[cursor].isWhitespace()) cursor++
+        if (word.isEmpty()) {
+            starts[index] = cursor
+            ends[index] = cursor
+            continue
+        }
+        if (cursor > text.length - word.length || !text.regionMatches(cursor, word, 0, word.length)) {
+            return null
+        }
+        starts[index] = cursor
+        cursor += word.length
+        ends[index] = cursor
+    }
+    // Anything left after the last word must be whitespace, otherwise the mapping is unreliable.
+    for (index in cursor until text.length) {
+        if (!text[index].isWhitespace()) return null
+    }
+    return WordRanges(starts, ends)
+}
+
+/**
  * Playback-rate estimate between two player-position snapshots, so the highlight interpolates at the
  * right rate when the user plays at 0.5x-2x. Returns 1.0 whenever the interval cannot be trusted
  * (first sample, pause, seek jump, paused interval, implausible ratio), so a bad estimate never

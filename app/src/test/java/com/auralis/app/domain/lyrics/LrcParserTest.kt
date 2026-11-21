@@ -1,10 +1,12 @@
 package com.auralis.app.domain.lyrics
 
+import com.auralis.app.domain.model.LrcWord
 import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.LyricsSync
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -179,5 +181,53 @@ class LrcParserTest {
         assertEquals(LyricsSync.WORD, LrcParser.parse("[00:10.00]<00:10.00>Hello world").sync)
         assertEquals(LyricsSync.LINE, LrcParser.parse("[00:10.00]Hello").sync)
         assertEquals(LyricsSync.PLAIN, LrcParser.parse("just words").sync)
+    }
+
+    @Test
+    fun `activeWord returns the last started word across gaps and ends`() {
+        val words = listOf(
+            LrcWord(1_000L, "one", 1_400L),
+            LrcWord(2_000L, "two", 2_500L),
+            LrcWord(3_000L, "three", null),
+        )
+        assertEquals(-1, LrcParser.activeWord(words, 999L))
+        assertEquals(0, LrcParser.activeWord(words, 1_000L))
+        assertEquals(0, LrcParser.activeWord(words, 1_800L)) // in the gap after "one"
+        assertEquals(1, LrcParser.activeWord(words, 2_000L))
+        assertEquals(2, LrcParser.activeWord(words, 9_999L)) // after the last word
+        assertEquals(-1, LrcParser.activeWord(emptyList(), 5_000L))
+    }
+
+    @Test
+    fun `activeWord with duplicate timestamps returns the last one`() {
+        val words = listOf(LrcWord(1_000L, "a"), LrcWord(1_000L, "b"), LrcWord(1_000L, "c"))
+        assertEquals(2, LrcParser.activeWord(words, 1_000L))
+    }
+
+    @Test
+    fun `zero and negative word durations are widened`() {
+        val line = LrcParser.parse("[00:10.00]<00:10.00>Hello <00:10.00>world").synced!!.single()
+        assertEquals(2, line.words.size)
+        assertEquals(10_090L, line.words[0].endMs) // max(nextStart, start + 90)
+        assertNull(line.words[1].endMs) // the last word lights on arrival
+    }
+
+    @Test
+    fun `out-of-order word tags are sorted and demoted when they no longer match the text`() {
+        val parsed = LrcParser.parse("[00:10.00]<00:11.00>Later <00:10.50>Earlier")
+        val line = parsed.synced!!.single()
+        assertEquals("Later Earlier", line.text)
+        // Sorting changed the order, so the words cannot reproduce the display text: fall back.
+        assertTrue(line.words.isEmpty())
+        assertEquals(LyricsSync.LINE, parsed.sync)
+    }
+
+    @Test
+    fun `overlapping lines are clamped so no end precedes its start`() {
+        val lines = LrcParser.parse("[00:10.00]Same\n[00:10.00]Same").synced!!
+        assertEquals(2, lines.size)
+        assertEquals(10_000L, lines[0].endMs)
+        assertEquals(10_000L, lines[1].timeMs)
+        assertNull(lines[1].endMs)
     }
 }

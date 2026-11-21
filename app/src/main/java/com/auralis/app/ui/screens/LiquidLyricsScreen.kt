@@ -90,19 +90,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -117,9 +121,9 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.glass.rememberReduceMotion
-import com.auralis.app.ui.lyrics.canKaraoke
-import com.auralis.app.ui.lyrics.karaokeLine
+import com.auralis.app.ui.lyrics.WordRanges
 import com.auralis.app.ui.lyrics.rememberLyricsPosition
+import com.auralis.app.ui.lyrics.wordRanges
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.VisualPerformanceTier
 import com.auralis.app.ui.theme.ArtworkPalette
@@ -130,6 +134,7 @@ import com.auralis.app.ui.theme.LyricsTypography
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.text.Bidi
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
@@ -143,16 +148,16 @@ private sealed interface LyricRow {
         override val key: String get() = "line-$index"
     }
 
-    data class Gap(val index: Int) : LyricRow {
+    data class Gap(val index: Int, val endMs: Long) : LyricRow {
         override val key: String get() = "gap-$index"
     }
 }
 
 /**
- * Full-screen lyrics surface. Line-synced LRC drives a spring auto-follow to the middle of the
- * viewport; the active line grows/brightens while neighbours shrink, fade and blur. Enhanced LRC
- * word tags highlight word by word. Everything reads the real player position plus the global
- * offset, so seeking and pausing never desync.
+ * Full-screen lyrics surface. Line-synced LRC drives a spring auto-follow that keeps the active
+ * line about a third from the top; the active line grows/brightens while neighbours shrink, fade and
+ * blur. Enhanced LRC word tags fill word by word from a smooth interpolated clock. Everything reads
+ * the real player position plus the global offset, so seeking and pausing never desync.
  */
 @Composable
 fun LiquidLyricsScreen(
@@ -262,26 +267,30 @@ fun LiquidLyricsScreen(
         0.35f
     }
 
-    val rows = remember(lines) {
+    val rows = remember(lines, durationMs) {
         buildList<LyricRow> {
             lines.forEachIndexed { index, line ->
                 add(LyricRow.Line(index, line))
+                // A long instrumental stretch after this line (to the next line, or to the end of a
+                // trailing section) shows breathing dots, so a gap never looks like a freeze.
                 val next = lines.getOrNull(index + 1)
-                if (next != null && next.timeMs - line.timeMs >= 6_000L) {
-                    add(LyricRow.Gap(index))
+                val gapEnd = next?.timeMs ?: durationMs.takeIf { it > line.timeMs }
+                if (gapEnd != null && gapEnd - line.timeMs >= 6_000L) {
+                    add(LyricRow.Gap(index, gapEnd))
                 }
             }
         }
     }
 
-    // Spring auto-follow: keep the active line near the middle of the viewport.
+    // Auto-follow keeps the active line about a third from the top, easing with a critically damped
+    // spring so it never overshoots or stutters.
     LaunchedEffect(active, autoScroll, lines.size, clearForTouch) {
         if (!autoScroll || clearForTouch || active < 0 || rows.isEmpty()) return@LaunchedEffect
         val rowIndex = rows.indexOfFirst { it is LyricRow.Line && it.index == active }
         if (rowIndex < 0) return@LaunchedEffect
         val viewport = listState.layoutInfo.viewportSize.height
         if (viewport <= 0) return@LaunchedEffect
-        val target = viewport * 0.50f
+        val target = viewport * 0.33f
         if (reduceMotion) {
             listState.scrollToItem(rowIndex, -target.toInt())
             return@LaunchedEffect
@@ -290,7 +299,7 @@ fun LiquidLyricsScreen(
         if (info != null) {
             listState.animateScrollBy(
                 value = info.offset - target,
-                animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessLow),
+                animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
             )
         } else {
             listState.animateScrollToItem(rowIndex, -target.toInt())
@@ -516,10 +525,9 @@ fun LiquidLyricsScreen(
                                     }
                                     is LyricRow.Gap -> {
                                         val line = lines[row.index]
-                                        val next = lines.getOrNull(row.index + 1)
-                                        val visible = next != null && active == row.index &&
+                                        val visible = active == row.index &&
                                             effectivePosition - line.timeMs > 2_000 &&
-                                            next.timeMs - effectivePosition > 500
+                                            row.endMs - effectivePosition > 500
                                         InstrumentalGap(
                                             visible = visible,
                                             accent = accent,
@@ -721,12 +729,10 @@ private fun LyricLineRow(
             letterSpacing = 0.1.sp,
         )
     }
-    val plainText = remember(line.text) { AnnotatedString(line.text.ifBlank { "♪" }) }
-    val text = if (active && positionState != null && canKaraoke(line)) {
-        karaokeLine(line, positionState.value, activeColor, activeColor.copy(alpha = 0.42f))
-    } else {
-        plainText
-    }
+    // Precomputed once per line; null means the word tags do not map cleanly onto the display text,
+    // so the row falls back to line-level highlighting instead of drawing a wrong fill.
+    val ranges = remember(line) { wordRanges(line) }
+    val karaoke = active && positionState != null && ranges != null
 
     Box(
         Modifier
@@ -768,14 +774,136 @@ private fun LyricLineRow(
             .padding(horizontal = 14.dp, vertical = 9.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Text(
-            text = text,
-            textAlign = TextAlign.Start,
-            maxLines = 6,
-            modifier = Modifier.fillMaxWidth(),
-            style = if (active) activeTextStyle else inactiveTextStyle,
-        )
+        if (karaoke) {
+            WordSyncText(
+                line = line,
+                ranges = ranges!!,
+                position = positionState!!,
+                style = activeTextStyle,
+                dimColor = activeColor.copy(alpha = 0.42f),
+                maxLines = 6,
+            )
+        } else {
+            Text(
+                text = AnnotatedString(line.text.ifBlank { "♪" }),
+                textAlign = TextAlign.Start,
+                maxLines = 6,
+                modifier = Modifier.fillMaxWidth(),
+                style = if (active) activeTextStyle else inactiveTextStyle,
+            )
+        }
     }
+}
+
+/**
+ * Draws the active word-timed line as two identical text layers: a dim base and a lit copy clipped
+ * to the sung region. Only the clip changes per frame, so the text is laid out once and never
+ * re-measured or re-allocated while the song plays. The clip path is a single remembered [Path].
+ */
+@Composable
+private fun WordSyncText(
+    line: LrcLine,
+    ranges: WordRanges,
+    position: State<Long>,
+    style: TextStyle,
+    dimColor: Color,
+    maxLines: Int,
+) {
+    val display = remember(line.text) { line.text.ifBlank { "♪" } }
+    val dimStyle = remember(style, dimColor) { style.copy(color = dimColor) }
+    val path = remember(line) { Path() }
+    val rtl = remember(display) {
+        runCatching { Bidi(display, Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT).baseLevel % 2 == 1 }
+            .getOrDefault(false)
+    }
+    var layout by remember(line) { mutableStateOf<TextLayoutResult?>(null) }
+    Box(Modifier.fillMaxWidth()) {
+        Text(
+            text = display,
+            textAlign = TextAlign.Start,
+            maxLines = maxLines,
+            modifier = Modifier.fillMaxWidth(),
+            style = dimStyle,
+            onTextLayout = { layout = it },
+        )
+        val measured = layout
+        if (measured != null) {
+            Text(
+                text = display,
+                textAlign = TextAlign.Start,
+                maxLines = maxLines,
+                style = style,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .drawWithContent {
+                        val text = measured.layoutInput.text.text
+                        val index = LrcParser.activeWord(line.words, position.value)
+                        if (index < 0 || index >= ranges.size) {
+                            // Before the first word starts: nothing is sung yet.
+                            path.rewind()
+                            clipPath(path) { this@drawWithContent.drawContent() }
+                            return@drawWithContent
+                        }
+                        if (rtl) {
+                            // Right-to-left lines: a left-to-right clip would be wrong, so light the
+                            // whole line while it is active instead.
+                            this@drawWithContent.drawContent()
+                            return@drawWithContent
+                        }
+                        val word = line.words[index]
+                        val start = ranges.starts[index].coerceIn(0, text.length)
+                        val end = ranges.ends[index].coerceIn(start, text.length)
+                        val span = ((word.endMs ?: word.timeMs) - word.timeMs).coerceAtLeast(1L)
+                        val fraction = ((position.value - word.timeMs).toFloat() / span).coerceIn(0f, 1f)
+                        path.rewind()
+                        val firstLine = measured.getLineForOffset(start)
+                        val lastLine = measured.getLineForOffset((end - 1).coerceAtLeast(start))
+                        // Everything on the visual lines above the active word was already sung.
+                        for (lineIndex in 0 until firstLine) {
+                            path.addKaraokeRect(0f, measured.getLineTop(lineIndex), size.width, measured.getLineBottom(lineIndex))
+                        }
+                        var total = 0f
+                        for (lineIndex in firstLine..lastLine) {
+                            total += karaokeSegmentWidth(measured, start, end, lineIndex)
+                        }
+                        var remaining = fraction * total
+                        for (lineIndex in firstLine..lastLine) {
+                            val segmentStart = maxOf(start, measured.getLineStart(lineIndex))
+                            val segmentEnd = minOf(end, measured.getLineEnd(lineIndex, visibleEnd = false))
+                            val from = measured.getHorizontalPosition(segmentStart, true)
+                            val to = measured.getHorizontalPosition(segmentEnd, true)
+                            val width = (to - from).coerceAtLeast(0f)
+                            val x = if (remaining >= width) to else from + remaining.coerceIn(0f, width)
+                            path.addKaraokeRect(0f, measured.getLineTop(lineIndex), x.coerceIn(0f, size.width), measured.getLineBottom(lineIndex))
+                            remaining -= width
+                            if (remaining <= 0f) break
+                        }
+                        clipPath(path) { this@drawWithContent.drawContent() }
+                    },
+            )
+        }
+    }
+}
+
+/** Horizontal extent of [start]..[end] on one visual line, used to split a wrapped word's fraction. */
+private fun karaokeSegmentWidth(layout: TextLayoutResult, start: Int, end: Int, lineIndex: Int): Float {
+    val from = maxOf(start, layout.getLineStart(lineIndex))
+    val to = minOf(end, layout.getLineEnd(lineIndex, visibleEnd = false))
+    if (to <= from) return 0f
+    return (layout.getHorizontalPosition(to, true) - layout.getHorizontalPosition(from, true)).coerceAtLeast(0f)
+}
+
+/**
+ * Appends a rectangle to the clip [Path] without allocating a [androidx.compose.ui.geometry.Rect],
+ * so refilling the path every frame stays allocation-free.
+ */
+private fun Path.addKaraokeRect(left: Float, top: Float, right: Float, bottom: Float) {
+    if (right <= left || bottom <= top) return
+    moveTo(left, top)
+    lineTo(right, top)
+    lineTo(right, bottom)
+    lineTo(left, bottom)
+    close()
 }
 
 @Composable
