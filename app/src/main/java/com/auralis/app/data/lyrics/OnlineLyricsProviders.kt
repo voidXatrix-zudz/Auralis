@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -114,6 +115,85 @@ class LyricsOvhProvider(http: ProviderHttp) : LyricsProvider {
     }
 
     private companion object { const val BASE = "https://api.lyrics.ovh/v1" }
+}
+
+/**
+ * BiniLyrics: `lyrics-api.binimum.org` (which redirects to lrc.red) searches by metadata, then the
+ * returned `lyricsUrl` serves Apple word-timed TTML. The URL is gated to the two trusted hosts so a
+ * hostile search response cannot point the fetch somewhere else.
+ */
+class BiniLyricsProvider(private val http: ProviderHttp) : LyricsProvider {
+    override val id: String = "BiniLyrics"
+
+    override suspend fun search(
+        title: String,
+        artist: String,
+        album: String?,
+        durationMs: Long?,
+        videoId: String?,
+    ): LyricsResult? = withContext(Dispatchers.IO) {
+        if (title.isBlank() || artist.isBlank()) return@withContext null
+        val seconds = durationMs?.let { (it / 1000L).toInt().takeIf { s -> s > 0 } }
+        val url = buildString {
+            append(BASE).append("?track=").append(ProviderHttp.encode(title))
+            append("&artist=").append(ProviderHttp.encode(artist))
+            if (!album.isNullOrBlank()) append("&album=").append(ProviderHttp.encode(album))
+            if (seconds != null) append("&duration=").append(seconds)
+        }
+        val body = http.getText(url) ?: return@withContext null
+        val lyricsUrl = pickBiniLyricsUrl(body, title, artist, durationMs)
+            ?: return@withContext LyricsResult(id, null, null)
+        val ttml = http.getText(lyricsUrl) ?: return@withContext null
+        LyricsResult(id, TtmlParser.parse(ttml), null)
+    }
+
+    private companion object { const val BASE = "https://lyrics-api.binimum.org/" }
+}
+
+/** True for the only hosts BiniLyrics serves lyrics from, over HTTPS (SSRF guard). */
+internal fun biniLyricsUrlAllowed(raw: String?): Boolean {
+    val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+    val uri = runCatching { java.net.URI(value) }.getOrNull() ?: return false
+    if (!uri.scheme.equals("https", ignoreCase = true)) return false
+    return when (uri.host?.lowercase()) {
+        "lrc.red", "lyrics-api.binimum.org" -> true
+        else -> false
+    }
+}
+
+/**
+ * Best `lyricsUrl` from a BiniLyrics search body: title/artist must match (duration within 3 s),
+ * closest duration wins, and the URL must pass [biniLyricsUrlAllowed]. Empty/malformed/no-match
+ * bodies yield null.
+ */
+internal fun pickBiniLyricsUrl(body: String?, title: String, artist: String, durationMs: Long?): String? {
+    val results = parseJsonObject(body)?.get("results") as? JsonArray ?: return null
+    val target = durationMs?.takeIf { it > 0 }
+    var best: String? = null
+    var bestDelta = Long.MAX_VALUE
+    for (element in results) {
+        val row = element as? JsonObject ?: continue
+        val lyricsUrl = row.string("lyricsUrl") ?: continue
+        if (!biniLyricsUrlAllowed(lyricsUrl)) continue
+        val candidateMs = row.double("duration")?.takeIf { it > 0 }?.let { (it * 1000).toLong() }
+        if (!LyricsMatcher.matches(
+                requestedTitle = title,
+                requestedArtist = artist,
+                candidateTitle = row.string("track_name").orEmpty(),
+                candidateArtist = row.string("artist_name").orEmpty(),
+                requestedDurationMs = target,
+                candidateDurationMs = candidateMs,
+            )
+        ) {
+            continue
+        }
+        val delta = if (target != null && candidateMs != null) abs(target - candidateMs) else 0L
+        if (best == null || delta < bestDelta) {
+            best = lyricsUrl
+            bestDelta = delta
+        }
+    }
+    return best
 }
 
 /** NetEase Cloud Music (unofficial): search then the synced LRC endpoint. */
@@ -251,6 +331,9 @@ private fun JsonObject.string(key: String): String? =
 
 private fun JsonObject.long(key: String): Long? =
     (this[key] as? JsonPrimitive)?.longOrNull ?: (this[key] as? JsonPrimitive)?.intOrNull?.toLong()
+
+private fun JsonObject.double(key: String): Double? =
+    (this[key] as? JsonPrimitive)?.doubleOrNull
 
 private fun parseJsonObject(body: String?): JsonObject? =
     body?.let { runCatching { providerJson.parseToJsonElement(it) }.getOrNull() } as? JsonObject
