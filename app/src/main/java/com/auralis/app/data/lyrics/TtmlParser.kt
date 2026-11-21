@@ -31,14 +31,14 @@ internal object TtmlParser {
             }.toList()
             val text = plain(inner)
             lines += when {
-                text.isEmpty() -> "[${stamp(lineStart)}]"
+                text.isEmpty() -> "[${lrcTimestamp(lineStart)}]"
                 words.isNotEmpty() -> buildString {
-                    append('[').append(stamp(lineStart)).append(']')
+                    append('[').append(lrcTimestamp(lineStart)).append(']')
                     words.forEach { (time, word) ->
-                        append('<').append(stamp(time)).append('>').append(word).append(' ')
+                        append('<').append(lrcTimestamp(time)).append('>').append(word).append(' ')
                     }
                 }.trimEnd()
-                else -> "[${stamp(lineStart)}]$text"
+                else -> "[${lrcTimestamp(lineStart)}]$text"
             }
         }
         return lines.takeIf { it.isNotEmpty() }?.joinToString("\n")
@@ -46,11 +46,6 @@ internal object TtmlParser {
 
     /** Text of a `<p>`/`<span>` with its tags removed and XML entities decoded. */
     private fun plain(inner: String): String = decode(inner.replace(anyTag, "")).replace(whitespace, " ").trim()
-
-    private fun stamp(ms: Long): String {
-        val value = ms.coerceAtLeast(0L)
-        return "%02d:%02d.%03d".format(value / 60_000, (value % 60_000) / 1_000, value % 1_000)
-    }
 
     /** `ss.mmm`, `mm:ss.mmm` or `hh:mm:ss.mmm` to milliseconds. */
     private fun timeOf(value: String?): Long? {
@@ -110,4 +105,10 @@ internal object TtmlParser {
             }
         }
     }
+}
+
+/** Milliseconds to an LRC `mm:ss.mmm` timestamp, shared by the TTML and LyricsPlus conversions. */
+internal fun lrcTimestamp(ms: Long): String {
+    val value = ms.coerceAtLeast(0L)
+    return "%02d:%02d.%03d".format(value / 60_000, (value % 60_000) / 1_000, value % 1_000)
 }

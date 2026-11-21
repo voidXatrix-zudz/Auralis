@@ -416,6 +416,83 @@ internal fun betterLyricsTtml(body: String?): String? =
     parseJsonObject(body)?.string("ttml")?.takeIf { it.isNotBlank() }
 
 /**
+ * LyricsPlus community mirrors, which serve Apple word-synced lyrics as structured JSON. The
+ * `prjktla` mirror is tried first (the `binimum` one answered 404/429 in testing); each mirror can
+ * be missing or rate-limited independently, so both are tried before giving up.
+ */
+class LyricsPlusProvider(private val http: ProviderHttp) : LyricsProvider {
+    override val id: String = "LyricsPlus"
+
+    override suspend fun search(
+        title: String,
+        artist: String,
+        album: String?,
+        durationMs: Long?,
+        videoId: String?,
+    ): LyricsResult? = withContext(Dispatchers.IO) {
+        if (title.isBlank() || artist.isBlank()) return@withContext null
+        val seconds = durationMs?.let { (it / 1000L).toInt().takeIf { s -> s > 0 } }
+        var reached = false
+        for (base in MIRRORS) {
+            val url = buildString {
+                append(base).append("/v2/lyrics/get?title=").append(ProviderHttp.encode(title))
+                append("&artist=").append(ProviderHttp.encode(artist))
+                if (seconds != null) append("&duration=").append(seconds)
+                if (!album.isNullOrBlank()) append("&album=").append(ProviderHttp.encode(album))
+                append("&source=").append(SOURCE_ORDER)
+            }
+            val body = http.getText(url) ?: continue
+            reached = true
+            val synced = lyricsPlusFromBody(body) ?: continue
+            return@withContext LyricsResult(id, synced, null)
+        }
+        // A mirror answered with nothing: a clean miss. No mirror answered: a transient failure.
+        if (reached) LyricsResult(id, null, null) else null
+    }
+
+    private companion object {
+        val MIRRORS = listOf("https://lyricsplus.prjktla.my.id", "https://lyricsplus.binimum.org")
+        const val SOURCE_ORDER = "apple,lyricsplus"
+    }
+}
+
+/**
+ * Converts a LyricsPlus body to enhanced LRC. Each `lyrics[]` row keeps its `syllabus[]` word
+ * timings as inline `<mm:ss.mmm>` tags; rows without a syllabus stay line-level. Empty, malformed
+ * and lyric-less bodies yield null.
+ */
+internal fun lyricsPlusFromBody(body: String?): String? {
+    val lyrics = parseJsonObject(body)?.get("lyrics") as? JsonArray ?: return null
+    val lines = lyrics.mapNotNull { element ->
+        val row = element as? JsonObject ?: return@mapNotNull null
+        val lineTime = row.long("time") ?: return@mapNotNull null
+        if (lineTime < 0) return@mapNotNull null
+        val words = (row["syllabus"] as? JsonArray).orEmpty().mapNotNull { syllabus ->
+            val word = syllabus as? JsonObject ?: return@mapNotNull null
+            val wordTime = word.long("time") ?: return@mapNotNull null
+            val text = word.string("text")?.trim().orEmpty()
+            if (text.isEmpty()) null else wordTime to text
+        }
+        lrcLine(lineTime, words, row.string("text")?.trim())
+    }
+    return lines.takeIf { it.isNotEmpty() }?.joinToString("\n")
+}
+
+/** One LRC line: word-tagged when timed words exist, otherwise plain text (or an empty gap line). */
+private fun lrcLine(timeMs: Long, words: List<Pair<Long, String>>, text: String?): String {
+    if (words.isEmpty()) {
+        val value = text.orEmpty()
+        return if (value.isEmpty()) "[${lrcTimestamp(timeMs)}]" else "[${lrcTimestamp(timeMs)}]$value"
+    }
+    return buildString {
+        append('[').append(lrcTimestamp(timeMs)).append(']')
+        words.forEach { (time, word) ->
+            append('<').append(lrcTimestamp(time)).append('>').append(word).append(' ')
+        }
+    }.trimEnd()
+}
+
+/**
  * YouTube Music lyrics via InnerTube: `next` exposes a "Lyrics" tab whose browseId is then
  * browsed for the description shelf. Unsynchronised text only.
  */
