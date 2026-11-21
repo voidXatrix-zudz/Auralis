@@ -335,17 +335,7 @@ class KuGouProvider(http: ProviderHttp) : LyricsProvider {
     }
 
     /** Timestamped content is cleaned of KuGou credits; untimed content is kept as plain text. */
-    private fun toResult(content: String): LyricsResult? {
-        val text = content.replace("\r\n", "\n").trim()
-        if (text.isBlank()) return null
-        if (KUGOU_STAMPED.containsMatchIn(text)) {
-            val stripped = cleanKugouCredits(text)
-            if (stripped.isBlank() || isKugouInstrumentalNotice(stripped)) return null
-            return LyricsResult(id, stripped, null)
-        }
-        if (isKugouInstrumentalNotice(text)) return null
-        return LyricsResult(id, null, text)
-    }
+    private fun toResult(content: String): LyricsResult? = kugouResult(id, content)
 
     private companion object {
         const val SEARCH = "https://mobileservice.kugou.com/api/v3/search/song"
@@ -356,6 +346,24 @@ class KuGouProvider(http: ProviderHttp) : LyricsProvider {
 
 /** One KuGou search hit: only the hash and its duration matter for the follow-up lookups. */
 internal data class KugouSong(val hash: String, val durationSeconds: Long)
+
+/**
+ * Turns decoded KuGou file content into a result: a stamped file is cleaned of credits and kept as
+ * synced lyrics, an untimed file is kept as plain text, and an instrumental notice yields null. The
+ * stamp check is unanchored on purpose, because KuGou files open with `[id:]`/`[ar:]` metadata
+ * rather than a timestamped lyric line.
+ */
+internal fun kugouResult(id: String, content: String): LyricsResult? {
+    val text = content.replace("\r\n", "\n").trim()
+    if (text.isBlank()) return null
+    if (KUGOU_STAMP.containsMatchIn(text)) {
+        val stripped = cleanKugouCredits(text)
+        if (stripped.isBlank() || isKugouInstrumentalNotice(stripped)) return null
+        return LyricsResult(id, stripped, null)
+    }
+    if (isKugouInstrumentalNotice(text)) return null
+    return LyricsResult(id, null, text)
+}
 
 private val providerJson = Json { isLenient = true; ignoreUnknownKeys = true }
 

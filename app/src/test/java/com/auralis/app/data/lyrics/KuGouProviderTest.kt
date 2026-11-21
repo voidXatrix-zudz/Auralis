@@ -114,4 +114,34 @@ class KuGouProviderTest {
         assertFalse(isKugouInstrumentalNotice(""))
         assertFalse(isKugouInstrumentalNotice("[00:00.00]"))
     }
+
+    @Test
+    fun `a full downloaded file is recognised as synced despite its metadata header`() {
+        val file = listOf(
+            "?[id:\$00000000]",
+            "[ar:Ed Sheeran]",
+            "[ti:Shape of You]",
+            "[al:Shape of You]",
+            "[offset:0]",
+            "[00:03.22]Lyrics by:Ed Sheeran?Steve Mac",
+            "[00:09.55]The club isn't the best place to find a lover",
+            "[00:11.99]So the bar is where I go",
+        ).joinToString("\n")
+        val result = kugouResult("KuGou", file)
+        val synced = result?.synced
+        assertTrue(synced != null)
+        assertFalse(synced!!.contains("Lyrics by"))
+        assertTrue(synced.contains("[00:09.55]The club isn't the best place to find a lover"))
+        assertNull(result.plain)
+    }
+
+    @Test
+    fun `untimed content stays plain and notices and blanks yield null`() {
+        val plain = kugouResult("KuGou", "Just some untimed words")
+        assertNull(plain?.synced)
+        assertEquals("Just some untimed words", plain?.plain)
+        assertNull(kugouResult("KuGou", "[00:00.00]纯音乐,请欣赏"))
+        assertNull(kugouResult("KuGou", "   "))
+        assertNull(kugouResult("KuGou", ""))
+    }
 }
