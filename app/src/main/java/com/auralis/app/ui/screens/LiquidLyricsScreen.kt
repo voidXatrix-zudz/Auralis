@@ -76,6 +76,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -101,13 +102,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auralis.app.domain.lyrics.LrcParser
@@ -118,6 +116,9 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.glass.rememberReduceMotion
+import com.auralis.app.ui.lyrics.canKaraoke
+import com.auralis.app.ui.lyrics.karaokeLine
+import com.auralis.app.ui.lyrics.rememberLyricsPosition
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.VisualPerformanceTier
 import com.auralis.app.ui.theme.ArtworkPalette
@@ -159,6 +160,7 @@ fun LiquidLyricsScreen(
     loading: Boolean,
     positionMs: Long,
     durationMs: Long,
+    playing: Boolean,
     lyricSizeSp: Int,
     autoScroll: Boolean,
     onSeek: (Long) -> Unit,
@@ -183,6 +185,10 @@ fun LiquidLyricsScreen(
     val active = remember(lines, effectivePosition) {
         LrcParser.activeLine(lines, effectivePosition)
     }
+    // Per-frame player position, read only by the active word-timed line so the rest of the list
+    // never recomposes on a frame. Advances while playing, freezes on pause, re-bases on every
+    // position snapshot (seek) and includes the user's timing offset.
+    val livePosition = rememberLyricsPosition(positionMs, playing, lyricsOffsetMs)
     val listState = rememberLazyListState()
     val colors = MaterialTheme.colorScheme
     val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
@@ -499,7 +505,7 @@ fun LiquidLyricsScreen(
                                             blurScale = profile.blurScale,
                                             clearForTouch = clearForTouch,
                                             motionMs = if (reduceMotion) 0 else 420,
-                                            effectivePositionMs = if (row.index == active) effectivePosition else 0L,
+                                            positionState = if (row.index == active && row.line.words.isNotEmpty()) livePosition else null,
                                             lyricsOffsetMs = lyricsOffsetMs,
                                             onSeek = onSeek,
                                         )
@@ -638,7 +644,7 @@ private fun LyricLineRow(
     blurScale: Float,
     clearForTouch: Boolean,
     motionMs: Int,
-    effectivePositionMs: Long,
+    positionState: State<Long>?,
     lyricsOffsetMs: Int,
     onSeek: (Long) -> Unit,
 ) {
@@ -712,9 +718,8 @@ private fun LyricLineRow(
         )
     }
     val plainText = remember(line.text) { AnnotatedString(line.text.ifBlank { "♪" }) }
-    val wordsText = if (active && line.words.isNotEmpty()) line.words.joinToString(" ") { it.text } else ""
-    val text = if (active && line.words.isNotEmpty() && wordsText == line.text.trim()) {
-        wordHighlight(line, effectivePositionMs, activeColor)
+    val text = if (active && positionState != null && canKaraoke(line)) {
+        karaokeLine(line, positionState.value, activeColor, activeColor.copy(alpha = 0.42f))
     } else {
         plainText
     }
@@ -766,22 +771,6 @@ private fun LyricLineRow(
             modifier = Modifier.fillMaxWidth(),
             style = if (active) activeTextStyle else inactiveTextStyle,
         )
-    }
-}
-
-/** Highlights enhanced-LRC words that have already been sung; unsung words stay dim. */
-private fun wordHighlight(line: LrcLine, positionMs: Long, activeColor: Color): AnnotatedString = buildAnnotatedString {
-    line.words.forEachIndexed { index, word ->
-        if (index > 0) append(' ')
-        val sung = word.timeMs <= positionMs
-        withStyle(
-            SpanStyle(
-                color = if (sung) activeColor else activeColor.copy(alpha = 0.42f),
-                fontWeight = if (sung) FontWeight.ExtraBold else FontWeight.Medium,
-            ),
-        ) {
-            append(word.text)
-        }
     }
 }
 

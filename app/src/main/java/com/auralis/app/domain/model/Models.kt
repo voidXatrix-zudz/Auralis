@@ -14,17 +14,29 @@ enum class ReplayGainMode { OFF, TRACK, ALBUM }
 
 enum class LyricsSource { EMBEDDED, LRC, USER, LRCLIB }
 
-/** One timed word inside an enhanced-LRC line. */
-data class LrcWord(val timeMs: Long, val text: String)
+/**
+ * How precisely the lyrics are timed: [WORD] has per-word timings, [LINE] only line starts, and
+ * [PLAIN] has no timestamps at all. Used to prefer word-synced results over line-synced ones.
+ */
+enum class LyricsSync { PLAIN, LINE, WORD }
+
+/** One timed word inside an enhanced-LRC line. [endMs] is the word's end, when known. */
+data class LrcWord(
+    val timeMs: Long,
+    val text: String,
+    val endMs: Long? = null,
+)
 
 /**
  * One timestamped lyric line. [words] is only populated for enhanced LRC (inline <mm:ss.xx> tags);
- * it stays empty for ordinary line-synced lyrics so existing behaviour is unchanged.
+ * it stays empty for ordinary line-synced lyrics so existing behaviour is unchanged. [endMs] is the
+ * line's end, derived from the next line's start when the source does not state it.
  */
 data class LrcLine(
     val timeMs: Long,
     val text: String,
     val words: List<LrcWord> = emptyList(),
+    val endMs: Long? = null,
 )
 
 /**
@@ -45,6 +57,8 @@ data class Lyrics(
      * duration; the lyrics page then warns they "may be out of sync". Part J.
      */
     val outOfSync: Boolean = false,
+    /** Timing precision of these lyrics: word, line, or plain. Never inferred, always parsed. */
+    val sync: LyricsSync = LyricsSync.PLAIN,
 )
 
 /** A music file in the library. Mirrors the Track model of the AURALIS web reference. */

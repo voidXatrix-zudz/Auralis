@@ -83,10 +83,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -113,6 +115,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -124,6 +127,8 @@ import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.Track
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.PlayerBackground
+import com.auralis.app.ui.lyrics.canKaraoke
+import com.auralis.app.ui.lyrics.karaokeLine
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.components.AudioInfoSheet
 import com.auralis.app.ui.components.ArtistAvatar
@@ -313,6 +318,7 @@ fun GlassNowPlayingScreen(
                     loading = lyricsLoading,
                     positionMs = playback.positionMs,
                     durationMs = duration,
+                    playing = playback.playing,
                     lyricSizeSp = lyricSizeSp,
                     autoScroll = lyricsAutoScroll,
                     lyricsOffsetMs = lyricsOffsetMs,
@@ -942,6 +948,8 @@ private fun SyncedLyricList(
     val listState = rememberLazyListState()
     var active by remember(trackId) { mutableIntStateOf(-1) }
     val lastBase = remember(trackId) { longArrayOf(-1L) }
+    // Per-frame position, read only by the active word-timed line so only that line recomposes.
+    val wordPosition = remember(trackId) { mutableLongStateOf(0L) }
 
     // Active line comes from the player position sampled every frame while playing. The last
     // published snapshot (player.currentPosition) is re-based whenever it arrives, and the line
@@ -950,6 +958,7 @@ private fun SyncedLyricList(
     // the sung line.
     LaunchedEffect(trackId, lines, positionMs, playing, lyricsOffsetMs, interactive) {
         val base = (positionMs + lyricsOffsetMs).coerceAtLeast(0L)
+        wordPosition.longValue = base
         val previous = lastBase[0]
         val seeked = previous >= 0 && (base < previous - 250L || base > previous + 1_500L)
         lastBase[0] = base
@@ -966,6 +975,7 @@ private fun SyncedLyricList(
             withFrameNanos { now ->
                 if (frameBase < 0L) frameBase = now
                 val estimated = base + (now - frameBase) / 1_000_000L
+                wordPosition.longValue = estimated
                 var index = LrcParser.activeLine(lines, estimated + LYRIC_LEAD_MS)
                 // Normal playback never moves the highlight backwards; only a seek may.
                 if (index < current) index = current
@@ -1017,6 +1027,8 @@ private fun SyncedLyricList(
             val distance = if (active >= 0) abs(index - active) else index.coerceAtMost(4)
             InlineLyricLine(
                 text = line.text,
+                line = line,
+                positionState = if (index == active && line.words.isNotEmpty()) wordPosition else null,
                 active = index == active,
                 distance = distance,
                 staggerIndex = index,
@@ -1116,6 +1128,8 @@ private fun InlineLyricLine(
     blurAvailable: Boolean,
     modeProgress: () -> Float,
     onClick: (() -> Unit)?,
+    line: LrcLine? = null,
+    positionState: State<Long>? = null,
 ) {
     val family = remember(text) { LyricsTypography.familyFor(text) }
     val alphaState = animateFloatAsState(
@@ -1157,8 +1171,16 @@ private fun InlineLyricLine(
         }
     }
     val blurRadius = maxOf(baseBlur, enterBlur)
+    // Karaoke fill for the active word-timed line: reads the frame position here so only this line
+    // recomposes per frame, not the whole list.
+    val karaoke = if (active && positionState != null && line != null && canKaraoke(line)) {
+        karaokeLine(line, positionState.value, GlassTokens.Cream, GlassTokens.Cream.copy(alpha = 0.42f))
+    } else {
+        null
+    }
+    val display: AnnotatedString = karaoke ?: AnnotatedString(text.ifBlank { "♪" })
     Text(
-        text = text.ifBlank { "♪" },
+        text = display,
         color = GlassTokens.Cream,
         fontFamily = family,
         fontSize = sizeSp.sp,

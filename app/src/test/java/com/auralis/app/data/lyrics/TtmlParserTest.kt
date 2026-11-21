@@ -1,6 +1,7 @@
 package com.auralis.app.data.lyrics
 
 import com.auralis.app.domain.lyrics.LrcParser
+import com.auralis.app.domain.model.LyricsSync
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -30,6 +31,7 @@ class TtmlParserTest {
         assertEquals("The club rocks & rolls", line.text)
         assertEquals(listOf("The", "club", "rocks & rolls"), line.words.map { it.text })
         assertEquals(listOf(9_731L, 9_927L, 10_284L), line.words.map { it.timeMs })
+        assertEquals(LyricsSync.WORD, lyrics.sync)
     }
 
     @Test

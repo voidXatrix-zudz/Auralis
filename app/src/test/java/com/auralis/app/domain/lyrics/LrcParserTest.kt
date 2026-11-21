@@ -1,6 +1,7 @@
 package com.auralis.app.domain.lyrics
 
 import com.auralis.app.domain.model.LyricsSource
+import com.auralis.app.domain.model.LyricsSync
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -152,5 +153,31 @@ class LrcParserTest {
         val line = parsed.synced!!.single()
         assertEquals(40_000L, line.timeMs)
         assertEquals("", line.text)
+    }
+
+    @Test
+    fun `word ends and line ends are derived from the next start`() {
+        val lines = LrcParser.parse(
+            "[00:10.00]<00:10.00>Hello <00:10.60>big <00:11.20>world\n[00:14.00]Next line",
+        ).synced!!
+        val first = lines[0]
+        assertEquals(14_000L, first.endMs)
+        assertEquals(listOf(10_600L, 11_200L, null), first.words.map { it.endMs })
+        assertEquals(14_000L, lines[1].timeMs)
+        assertEquals(null, lines[1].endMs)
+    }
+
+    @Test
+    fun `line-only lyrics never gain word timings`() {
+        val parsed = LrcParser.parse("[00:10.00]Line one\n[00:12.00]Line two")
+        assertTrue(parsed.synced!!.all { it.words.isEmpty() })
+        assertEquals(LyricsSync.LINE, parsed.sync)
+    }
+
+    @Test
+    fun `sync level reports word line and plain`() {
+        assertEquals(LyricsSync.WORD, LrcParser.parse("[00:10.00]<00:10.00>Hello world").sync)
+        assertEquals(LyricsSync.LINE, LrcParser.parse("[00:10.00]Hello").sync)
+        assertEquals(LyricsSync.PLAIN, LrcParser.parse("just words").sync)
     }
 }

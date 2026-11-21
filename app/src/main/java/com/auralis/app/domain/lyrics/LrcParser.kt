@@ -4,6 +4,7 @@ import com.auralis.app.domain.model.LrcLine
 import com.auralis.app.domain.model.LrcWord
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.LyricsSource
+import com.auralis.app.domain.model.LyricsSync
 
 /**
  * Parses LRC and plain lyric text. Multiple timestamps on one line are expanded, an [offset:]
@@ -64,9 +65,32 @@ object LrcParser {
                 lines += LrcLine(time, content, shiftedWords)
             }
         }
-        val synced = lines.sortedBy { it.timeMs }.takeIf { it.isNotEmpty() }
+        val sorted = lines.sortedBy { it.timeMs }
+        val synced = withEnds(sorted).takeIf { it.isNotEmpty() }
         val plainText = plain.toString().trim().takeIf { it.isNotBlank() }
-        return Lyrics(LyricsSource.USER, raw, synced, plainText)
+        val syncLevel = when {
+            synced == null -> LyricsSync.PLAIN
+            synced.any { it.words.isNotEmpty() } -> LyricsSync.WORD
+            else -> LyricsSync.LINE
+        }
+        return Lyrics(LyricsSource.USER, raw, synced, plainText, sync = syncLevel)
+    }
+
+    /**
+     * Fills in end times from the following line/word start. A word's end is the next word's start;
+     * the last word of a line keeps a null end (it lights when reached) rather than stretching
+     * across a possible instrumental gap to the next line. Line-only data never gains word timings.
+     */
+    private fun withEnds(lines: List<LrcLine>): List<LrcLine> = lines.mapIndexed { index, line ->
+        val lineEnd = lines.getOrNull(index + 1)?.timeMs
+        if (line.words.isEmpty()) {
+            line.copy(endMs = lineEnd)
+        } else {
+            val words = line.words.mapIndexed { wordIndex, word ->
+                word.copy(endMs = line.words.getOrNull(wordIndex + 1)?.timeMs)
+            }
+            line.copy(words = words, endMs = lineEnd)
+        }
     }
 
     fun parse(raw: String, source: LyricsSource): Lyrics = parse(raw).copy(source = source)

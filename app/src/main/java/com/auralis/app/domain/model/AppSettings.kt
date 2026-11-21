@@ -114,9 +114,9 @@ data class AppSettings(
     val cacheSizeMb: Int = 512,
 ) {
     companion object {
-        /** Default lyrics provider lookup order: LRCLIB, then word-synced, then KuGou, then the rest. */
+        /** Default lyrics provider lookup order: word-synced first, then line-synced, then plain. */
         val DEFAULT_LYRICS_PROVIDER_ORDER: List<String> = listOf(
-            "LRCLIB", "BiniLyrics", "BetterLyrics", "LyricsPlus", "KuGou",
+            "BiniLyrics", "BetterLyrics", "LyricsPlus", "KuGou", "LRCLIB",
             "SimpMusic", "NetEase", "YouTubeMusic", "LyricsOvh",
         )
     }

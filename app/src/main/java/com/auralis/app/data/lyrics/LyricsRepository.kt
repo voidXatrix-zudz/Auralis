@@ -16,6 +16,7 @@ import com.auralis.app.data.settings.SettingsRepository
 import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.LyricsSource
+import com.auralis.app.domain.model.LyricsSync
 import com.auralis.app.domain.model.Track
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -163,9 +164,6 @@ class LyricsRepository(
         val videoId: String?,
     )
 
-    /** A parsed result with its ranking score. */
-    private data class ScoredLyrics(val lyrics: Lyrics, val score: Double)
-
     /** A provider outcome on the results channel ([lyrics] is null when it found or returned nothing). */
     private class LyricsHit(val lyrics: Lyrics?)
 
@@ -174,11 +172,11 @@ class LyricsRepository(
      *
      * One coroutine per provider starts at once (never for a disabled one); each has a
      * [PROVIDER_TIMEOUT_MS] budget and the whole lookup is capped at [OVERALL_BUDGET_MS]. Results are
-     * scored by confidence (title similarity, artist overlap, duration agreement) plus a strong
-     * synced-over-plain bonus. The first synced result is emitted through [onUpdate] immediately and
-     * silently upgraded if a higher-scored one arrives within [UPGRADE_WINDOW_MS]; when nothing is
-     * synced the best unsynced result wins. Cached positives are reused and fresh negatives skip a
-     * provider; provider failures are only logged.
+     * ranked by sync quality first (word > line > plain) and then by confidence (title similarity,
+     * artist overlap, duration agreement). The first acceptable result is emitted through [onUpdate]
+     * immediately; a strictly better sync level always replaces it, and a better-scoring same-tier
+     * result may replace it within [UPGRADE_WINDOW_MS]. Cached positives are reused and fresh
+     * negatives skip a provider; provider failures are only logged.
      */
     private suspend fun loadOnlineParallel(
         track: Track,
@@ -204,9 +202,8 @@ class LyricsRepository(
                 hits.close()
             }
 
-            var best: ScoredLyrics? = null
-            var bestSynced: ScoredLyrics? = null
-            var shown: ScoredLyrics? = null
+            var best: Lyrics? = null
+            var shown: Lyrics? = null
             var windowStartedAt = 0L
             val deadline = System.currentTimeMillis() + OVERALL_BUDGET_MS
             while (true) {
@@ -214,30 +211,31 @@ class LyricsRepository(
                 if (remaining <= 0L) break
                 val hit = withTimeoutOrNull(remaining) { hits.receiveCatching().getOrNull() } ?: break
                 val lyrics = hit.lyrics ?: continue
-                val scored = ScoredLyrics(lyrics, scoreLyrics(lyrics))
-                if (best == null || scored.score > best!!.score) best = scored
+                if (best == null || isBetterLyrics(lyrics, best!!, preferSynced)) best = lyrics
 
-                val synced = lyrics.synced != null
-                if (synced) {
-                    if (bestSynced == null || scored.score > bestSynced!!.score) bestSynced = scored
-                }
                 val withinUpgrade = windowStartedAt > 0L &&
                     System.currentTimeMillis() - windowStartedAt <= UPGRADE_WINDOW_MS
+                // A strictly better sync level (word over line over plain) always replaces the shown
+                // one, however late it arrives; within the window, a better-scoring same-tier result
+                // may also replace it. This is what lets a word-synced provider win over a fast
+                // line-synced one for the same song.
+                val strictlyHigherQuality = preferSynced && shown != null &&
+                    lyrics.sync.ordinal > shown!!.sync.ordinal
                 val emit = when {
-                    shown == null -> synced || !preferSynced
-                    synced && withinUpgrade -> scored.score > (shown?.score ?: 0.0)
-                    !synced && !preferSynced && withinUpgrade -> scored.score > (shown?.score ?: 0.0)
+                    shown == null -> !preferSynced || lyrics.sync != LyricsSync.PLAIN
+                    strictlyHigherQuality -> true
+                    withinUpgrade && isBetterLyrics(lyrics, shown!!, preferSynced) -> true
                     else -> false
                 }
                 if (emit) {
                     onUpdate?.invoke(lyrics)
-                    shown = scored
+                    shown = lyrics
                     if (windowStartedAt == 0L) windowStartedAt = System.currentTimeMillis()
                 }
             }
 
-            val winner = (if (preferSynced) bestSynced ?: best else best)?.lyrics
-            if (winner != null && winner !== shown?.lyrics) onUpdate?.invoke(winner)
+            val winner = best
+            if (winner != null && winner !== shown) onUpdate?.invoke(winner)
             winner
         }
     }
@@ -273,14 +271,6 @@ class LyricsRepository(
     } catch (error: Throwable) {
         Log.w(TAG, "Lyrics provider failed", error)
         null
-    }
-
-    /** Confidence plus a strong synced-over-plain bonus, minus an out-of-sync penalty. */
-    private fun scoreLyrics(lyrics: Lyrics): Double {
-        val confidence = lyrics.confidence ?: 0.6
-        val syncedBonus = if (lyrics.synced != null) 1.0 else 0.0
-        val outOfSyncPenalty = if (lyrics.outOfSync) 0.25 else 0.0
-        return confidence + syncedBonus - outOfSyncPenalty
     }
 
     /** Deletes every cached provider winner and "none found" marker (Settings: clear cache). */

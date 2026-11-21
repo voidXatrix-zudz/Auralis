@@ -231,6 +231,7 @@ fun NowPlayingScreen(
             loading = lyricsLoading,
             positionMs = playback.positionMs,
             durationMs = duration,
+            playing = playback.playing,
             lyricSizeSp = lyricSizeSp,
             autoScroll = lyricsAutoScroll,
             lyricsOffsetMs = lyricsOffsetMs,
