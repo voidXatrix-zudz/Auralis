@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.auralis.app.data.lyrics.LyricsProviderCatalog
 import com.auralis.app.domain.audio.EqGainsCodec
 import com.auralis.app.domain.audio.EqLevelsCodec
 import com.auralis.app.domain.audio.EqPresets
@@ -28,6 +29,17 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.settingsStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+
+/**
+ * Keeps the user's saved provider order but appends any provider added since the list was stored,
+ * so new sources still appear in Settings. Their enabled state is untouched, so a new provider
+ * stays off until the user turns it on.
+ */
+internal fun mergeProviderOrder(stored: List<String>): List<String> {
+    val known = LyricsProviderCatalog.ALL.map { it.id }
+    val kept = stored.filter { it in known }.distinct()
+    return kept + known.filter { it !in kept }
+}
 
 private object Keys {
     val theme = stringPreferencesKey("theme")
@@ -257,7 +269,7 @@ class SettingsRepository(private val context: Context) {
             youtubeSongsOnly = this[Keys.youtubeSongsOnly] ?: d.youtubeSongsOnly,
             liveSyncEnabled = this[Keys.liveSyncEnabled] ?: d.liveSyncEnabled,
             liveSyncLastSyncedAt = (this[Keys.liveSyncLastSyncedAt] ?: d.liveSyncLastSyncedAt).coerceAtLeast(0L),
-            lyricsProviderOrder = decodeList(this[Keys.lyricsProviderOrder], d.lyricsProviderOrder),
+            lyricsProviderOrder = mergeLyricsProviderOrder(decodeList(this[Keys.lyricsProviderOrder], d.lyricsProviderOrder)),
             lyricsProvidersEnabled = decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled),
             metadataProvidersEnabled = decodeSet(this[Keys.metadataProvidersEnabled], d.metadataProvidersEnabled),
             preferSyncedLyrics = this[Keys.preferSyncedLyrics] ?: d.preferSyncedLyrics,
@@ -342,6 +354,13 @@ class SettingsRepository(private val context: Context) {
         this[Keys.downloadLyricsWithSongs] = s.downloadLyricsWithSongs
         this[Keys.cacheSizeMb] = s.cacheSizeMb
     }
+
+    /**
+     * Keeps the user's saved provider order but appends any provider added since the list was
+     * stored, so new sources still appear in Settings. Their enabled state is untouched, so a new
+     * provider stays off until the user turns it on.
+     */
+    private fun mergeLyricsProviderOrder(stored: List<String>): List<String> = mergeProviderOrder(stored)
 
     private fun decodeList(raw: String?, default: List<String>): List<String> =
         raw?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: default

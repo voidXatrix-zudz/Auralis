@@ -679,10 +679,12 @@ class YouTubeMusicLyricsProvider(http: ProviderHttp) : LyricsProvider {
 object LyricsProviderCatalog {
     val ALL: List<LyricsProviderInfo> = listOf(
         LyricsProviderInfo("LRCLIB", "LRCLIB", "Community synced lyrics · reliable, default"),
+        LyricsProviderInfo("BiniLyrics", "BiniLyrics", "Community · word-synced where available (lrc.red)"),
+        LyricsProviderInfo("BetterLyrics", "BetterLyrics", "Community · word-synced where available"),
+        LyricsProviderInfo("LyricsPlus", "LyricsPlus", "Community · word-synced (Apple timing)"),
+        LyricsProviderInfo("KuGou", "KuGou", "Unofficial · synced lyrics"),
         LyricsProviderInfo("SimpMusic", "SimpMusic", "Community lyrics for YouTube songs"),
         LyricsProviderInfo("NetEase", "NetEase Cloud Music", "Unofficial · synced lyrics"),
-        LyricsProviderInfo("KuGou", "KuGou", "Unofficial · synced lyrics"),
-        LyricsProviderInfo("BetterLyrics", "BetterLyrics", "Unofficial · community, word-synced where available"),
         LyricsProviderInfo("YouTubeMusic", "YouTube Music lyrics", "From the YouTube Music app · unsynced"),
         LyricsProviderInfo("LyricsOvh", "lyrics.ovh", "Plain text, no timestamps"),
     )

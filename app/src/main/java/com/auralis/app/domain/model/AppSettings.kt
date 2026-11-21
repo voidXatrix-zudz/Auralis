@@ -80,7 +80,10 @@ data class AppSettings(
     /** Lyrics providers in lookup order (ids; includes disabled ones so order survives toggles). */
     val lyricsProviderOrder: List<String> = DEFAULT_LYRICS_PROVIDER_ORDER,
     /** Enabled lyrics providers. Defaults chosen for reliability; the rest are opt-in. */
-    val lyricsProvidersEnabled: Set<String> = setOf("LRCLIB", "SimpMusic", "YouTubeMusic", "LyricsOvh"),
+    val lyricsProvidersEnabled: Set<String> = setOf(
+        "LRCLIB", "BiniLyrics", "BetterLyrics", "LyricsPlus", "KuGou",
+        "SimpMusic", "YouTubeMusic", "LyricsOvh",
+    ),
     /** Enabled metadata providers. */
     val metadataProvidersEnabled: Set<String> = setOf("MusicBrainz", "Deezer"),
     /** When on, keep trying remaining providers for a synced result before accepting unsynced. */
@@ -111,9 +114,10 @@ data class AppSettings(
     val cacheSizeMb: Int = 512,
 ) {
     companion object {
-        /** Default lyrics provider lookup order, matching the Settings list. */
+        /** Default lyrics provider lookup order: LRCLIB, then word-synced, then KuGou, then the rest. */
         val DEFAULT_LYRICS_PROVIDER_ORDER: List<String> = listOf(
-            "LRCLIB", "SimpMusic", "NetEase", "KuGou", "BetterLyrics", "YouTubeMusic", "LyricsOvh",
+            "LRCLIB", "BiniLyrics", "BetterLyrics", "LyricsPlus", "KuGou",
+            "SimpMusic", "NetEase", "YouTubeMusic", "LyricsOvh",
         )
     }
 }

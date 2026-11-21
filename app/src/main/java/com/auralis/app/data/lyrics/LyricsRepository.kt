@@ -58,6 +58,8 @@ class LyricsRepository(
         NetEaseProvider(providerHttp),
         KuGouProvider(providerHttp),
         BetterLyricsProvider(providerHttp),
+        BiniLyricsProvider(providerHttp),
+        LyricsPlusProvider(providerHttp),
         YouTubeMusicLyricsProvider(providerHttp),
         LyricsOvhProvider(providerHttp),
     ).associateBy { it.id }
