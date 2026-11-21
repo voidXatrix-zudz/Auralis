@@ -3,8 +3,16 @@ package com.auralis.app.data.lyrics
 import com.auralis.app.logging.AppLog
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,11 +20,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Shared HTTP plumbing for the online providers: 8 s budget, JSON helpers, failures -> null. */
+/**
+ * Shared HTTP plumbing for the online providers: 5 s connect / 8 s read, JSON helpers,
+ * failures -> null.
+ */
 class ProviderHttp(base: OkHttpClient) {
     private val client = base.newBuilder()
         .callTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
 
@@ -54,6 +65,7 @@ class ProviderHttp(base: OkHttpClient) {
 
     companion object {
         const val TIMEOUT_SECONDS = 8L
+        const val CONNECT_TIMEOUT_SECONDS = 5L
         const val USER_AGENT = "AURALIS/1.2.0 (https://github.com/auralis)"
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
         fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
@@ -155,7 +167,13 @@ class NetEaseProvider(http: ProviderHttp) : LyricsProvider {
     }
 }
 
-/** KuGou (unofficial): search then the krc/lrc download endpoint. */
+/**
+ * KuGou (unofficial): the mobile search service finds the song hash, `lyrics.kugou.com` returns a
+ * candidate id/accesskey, and the download endpoint returns the LRC as base64.
+ *
+ * The old `mobilecdn.kugou.com` search host is dead, so the mobile service is used instead. The
+ * decoded file opens with credit lines ("Lyrics by: ...") stamped like lyrics, which are cut.
+ */
 class KuGouProvider(http: ProviderHttp) : LyricsProvider {
     private val http = http
     override val id: String = "KuGou"
@@ -167,49 +185,165 @@ class KuGouProvider(http: ProviderHttp) : LyricsProvider {
         durationMs: Long?,
         videoId: String?,
     ): LyricsResult? = withContext(Dispatchers.IO) {
-        val query = "$title $artist".trim()
-        if (query.isBlank()) return@withContext null
-        val search = http.getJson(
-            "https://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=${ProviderHttp.encode(query)}&page=1&pagesize=5",
+        if (title.isBlank()) return@withContext null
+        val keyword = "$title $artist".trim()
+        val searchBody = http.getText(
+            "$SEARCH?version=9108&plat=0&pagesize=8&showtype=0&keyword=${ProviderHttp.encode(keyword)}",
         ) ?: return@withContext null
-        val info = search.optJSONObject("data")?.optJSONArray("info") ?: return@withContext null
-        for (i in 0 until info.length()) {
-            val song = info.optJSONObject(i) ?: continue
-            val songTitle = song.optString("songname")
-            val songArtist = song.optString("singername")
-            val duration = song.optLong("duration", 0L).takeIf { it > 0 }?.times(1000L)
-            if (!LyricsMatcher.matches(title, artist, songTitle, songArtist, durationMs, duration)) continue
-            val hash = song.optString("hash")
-            val durationSec = song.optLong("duration", 0L)
-            val candidate = lyricCandidate(hash, durationSec) ?: continue
-            val content = downloadLyric(candidate.first, candidate.second) ?: continue
-            val synced = if (content.contains("[")) content else null
-            return@withContext LyricsResult(id, synced, if (synced == null) content else null)
+        for (song in kugouCandidates(searchBody, title, artist, durationMs).take(3)) {
+            val candidate = kugouCandidate(hash = song.hash) ?: continue
+            val content = download(candidate) ?: continue
+            toResult(content)?.let { return@withContext it }
         }
-        LyricsResult(id, null, null)
+        // Nothing matched by hash: try KuGou's keyword-scoped candidate search as a last resort.
+        val fallback = kugouCandidateByKeyword(keyword, durationMs) ?: return@withContext LyricsResult(id, null, null)
+        val content = download(fallback) ?: return@withContext LyricsResult(id, null, null)
+        toResult(content) ?: LyricsResult(id, null, null)
     }
 
-    private fun lyricCandidate(hash: String, durationSeconds: Long): Pair<String, String>? {
-        val json = http.getJson(
-            "https://krcs.kugou.com/search?ver=1&man=yes&client=mobi&keyword=&hash=$hash" +
-                "&duration=${durationSeconds * 1000}&album_id=0",
-        ) ?: return null
-        val candidates = json.optJSONArray("candidates") ?: return null
-        val first = candidates.optJSONObject(0) ?: return null
-        val id = first.optString("id")
-        val accessKey = first.optString("accesskey")
-        if (id.isBlank() || accessKey.isBlank()) return null
-        return id to accessKey
+    private fun kugouCandidate(hash: String): Pair<String, String>? =
+        parseKugouCandidate(http.getText("$CANDIDATE?ver=1&man=yes&client=pc&hash=${ProviderHttp.encode(hash)}"))
+
+    private fun kugouCandidateByKeyword(keyword: String, durationMs: Long?): Pair<String, String>? {
+        val duration = durationMs?.let { (it / 1000L).toInt().takeIf { s -> s > 0 } }
+        val suffix = duration?.let { "&duration=${it * 1000}" }.orEmpty()
+        return parseKugouCandidate(
+            http.getText("$CANDIDATE?ver=1&man=yes&client=pc&keyword=${ProviderHttp.encode(keyword)}$suffix"),
+        )
     }
 
-    private fun downloadLyric(id: String, accessKey: String): String? {
-        val json = http.getJson(
-            "https://lyrics.kugou.com/download?ver=1&client=pc&id=$id&accesskey=$accessKey&fmt=lrc&charset=utf8",
+    private fun download(candidate: Pair<String, String>): String? {
+        val body = http.getText(
+            "$DOWNLOAD?fmt=lrc&charset=utf8&client=pc&ver=1&id=${ProviderHttp.encode(candidate.first)}" +
+                "&accesskey=${ProviderHttp.encode(candidate.second)}",
         ) ?: return null
-        val base64 = json.optString("content").takeIf { it.isNotBlank() } ?: return null
+        val base64 = parseKugouContent(body) ?: return null
         return runCatching { String(android.util.Base64.decode(base64, android.util.Base64.DEFAULT)) }.getOrNull()
     }
+
+    /** Timestamped content is cleaned of KuGou credits; untimed content is kept as plain text. */
+    private fun toResult(content: String): LyricsResult? {
+        val text = content.replace("\r\n", "\n").trim()
+        if (text.isBlank()) return null
+        if (KUGOU_STAMPED.containsMatchIn(text)) {
+            val stripped = cleanKugouCredits(text)
+            if (stripped.isBlank() || isKugouInstrumentalNotice(stripped)) return null
+            return LyricsResult(id, stripped, null)
+        }
+        if (isKugouInstrumentalNotice(text)) return null
+        return LyricsResult(id, null, text)
+    }
+
+    private companion object {
+        const val SEARCH = "https://mobileservice.kugou.com/api/v3/search/song"
+        const val CANDIDATE = "https://lyrics.kugou.com/search"
+        const val DOWNLOAD = "https://lyrics.kugou.com/download"
+    }
 }
+
+/** One KuGou search hit: only the hash and its duration matter for the follow-up lookups. */
+internal data class KugouSong(val hash: String, val durationSeconds: Long)
+
+private val providerJson = Json { isLenient = true; ignoreUnknownKeys = true }
+
+private fun JsonObject.string(key: String): String? =
+    (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+
+private fun JsonObject.long(key: String): Long? =
+    (this[key] as? JsonPrimitive)?.longOrNull ?: (this[key] as? JsonPrimitive)?.intOrNull?.toLong()
+
+private fun parseJsonObject(body: String?): JsonObject? =
+    body?.let { runCatching { providerJson.parseToJsonElement(it) }.getOrNull() } as? JsonObject
+
+private fun parseJsonArray(body: String?): JsonArray? =
+    body?.let { runCatching { providerJson.parseToJsonElement(it) }.getOrNull() } as? JsonArray
+
+/**
+ * Songs from a KuGou search body that match the requested title/artist (duration within 5 s),
+ * closest duration first. Empty, malformed and non-matching bodies yield an empty list.
+ */
+internal fun kugouCandidates(body: String?, title: String, artist: String, durationMs: Long?): List<KugouSong> {
+    val info = parseJsonObject(body)?.get("data") as? JsonObject
+    val songs = info?.get("info") as? JsonArray ?: return emptyList()
+    val target = durationMs?.takeIf { it > 0 }
+    return songs.mapNotNull { element ->
+        val json = element as? JsonObject ?: return@mapNotNull null
+        val hash = json.string("hash") ?: return@mapNotNull null
+        val duration = json.long("duration")?.takeIf { it > 0 } ?: 0L
+        val songTitle = json.string("songname").orEmpty()
+        val songArtist = json.string("singername").orEmpty()
+        if (!LyricsMatcher.matches(
+                requestedTitle = title,
+                requestedArtist = artist,
+                candidateTitle = songTitle,
+                candidateArtist = songArtist,
+                requestedDurationMs = target,
+                candidateDurationMs = duration.takeIf { it > 0 }?.times(1000L),
+                durationToleranceMs = 5_000L,
+            )
+        ) {
+            return@mapNotNull null
+        }
+        KugouSong(hash, duration)
+    }.sortedBy { song -> target?.let { abs(song.durationSeconds - it / 1000L) } ?: 0L }
+}
+
+/** The first id/accesskey pair in a KuGou candidate body, or null when there is none. */
+internal fun parseKugouCandidate(body: String?): Pair<String, String>? {
+    val candidates = parseJsonObject(body)?.get("candidates") as? JsonArray ?: return null
+    val first = candidates.firstOrNull() as? JsonObject ?: return null
+    val id = first.string("id") ?: return null
+    val accessKey = first.string("accesskey") ?: return null
+    return id to accessKey
+}
+
+/** The base64 LRC payload from a KuGou download body, or null when it is missing/empty. */
+internal fun parseKugouContent(body: String?): String? =
+    parseJsonObject(body)?.string("content")?.trim()?.takeIf { it.isNotEmpty() }
+
+private val KUGOU_STAMPED = Regex("^\\[\\d{2}:\\d{2}\\.\\d{2,3}\\].*")
+private val KUGOU_CREDIT = Regex(".+\\][^\\[]+:.+")
+private val KUGOU_STAMP = Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]")
+private val KUGOU_METADATA = Regex("^\\[[a-zA-Z]+:.*]$")
+private val KUGOU_INSTRUMENTAL = Regex("纯音乐.*欣赏")
+
+/**
+ * Drops KuGou's stamped credit lines ("Lyrics by: ...", "Composed by: ...") at the head/tail of the
+ * file while keeping `[ti:]`/`[ar:]` metadata, so the result parses as ordinary LRC.
+ */
+internal fun cleanKugouCredits(lrc: String): String {
+    val lines = lrc.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+    val metadata = lines.filter { KUGOU_METADATA.matches(it.trim()) }
+    val stamped = lines.filter { KUGOU_STAMPED.matches(it.trim()) }
+    if (stamped.isEmpty()) return ""
+    var head = 0
+    for (index in minOf(30, stamped.lastIndex) downTo 0) {
+        if (KUGOU_CREDIT.containsMatchIn(stamped[index].trim())) {
+            head = index + 1
+            break
+        }
+    }
+    val body = stamped.drop(head)
+    var tail = 0
+    for (index in 0..minOf(30, body.lastIndex)) {
+        if (KUGOU_CREDIT.containsMatchIn(body[body.lastIndex - index].trim())) {
+            tail = index + 1
+            break
+        }
+    }
+    val lyrics = body.dropLast(tail)
+    if (lyrics.isEmpty()) return ""
+    return (metadata + lyrics).joinToString("\n")
+}
+
+/** True when the file holds nothing but KuGou's "纯音乐,请欣赏" ("pure music") instrumental notice. */
+internal fun isKugouInstrumentalNotice(lrc: String): Boolean {
+    val lines = lrc.replace("\r\n", "\n").split('\n')
+        .map { KUGOU_STAMP.replace(it, "").trim() }
+        .filter { it.isNotEmpty() }
+    return lines.isNotEmpty() && lines.all { KUGOU_INSTRUMENTAL.containsMatchIn(it) }
+}
+
 
 /** SimpMusic community lyrics API, keyed by YouTube video id (YouTube songs only). */
 class SimpMusicProvider(http: ProviderHttp) : LyricsProvider {
