@@ -380,11 +380,11 @@ class SimpMusicProvider(http: ProviderHttp) : LyricsProvider {
 }
 
 /**
- * BetterLyrics community aggregator (unofficial). Word-synced LRC where the community has it.
- * Endpoint availability varies; any failure returns null and is logged by the repository.
+ * BetterLyrics (unofficial aggregator): `lyrics-api.boidu.dev` returns Apple word-timed TTML for a
+ * title/artist/duration query, which [TtmlParser] turns into enhanced LRC. The previous
+ * `lyrics.betterlyrics.com` endpoint does not exist; any failure returns null for the next provider.
  */
-class BetterLyricsProvider(http: ProviderHttp) : LyricsProvider {
-    private val http = http
+class BetterLyricsProvider(private val http: ProviderHttp) : LyricsProvider {
     override val id: String = "BetterLyrics"
 
     override suspend fun search(
@@ -395,17 +395,25 @@ class BetterLyricsProvider(http: ProviderHttp) : LyricsProvider {
         videoId: String?,
     ): LyricsResult? = withContext(Dispatchers.IO) {
         if (title.isBlank()) return@withContext null
-        val query = "$title $artist".trim()
-        val json = http.getJson("$BASE?q=${ProviderHttp.encode(query)}") ?: return@withContext null
-        val text = json.optString("lyrics").takeIf { it.isNotBlank() }
-            ?: json.optString("lrc").takeIf { it.isNotBlank() }
-            ?: return@withContext null
-        val synced = if (text.contains(Regex("\\[\\d{1,2}:\\d{2}"))) text else null
-        LyricsResult(id, synced, if (synced == null) text else null)
+        val seconds = durationMs?.let { (it / 1000L).toInt().takeIf { s -> s > 0 } }
+        val url = buildString {
+            append(BASE).append("?s=").append(ProviderHttp.encode(title))
+            append("&a=").append(ProviderHttp.encode(artist))
+            if (seconds != null) append("&d=").append(seconds)
+            if (!album.isNullOrBlank()) append("&al=").append(ProviderHttp.encode(album))
+        }
+        val body = http.getText(url) ?: return@withContext null
+        val ttml = betterLyricsTtml(body)
+        val synced = ttml?.let { TtmlParser.parse(it) }
+        LyricsResult(id, synced, null)
     }
 
-    private companion object { const val BASE = "https://lyrics.betterlyrics.com/api/search" }
+    private companion object { const val BASE = "https://lyrics-api.boidu.dev/getLyrics" }
 }
+
+/** The `ttml` field of a BetterLyrics response body, or null when absent/malformed. */
+internal fun betterLyricsTtml(body: String?): String? =
+    parseJsonObject(body)?.string("ttml")?.takeIf { it.isNotBlank() }
 
 /**
  * YouTube Music lyrics via InnerTube: `next` exposes a "Lyrics" tab whose browseId is then
