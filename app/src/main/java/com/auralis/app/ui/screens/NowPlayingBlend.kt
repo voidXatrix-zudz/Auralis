@@ -42,14 +42,11 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -66,10 +63,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -316,6 +311,9 @@ fun BlendNowPlayingScreen(
                 val openHeaderHeight = artTop + thumb + 12.dp
                 val side = LocalConfiguration.current.screenWidthDp.dp
                 val collapsedScale = if (compact) 0.85f else 1f
+                // Height of the flexible artwork region, captured from the layout and fed back to the
+                // artwork overlay so the shrink animation starts from the real (taller) art bounds.
+                var collapsedArtHeight by remember { mutableStateOf(0.dp) }
                 // One clock for the whole morph: artwork scale, offset and corner radius, the height
                 // the lyrics area gains, and the compact header fade. No second image, no cross-fade.
                 val morph by animateFloatAsState(
@@ -326,7 +324,6 @@ fun BlendNowPlayingScreen(
                 val headerHeight = side * collapsedScale * (1f - morph) + openHeaderHeight * morph
 
                 Column(Modifier.fillMaxSize()) {
-                    Spacer(Modifier.height(headerHeight))
                     // Fixed band between the header and the timeline. It is clipped, so no lyric line
                     // can ever draw over the header, the progress bar or the time labels.
                     Box(
@@ -344,7 +341,9 @@ fun BlendNowPlayingScreen(
                             label = "blendMiddle",
                         ) { expanded ->
                             when (expanded) {
-                            NowPlayingPanel.LYRICS -> LyricsContent(
+                            NowPlayingPanel.LYRICS -> Column(Modifier.fillMaxSize()) {
+                                Spacer(Modifier.height(headerHeight))
+                                LyricsContent(
                                     lyrics = lyrics,
                                     loading = lyricsLoading,
                                     playing = playback.playing,
@@ -363,7 +362,7 @@ fun BlendNowPlayingScreen(
                                             arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"),
                                         )
                                     },
-                                    modifier = Modifier.fillMaxSize().padding(top = 8.dp),
+                                    modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp),
                                     anchorFraction = 0.27f,
                                     topPaddingFraction = 0.25f,
                                     bottomPaddingFraction = 0.65f,
@@ -371,29 +370,44 @@ fun BlendNowPlayingScreen(
                                     edgeFade = 40.dp,
                                     reanchorKey = morph > 0.98f,
                                 )
-                            NowPlayingPanel.QUEUE -> QueuePanel(
-                                queue = queue,
-                                currentId = playback.trackId,
-                                playing = playback.playing,
-                                onPlayQueueItem = onPlayQueueItem,
-                                onRemoveFromQueue = onRemoveFromQueue,
-                                onMoveQueueItem = onMoveQueueItem,
-                                onAddSongs = { addSongsOpen = true },
-                                onClear = onClearQueue,
-                                modifier = Modifier.fillMaxSize().padding(top = 8.dp),
-                            )
+                            }
+                            NowPlayingPanel.QUEUE -> Column(Modifier.fillMaxSize()) {
+                                Spacer(Modifier.height(headerHeight))
+                                QueuePanel(
+                                    queue = queue,
+                                    currentId = playback.trackId,
+                                    playing = playback.playing,
+                                    onPlayQueueItem = onPlayQueueItem,
+                                    onRemoveFromQueue = onRemoveFromQueue,
+                                    onMoveQueueItem = onMoveQueueItem,
+                                    onAddSongs = { addSongsOpen = true },
+                                    onClear = onClearQueue,
+                                    modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp),
+                                )
+                            }
                             NowPlayingPanel.NONE -> {
-                                // Slides up under the shrinking header as it fades into the compact
-                                // row beside the thumbnail, so the title never jumps.
+                                // The artwork fills every pixel the fixed info group below it does not
+                                // need, so no empty band can form above the timeline. The title and
+                                // preview stay pinned right under the art as it fades into the compact
+                                // row, so nothing jumps when a panel opens or closes.
                                 Column(
-                                    Modifier
-                                        .fillMaxHeight()
-                                        .graphicsLayer { alpha = 1f - morph }
-                                        .widthIn(max = 520.dp)
-                                        .then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                                        .padding(horizontal = 32.dp),
+                                    Modifier.fillMaxSize(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
                                 ) {
-                                    Spacer(Modifier.height(14.dp))
+                                    Spacer(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .weight(1f)
+                                            .onGloballyPositioned { coords ->
+                                                collapsedArtHeight = with(density) { coords.size.height.toDp() }
+                                            },
+                                    )
+                                    Column(
+                                        Modifier
+                                            .graphicsLayer { alpha = 1f - morph }
+                                            .widthIn(max = 520.dp)
+                                            .padding(horizontal = 32.dp),
+                                    ) {
                                     TitleBlock(
                                         title = track.title.ifBlank { track.displayName }.ifBlank { "Unknown title" },
                                         subtitle = artistAlbum(track),
@@ -416,7 +430,7 @@ fun BlendNowPlayingScreen(
                                         onAudioInfo = { audioInfoOpen = true },
                                         onOpenFullLyrics = { lyricsOpen = true },
                                     )
-                                    Spacer(Modifier.height(12.dp))
+                                    Spacer(Modifier.height(if (compact) 9.dp else 12.dp))
                                     LyricsPreviewRow(
                                         lyrics = lyrics,
                                         lyricsLoading = lyricsLoading,
@@ -424,7 +438,7 @@ fun BlendNowPlayingScreen(
                                         lyricsOffsetMs = lyricsOffsetMs,
                                         onClick = { panel = NowPlayingPanel.LYRICS },
                                     )
-                                    Gap(1f, 8.dp, compact)
+                                    }
                                 }
                             }
                             }
@@ -460,6 +474,7 @@ fun BlendNowPlayingScreen(
                         onOutput = { audioInfoOpen = false; audioOutputOpen = true },
                         onOutputLabelClick = { audioInfoOpen = false; audioOutputOpen = true },
                         compact = compact,
+                        collapsedGaps = 1f - morph,
                     )
                 }
 
@@ -471,6 +486,7 @@ fun BlendNowPlayingScreen(
                     artUri = playback.artworkUri,
                     placeholder = palette.darkMuted,
                     side = side,
+                    artHeight = if (collapsedArtHeight > 0.dp) collapsedArtHeight else side,
                     thumb = thumb,
                     collapsedScale = collapsedScale,
                     leftInset = artLeft,
@@ -583,12 +599,6 @@ fun BlendNowPlayingScreen(
 /* Layout blocks                                                                                  */
 /* --------------------------------------------------------------------------------------------- */
 
-/** Weighted spacer in the flexible layout, fixed spacer when the screen is short and scrolls. */
-@Composable
-private fun ColumnScope.Gap(weight: Float, compactHeight: Dp, compact: Boolean) {
-    if (compact) Spacer(Modifier.height(compactHeight)) else Spacer(Modifier.weight(weight))
-}
-
 /**
  * The single artwork composable. It is laid out at its collapsed size and only ever moved through
  * graphicsLayer: the scale, the offset and the corner radius all come from the same [morph] value,
@@ -601,6 +611,7 @@ private fun BlendArtwork(
     artUri: Any?,
     placeholder: Color,
     side: Dp,
+    artHeight: Dp,
     thumb: Dp,
     collapsedScale: Float,
     leftInset: Dp,
@@ -615,9 +626,14 @@ private fun BlendArtwork(
 ) {
     val density = LocalDensity.current
     val sidePx = with(density) { side.toPx() }
+    val artHeightPx = with(density) { artHeight.toPx() }
     val thumbPx = with(density) { thumb.toPx() }
-    val targetScale = if (sidePx > 0f) (thumbPx / sidePx).coerceIn(0f, 1f) else 1f
-    val scale = lerp(collapsedScale, targetScale, morph)
+    // The art region is taller than it is wide, so each axis needs its own end scale; both land on a
+    // [thumb]-square, so the shrink still ends exactly on the compact thumbnail.
+    val targetScaleX = if (sidePx > 0f) (thumbPx / sidePx).coerceIn(0f, 1f) else 1f
+    val targetScaleY = if (artHeightPx > 0f) (thumbPx / artHeightPx).coerceIn(0f, 1f) else 1f
+    val artScaleX = lerp(collapsedScale, targetScaleX, morph)
+    val artScaleY = lerp(collapsedScale, targetScaleY, morph)
     // Centred when the art is the smaller compact square; the shared clock moves it to the corner.
     val startX = sidePx * (1f - collapsedScale) / 2f
     val tx = lerp(startX, with(density) { leftInset.toPx() }, morph)
@@ -625,7 +641,7 @@ private fun BlendArtwork(
     // The clip is applied in the layer's own (unscaled) space, so undo the scale to keep the
     // on-screen corner at 10 dp once the thumbnail has fully formed.
     val cornerLocal = with(density) {
-        (10.dp.toPx() * morph / scale.coerceAtLeast(0.0001f)).toDp()
+        (10.dp.toPx() * morph / artScaleX.coerceAtLeast(0.0001f)).toDp()
     }
     val melt = (1f - morph).coerceIn(0f, 1f)
 
@@ -636,11 +652,11 @@ private fun BlendArtwork(
         track = track,
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
+            .height(artHeight)
             .graphicsLayer {
                 transformOrigin = TransformOrigin(0f, 0f)
-                scaleX = scale
-                scaleY = scale
+                scaleX = artScaleX
+                scaleY = artScaleY
                 translationX = tx
                 translationY = ty
                 // The melt mask needs an isolated layer; the formed thumbnail does not, so the
@@ -803,8 +819,9 @@ private fun CompactHeaderRow(
 }
 
 /**
- * Fixed bottom block: timeline, transport, volume, icon row and the output label sit in concrete dp
- * gaps so they never move or disappear when the lyrics area opens.
+ * Bottom block: timeline, transport, volume, icon row and the output label. The gaps below the
+ * timeline breathe out to the reference spacing while collapsed and settle back to the original
+ * values as a panel opens, so the timeline lands exactly where it always did in Lyrics/Queue.
  */
 @Composable
 private fun BlendControls(
@@ -833,7 +850,14 @@ private fun BlendControls(
     onOutput: () -> Unit,
     onOutputLabelClick: () -> Unit,
     compact: Boolean,
+    // 1f while the collapsed layout is showing, 0f once a panel is open. The lower gaps breathe out
+    // toward the reference spacing only in the collapsed view, so Lyrics/Queue land exactly as before.
+    collapsedGaps: Float,
 ) {
+    val gapLabelsTransport = if (compact) 8.dp else (14f + 22f * collapsedGaps).dp
+    val gapTransportVolume = if (compact) 6.dp else (12f + 34f * collapsedGaps).dp
+    val gapVolumeIcons = if (compact) 6.dp else (12f + 12f * collapsedGaps).dp
+    val gapIconsLabel = if (compact) 6.dp else (6f + 14f * collapsedGaps).dp
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier
@@ -852,7 +876,7 @@ private fun BlendControls(
                 },
                 onSeek = onSeek,
             )
-            Spacer(Modifier.height(if (compact) 8.dp else 14.dp))
+            Spacer(Modifier.height(gapLabelsTransport))
             TransportRow(
                 playing = playing,
                 onPrevious = onPrevious,
@@ -868,9 +892,9 @@ private fun BlendControls(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 )
             }
-            Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
+            Spacer(Modifier.height(gapTransportVolume))
             VolumeRow()
-            Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
+            Spacer(Modifier.height(gapVolumeIcons))
             BottomIconRow(
                 lyricsActive = lyricsActive,
                 queueActive = queueActive,
@@ -882,7 +906,7 @@ private fun BlendControls(
                 onOutput = onOutput,
                 onQueue = onQueueToggle,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(gapIconsLabel))
             Text(
                 text = bluetoothOutputName ?: deviceName,
                 color = Color.White.copy(alpha = 0.65f),
