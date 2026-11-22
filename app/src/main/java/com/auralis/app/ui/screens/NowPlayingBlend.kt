@@ -17,6 +17,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -42,6 +43,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -49,8 +51,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -82,8 +86,10 @@ import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
@@ -115,6 +121,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -122,6 +129,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
@@ -138,6 +146,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.util.lerp
 import androidx.core.view.WindowCompat
 import androidx.media3.common.Player
 import com.auralis.app.domain.lyrics.LrcParser
@@ -215,6 +224,8 @@ fun BlendNowPlayingScreen(
     var sleepTimerOpen by rememberSaveable { mutableStateOf(false) }
     var customSleepMinutes by rememberSaveable { mutableStateOf("30") }
     var lyricsOpen by rememberSaveable { mutableStateOf(false) }
+    var lyricsMode by rememberSaveable { mutableStateOf(false) }
+    var lyricsPasteOpen by rememberSaveable { mutableStateOf(false) }
     var audioInfoOpen by rememberSaveable { mutableStateOf(false) }
     var moreOpen by remember { mutableStateOf(false) }
     var draggingQueueId by remember { mutableStateOf<String?>(null) }
@@ -236,7 +247,8 @@ fun BlendNowPlayingScreen(
 
     BackHandler(enabled = queueOpen) { queueOpen = false }
     BackHandler(enabled = lyricsOpen && !queueOpen) { lyricsOpen = false }
-    BackHandler(enabled = !queueOpen && !lyricsOpen) { onBack() }
+    BackHandler(enabled = lyricsMode && !queueOpen && !lyricsOpen) { lyricsMode = false }
+    BackHandler(enabled = !queueOpen && !lyricsOpen && !lyricsMode) { onBack() }
 
     Box(modifier.fillMaxSize()) {
         when {
@@ -282,104 +294,124 @@ fun BlendNowPlayingScreen(
 
                 val compact = LocalConfiguration.current.screenHeightDp < 640
                 Column(Modifier.fillMaxSize()) {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        MeltArtwork(
-                            track = track,
-                            artUri = playback.artworkUri,
-                            placeholder = palette.darkMuted,
-                            gesturesEnabled = gesturesEnabled,
-                            doubleTapSeekSeconds = doubleTapSeekSeconds,
-                            onSeekBy = onSeekBy,
-                            onOpenLyrics = { lyricsOpen = true },
-                            modifier = Modifier
-                                .fillMaxWidth(if (compact) 0.85f else 1f)
-                                .aspectRatio(1f),
-                        )
-                    }
+                    BlendHeader(
+                        track = track,
+                        artUri = playback.artworkUri,
+                        placeholder = palette.darkMuted,
+                        gesturesEnabled = gesturesEnabled,
+                        doubleTapSeekSeconds = doubleTapSeekSeconds,
+                        onSeekBy = onSeekBy,
+                        onOpenLyrics = { lyricsMode = true },
+                        lyricsMode = lyricsMode,
+                        lyrics = lyrics,
+                        isFavorite = isFavorite,
+                        onFavorite = { onFavorite(track) },
+                        moreOpen = moreOpen,
+                        onMoreOpenChange = { moreOpen = it },
+                        playback = playback,
+                        lyricsOffsetMs = lyricsOffsetMs,
+                        onAdjustLyricsOffset = onAdjustLyricsOffset,
+                        onResetLyricsOffset = onResetLyricsOffset,
+                        sleepTimerOpen = { sleepTimerOpen = true },
+                        onShuffle = onShuffle,
+                        onRepeat = onRepeat,
+                        onOpenEqualizer = onOpenEqualizer,
+                        onOpenWrapped = onOpenWrapped,
+                        onOpenBackup = onOpenBackup,
+                        onEditMetadata = onEditMetadata,
+                        onAudioInfo = { audioInfoOpen = true },
+                        onOpenFullLyrics = { lyricsOpen = true },
+                        compact = compact,
+                    )
                     Box(
                         Modifier.weight(1f).fillMaxWidth(),
                         contentAlignment = Alignment.TopCenter,
                     ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .widthIn(max = 520.dp)
-                            .then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                            .navigationBarsPadding()
-                            .padding(horizontal = 32.dp),
-                    ) {
-                        Gap(0.24f, 14.dp, compact)
-                        TitleBlock(
-                            title = track.title.ifBlank { track.displayName }.ifBlank { "Unknown title" },
-                            subtitle = artistAlbum(track),
-                            isFavorite = isFavorite,
-                            moreOpen = moreOpen,
-                            onMoreOpenChange = { moreOpen = it },
-                            onFavorite = { onFavorite(track) },
-                            playback = playback,
-                            track = track,
-                            sleepTimerOpen = { sleepTimerOpen = true },
-                            onShuffle = onShuffle,
-                            onRepeat = onRepeat,
-                            onOpenEqualizer = onOpenEqualizer,
-                            onOpenWrapped = onOpenWrapped,
-                            onOpenBackup = onOpenBackup,
-                            onEditMetadata = onEditMetadata,
-                            onAudioInfo = { audioInfoOpen = true },
-                        )
-                        Gap(0.18f, 14.dp, compact)
-                        LyricsPreviewRow(
-                            lyrics = lyrics,
-                            lyricsLoading = lyricsLoading,
-                            positionMs = playback.positionMs,
-                            lyricsOffsetMs = lyricsOffsetMs,
-                            onClick = { lyricsOpen = true },
-                        )
-                        Gap(0.05f, 8.dp, compact)
-                        BlendTimeline(
-                            positionMs = playback.positionMs,
-                            durationMs = duration,
-                            quality = quality,
-                            onQualityClick = { audioInfoOpen = true },
-                            onSeek = onSeek,
-                        )
-                        Gap(0.14f, 12.dp, compact)
-                        TransportRow(
-                            playing = playback.playing,
-                            onPrevious = onPrevious,
-                            onPlayPause = onPlayPause,
-                            onNext = onNext,
-                        )
-                        playback.error?.let {
-                            Text(
-                                text = it,
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        if (lyricsMode) {
+                            LyricsContent(
+                                lyrics = lyrics,
+                                loading = lyricsLoading,
+                                playing = playback.playing,
+                                positionMs = playback.positionMs,
+                                durationMs = duration,
+                                lyricsOffsetMs = lyricsOffsetMs,
+                                autoScroll = lyricsAutoScroll,
+                                lyricSizeSp = lyricSizeSp,
+                                accent = palette.vibrant,
+                                onSeek = onSeek,
+                                onTryAnotherSource = { onTryAnotherLyricsSource(track) },
+                                onRetry = { onRetryLyrics(track) },
+                                onPaste = { lyricsPasteOpen = true },
+                                onImport = {
+                                    lyricImporter.launch(
+                                        arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"),
+                                    )
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                                anchorFraction = 0.38f,
+                                onDark = true,
                             )
+                        } else {
+                            Column(
+                                Modifier
+                                    .fillMaxHeight()
+                                    .widthIn(max = 520.dp)
+                                    .then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                                    .padding(horizontal = 32.dp),
+                            ) {
+                                Spacer(Modifier.height(14.dp))
+                                TitleBlock(
+                                    title = track.title.ifBlank { track.displayName }.ifBlank { "Unknown title" },
+                                    subtitle = artistAlbum(track),
+                                    isFavorite = isFavorite,
+                                    moreOpen = moreOpen,
+                                    onMoreOpenChange = { moreOpen = it },
+                                    onFavorite = { onFavorite(track) },
+                                    playback = playback,
+                                    track = track,
+                                    lyricsOffsetMs = lyricsOffsetMs,
+                                    onAdjustLyricsOffset = onAdjustLyricsOffset,
+                                    onResetLyricsOffset = onResetLyricsOffset,
+                                    sleepTimerOpen = { sleepTimerOpen = true },
+                                    onShuffle = onShuffle,
+                                    onRepeat = onRepeat,
+                                    onOpenEqualizer = onOpenEqualizer,
+                                    onOpenWrapped = onOpenWrapped,
+                                    onOpenBackup = onOpenBackup,
+                                    onEditMetadata = onEditMetadata,
+                                    onAudioInfo = { audioInfoOpen = true },
+                                    onOpenFullLyrics = { lyricsOpen = true },
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                LyricsPreviewRow(
+                                    lyrics = lyrics,
+                                    lyricsLoading = lyricsLoading,
+                                    positionMs = playback.positionMs,
+                                    lyricsOffsetMs = lyricsOffsetMs,
+                                    onClick = { lyricsMode = true },
+                                )
+                                Gap(1f, 8.dp, compact)
+                            }
                         }
-                        Gap(0.09f, 10.dp, compact)
-                        VolumeRow()
-                        Gap(0.10f, 10.dp, compact)
-                        BottomIconRow(
-                            onLyrics = { lyricsOpen = true },
-                            onOutput = { audioInfoOpen = true },
-                            onQueue = { queueOpen = true },
-                        )
-                        Gap(0.05f, 8.dp, compact)
-                        Text(
-                            text = bluetoothOutputName ?: deviceName,
-                            color = Color.White.copy(alpha = 0.65f),
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(10.dp))
                     }
-                    }
+                    BlendControls(
+                        positionMs = playback.positionMs,
+                        durationMs = duration,
+                        quality = quality,
+                        onQualityClick = { audioInfoOpen = true },
+                        onSeek = onSeek,
+                        playing = playback.playing,
+                        onPrevious = onPrevious,
+                        onPlayPause = onPlayPause,
+                        onNext = onNext,
+                        playbackError = playback.error,
+                        bluetoothOutputName = bluetoothOutputName,
+                        deviceName = deviceName,
+                        onLyricsToggle = { lyricsMode = !lyricsMode },
+                        onOutput = { audioInfoOpen = true },
+                        onQueue = { queueOpen = true },
+                        compact = compact,
+                    )
                 }
 
                 // Drag handle: the only persistent close affordance, plus swipe-down to dismiss.
@@ -423,6 +455,17 @@ fun BlendNowPlayingScreen(
         onCancel = onCancelSleepTimer,
         onDismiss = { sleepTimerOpen = false },
     )
+
+    if (lyricsPasteOpen) {
+        LyricsPasteDialog(
+            track = track,
+            onDismiss = { lyricsPasteOpen = false },
+            onSave = { text ->
+                onSaveLyrics(track, text)
+                lyricsPasteOpen = false
+            },
+        )
+    }
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -436,11 +479,13 @@ private fun ColumnScope.Gap(weight: Float, compactHeight: Dp, compact: Boolean) 
 }
 
 /**
- * Full-bleed square artwork whose bottom third is dissolved with a DstIn mask, so the palette mesh
- * underneath shows through the art itself rather than a rectangle painted on top of it.
+ * The header morphs between the full-bleed square artwork and a compact 56 dp thumbnail. One
+ * graphicsLayer moves and scales the same [ArtworkImage] (no cross-fade to a second image), while the
+ * melt mask fades out as the thumbnail appears. The header height animates too, so the lyrics area
+ * can take the freed space instead of leaving a gap.
  */
 @Composable
-private fun MeltArtwork(
+private fun BlendHeader(
     track: Track,
     artUri: Any?,
     placeholder: Color,
@@ -448,44 +493,94 @@ private fun MeltArtwork(
     doubleTapSeekSeconds: Int,
     onSeekBy: (Long) -> Unit,
     onOpenLyrics: () -> Unit,
+    lyricsMode: Boolean,
+    lyrics: Lyrics?,
+    isFavorite: Boolean,
+    onFavorite: () -> Unit,
+    moreOpen: Boolean,
+    onMoreOpenChange: (Boolean) -> Unit,
+    playback: PlaybackController.State,
+    lyricsOffsetMs: Int,
+    onAdjustLyricsOffset: (Int) -> Unit,
+    onResetLyricsOffset: () -> Unit,
+    sleepTimerOpen: () -> Unit,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
+    onOpenEqualizer: () -> Unit,
+    onOpenWrapped: () -> Unit,
+    onOpenBackup: () -> Unit,
+    onEditMetadata: () -> Unit,
+    onAudioInfo: () -> Unit,
+    onOpenFullLyrics: () -> Unit,
+    compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val density = LocalDensity.current
+    val side = LocalConfiguration.current.screenWidthDp.dp * if (compact) 0.85f else 1f
+    val statusTopPx = with(density) { WindowInsets.statusBars.getTop(density) }
+    val statusTop = with(density) { statusTopPx.toDp() }
+    val thumb = 56.dp
+    // One shared clock drives the size, corner radius and offset, so the art reads as a single object
+    // sliding into the corner rather than a resize plus a separate fade.
+    val progress by animateFloatAsState(
+        targetValue = if (lyricsMode) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.84f, stiffness = 260f),
+        label = "blendHeaderProgress",
+    )
+    val headerHeight = side * (1f - progress) + (thumb + statusTop + 10.dp) * progress
+    val sidePx = with(density) { side.toPx() }
+    val thumbPx = with(density) { thumb.toPx() }
+    val scale = lerp(1f, if (sidePx > 0f) thumbPx / sidePx else 1f, progress)
+    val tx = with(density) { 16.dp.toPx() } * progress
+    val ty = (statusTopPx + with(density) { 10.dp.toPx() }) * progress
+    // The clip is applied in the layer's local space, so undo the scale to keep the corner constant.
+    val cornerPx = with(density) { 14.dp.toPx() } * progress / scale.coerceAtLeast(0.0001f)
+
     var artworkDrag by remember(track.id) { mutableFloatStateOf(0f) }
-    val openThreshold = with(LocalDensity.current) { 72.dp.toPx() }
-    Box(
-        modifier
-            .background(placeholder)
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithCache {
-                val mask = Brush.verticalGradient(
-                    0f to Color.Black,
-                    0.55f to Color.Black,
-                    0.80f to Color.Black.copy(alpha = 0.45f),
-                    1f to Color.Transparent,
-                )
-                onDrawWithContent {
-                    drawContent()
-                    drawRect(brush = mask, blendMode = BlendMode.DstIn)
-                }
-            },
-    ) {
+    val openThreshold = with(density) { 72.dp.toPx() }
+
+    Box(modifier.fillMaxWidth().height(headerHeight).clipToBounds()) {
         ArtworkImage(
             track = track,
             modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (gesturesEnabled) {
-                        Modifier.pointerInput(track.id, doubleTapSeekSeconds) {
-                            detectTapGestures(onDoubleTap = { offset ->
-                                if (offset.x < size.width / 2f) onSeekBy(-doubleTapSeekSeconds * 1000L)
-                                else onSeekBy(doubleTapSeekSeconds * 1000L)
-                            })
+                .requiredSize(side)
+                .graphicsLayer {
+                    compositingStrategy = CompositingStrategy.Offscreen
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = tx
+                    translationY = ty
+                    if (progress > 0.001f) {
+                        shape = RoundedCornerShape(cornerPx)
+                        clip = true
+                    }
+                }
+                .background(placeholder)
+                .drawWithCache {
+                    val melt = 1f - progress
+                    val mask = Brush.verticalGradient(
+                        0f to Color.Black,
+                        0.55f to Color.Black,
+                        0.80f to Color.Black.copy(alpha = 0.45f * melt),
+                        1f to Color.Transparent,
+                    )
+                    onDrawWithContent {
+                        drawContent()
+                        drawRect(brush = mask, blendMode = BlendMode.DstIn)
+                    }
+                }
+                .pointerInput(track.id, lyricsMode, gesturesEnabled, doubleTapSeekSeconds) {
+                    if (lyricsMode) return@pointerInput
+                    detectTapGestures(onDoubleTap = { offset ->
+                        if (gesturesEnabled) {
+                            if (offset.x < size.width / 2f) onSeekBy(-doubleTapSeekSeconds * 1000L)
+                            else onSeekBy(doubleTapSeekSeconds * 1000L)
                         }
-                    } else {
-                        Modifier
-                    },
-                )
-                .pointerInput(track.id) {
+                    })
+                }
+                .pointerInput(track.id, lyricsMode) {
+                    if (lyricsMode) return@pointerInput
                     detectHorizontalDragGestures(
                         onDragStart = { artworkDrag = 0f },
                         onDragEnd = {
@@ -501,6 +596,211 @@ private fun MeltArtwork(
             shape = RectangleShape,
             artUri = artUri,
         )
+
+        if (progress > 0.02f) {
+            CompactHeaderRow(
+                alpha = progress,
+                topPad = statusTop + 10.dp,
+                thumbnailSize = thumb,
+                track = track,
+                lyrics = lyrics,
+                isFavorite = isFavorite,
+                onFavorite = onFavorite,
+                moreOpen = moreOpen,
+                onMoreOpenChange = onMoreOpenChange,
+                playback = playback,
+                lyricsOffsetMs = lyricsOffsetMs,
+                onAdjustLyricsOffset = onAdjustLyricsOffset,
+                onResetLyricsOffset = onResetLyricsOffset,
+                sleepTimerOpen = sleepTimerOpen,
+                onShuffle = onShuffle,
+                onRepeat = onRepeat,
+                onOpenEqualizer = onOpenEqualizer,
+                onOpenWrapped = onOpenWrapped,
+                onOpenBackup = onOpenBackup,
+                onEditMetadata = onEditMetadata,
+                onAudioInfo = onAudioInfo,
+                onOpenFullLyrics = onOpenFullLyrics,
+            )
+        }
+    }
+}
+
+/** Title, artist, provider chip, star and more, laid out beside the shrunken artwork thumbnail. */
+@Composable
+private fun CompactHeaderRow(
+    alpha: Float,
+    topPad: Dp,
+    thumbnailSize: Dp,
+    track: Track,
+    lyrics: Lyrics?,
+    isFavorite: Boolean,
+    onFavorite: () -> Unit,
+    moreOpen: Boolean,
+    onMoreOpenChange: (Boolean) -> Unit,
+    playback: PlaybackController.State,
+    lyricsOffsetMs: Int,
+    onAdjustLyricsOffset: (Int) -> Unit,
+    onResetLyricsOffset: () -> Unit,
+    sleepTimerOpen: () -> Unit,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
+    onOpenEqualizer: () -> Unit,
+    onOpenWrapped: () -> Unit,
+    onOpenBackup: () -> Unit,
+    onEditMetadata: () -> Unit,
+    onAudioInfo: () -> Unit,
+    onOpenFullLyrics: () -> Unit,
+) {
+    val titleFamily = remember(track.title) { LyricsTypography.familyFor(track.title) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .graphicsLayer { this.alpha = alpha }
+            .padding(top = topPad, start = 16.dp + thumbnailSize + 12.dp, end = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = track.title.ifBlank { track.displayName }.ifBlank { "Unknown title" },
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = titleFamily,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip,
+                modifier = Modifier.fillMaxWidth().fadeEnd(24.dp),
+            )
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = track.artist.ifBlank { "Unknown artist" },
+                    color = Color.White.copy(alpha = 0.62f),
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                lyrics?.let {
+                    Spacer(Modifier.width(8.dp))
+                    SourceChip(it)
+                    if (it.outOfSync) {
+                        Spacer(Modifier.width(6.dp))
+                        OutOfSyncChip()
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        GlassCircleButton(
+            icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+            description = if (isFavorite) "Remove from favourites" else "Add to favourites",
+            onClick = onFavorite,
+        )
+        Spacer(Modifier.width(8.dp))
+        Box {
+            GlassCircleButton(
+                icon = Icons.Rounded.MoreHoriz,
+                description = "More options",
+                onClick = { onMoreOpenChange(true) },
+            )
+            PlayerMoreMenu(
+                expanded = moreOpen,
+                onDismiss = { onMoreOpenChange(false) },
+                playback = playback,
+                track = track,
+                lyricsOffsetMs = lyricsOffsetMs,
+                onAdjustLyricsOffset = onAdjustLyricsOffset,
+                onResetLyricsOffset = onResetLyricsOffset,
+                sleepTimerOpen = sleepTimerOpen,
+                onShuffle = onShuffle,
+                onRepeat = onRepeat,
+                onOpenEqualizer = onOpenEqualizer,
+                onOpenWrapped = onOpenWrapped,
+                onOpenBackup = onOpenBackup,
+                onEditMetadata = onEditMetadata,
+                onAudioInfo = onAudioInfo,
+                onOpenFullLyrics = onOpenFullLyrics,
+            )
+        }
+    }
+}
+
+/**
+ * Fixed bottom block: timeline, transport, volume, icon row and the output label sit in concrete dp
+ * gaps so they never move or disappear when the lyrics area opens.
+ */
+@Composable
+private fun BlendControls(
+    positionMs: Long,
+    durationMs: Long,
+    quality: QualityBadgeContent?,
+    onQualityClick: () -> Unit,
+    onSeek: (Long) -> Unit,
+    playing: Boolean,
+    onPrevious: () -> Unit,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    playbackError: String?,
+    bluetoothOutputName: String?,
+    deviceName: String,
+    onLyricsToggle: () -> Unit,
+    onOutput: () -> Unit,
+    onQueue: () -> Unit,
+    compact: Boolean,
+) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .widthIn(max = 520.dp)
+                .navigationBarsPadding()
+                .padding(horizontal = 32.dp),
+        ) {
+            BlendTimeline(
+                positionMs = positionMs,
+                durationMs = durationMs,
+                quality = quality,
+                onQualityClick = onQualityClick,
+                onSeek = onSeek,
+            )
+            Spacer(Modifier.height(if (compact) 8.dp else 14.dp))
+            TransportRow(
+                playing = playing,
+                onPrevious = onPrevious,
+                onPlayPause = onPlayPause,
+                onNext = onNext,
+            )
+            playbackError?.let {
+                Text(
+                    text = it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                )
+            }
+            Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
+            VolumeRow()
+            Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
+            BottomIconRow(
+                onLyrics = onLyricsToggle,
+                onOutput = onOutput,
+                onQueue = onQueue,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = bluetoothOutputName ?: deviceName,
+                color = Color.White.copy(alpha = 0.65f),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(10.dp))
+        }
     }
 }
 
@@ -514,6 +814,9 @@ private fun TitleBlock(
     onFavorite: () -> Unit,
     playback: PlaybackController.State,
     track: Track,
+    lyricsOffsetMs: Int,
+    onAdjustLyricsOffset: (Int) -> Unit,
+    onResetLyricsOffset: () -> Unit,
     sleepTimerOpen: () -> Unit,
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
@@ -522,6 +825,7 @@ private fun TitleBlock(
     onOpenBackup: () -> Unit,
     onEditMetadata: () -> Unit,
     onAudioInfo: () -> Unit,
+    onOpenFullLyrics: () -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -565,6 +869,9 @@ private fun TitleBlock(
                 onDismiss = { onMoreOpenChange(false) },
                 playback = playback,
                 track = track,
+                lyricsOffsetMs = lyricsOffsetMs,
+                onAdjustLyricsOffset = onAdjustLyricsOffset,
+                onResetLyricsOffset = onResetLyricsOffset,
                 sleepTimerOpen = sleepTimerOpen,
                 onShuffle = onShuffle,
                 onRepeat = onRepeat,
@@ -573,6 +880,7 @@ private fun TitleBlock(
                 onOpenBackup = onOpenBackup,
                 onEditMetadata = onEditMetadata,
                 onAudioInfo = onAudioInfo,
+                onOpenFullLyrics = onOpenFullLyrics,
             )
         }
     }
@@ -585,6 +893,9 @@ private fun PlayerMoreMenu(
     onDismiss: () -> Unit,
     playback: PlaybackController.State,
     track: Track,
+    lyricsOffsetMs: Int,
+    onAdjustLyricsOffset: (Int) -> Unit,
+    onResetLyricsOffset: () -> Unit,
     sleepTimerOpen: () -> Unit,
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
@@ -593,6 +904,7 @@ private fun PlayerMoreMenu(
     onOpenBackup: () -> Unit,
     onEditMetadata: () -> Unit,
     onAudioInfo: () -> Unit,
+    onOpenFullLyrics: () -> Unit,
 ) {
     val downloads = LocalDownloadActions.current
     val downloaded = (track.remoteId ?: track.id.removePrefix("yt:")) in downloads.downloadedIds
@@ -657,6 +969,31 @@ private fun PlayerMoreMenu(
             leadingIcon = { Icon(Icons.Rounded.Edit, null) },
             onClick = { onDismiss(); onEditMetadata() },
         )
+        DropdownMenuItem(
+            text = { Text("Full screen lyrics") },
+            leadingIcon = { Icon(Icons.Rounded.Lyrics, null) },
+            onClick = { onDismiss(); onOpenFullLyrics() },
+        )
+        // Timing nudge, kept from the full-screen lyrics page so the offset stays adjustable here.
+        DropdownMenuItem(
+            text = { Text("Lyrics earlier by 0.5s") },
+            leadingIcon = { Icon(Icons.Rounded.Remove, null) },
+            enabled = lyricsOffsetMs > -5_000,
+            onClick = { onAdjustLyricsOffset(-500) },
+        )
+        DropdownMenuItem(
+            text = { Text("Lyrics later by 0.5s") },
+            leadingIcon = { Icon(Icons.Rounded.Add, null) },
+            enabled = lyricsOffsetMs < 5_000,
+            onClick = { onAdjustLyricsOffset(500) },
+        )
+        if (lyricsOffsetMs != 0) {
+            DropdownMenuItem(
+                text = { Text("Reset lyrics timing") },
+                leadingIcon = { Icon(Icons.Rounded.RestartAlt, null) },
+                onClick = { onDismiss(); onResetLyricsOffset() },
+            )
+        }
     }
 }
 
