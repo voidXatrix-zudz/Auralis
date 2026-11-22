@@ -4,9 +4,9 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -21,7 +21,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -85,6 +84,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -133,6 +133,7 @@ import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.theme.LyricsTypography
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.text.Bidi
 import kotlin.math.abs
@@ -154,10 +155,43 @@ private sealed interface LyricRow {
 }
 
 /**
- * Full-screen lyrics surface. Line-synced LRC drives a spring auto-follow that keeps the active
- * line about a third from the top; the active line grows/brightens while neighbours shrink, fade and
- * blur. Enhanced LRC word tags fill word by word from a smooth interpolated clock. Everything reads
- * the real player position plus the global offset, so seeking and pausing never desync.
+ * Single source of truth for the full-screen lyrics motion. Retune the feel here; nothing else in
+ * this file hard-codes a duration, spring or anchor.
+ *
+ * The spring is tuned to the target recording: one small overshoot (about 2% of a line pitch) that
+ * settles in roughly half a second, so each line change reads as a single creamy move. Large jumps
+ * (seeks) use the list's critically damped scroll instead.
+ */
+private object LyricsMotion {
+    /** Where the active line rests, as a fraction of the lyrics viewport height from its top. */
+    const val ACTIVE_LINE_ANCHOR = 0.58f
+
+    /** Spring for the one-block scroll: damping < 1 gives the single tiny overshoot. */
+    const val DAMPING_RATIO = 0.78f
+    const val STIFFNESS = 150f
+
+    /** Colour/alpha/scale/blur blend time for active <-> inactive. */
+    const val STYLE_TRANSITION_MS = 300
+
+    /** How long auto-follow stays paused after a manual drag. */
+    const val USER_SCROLL_RESUME_MS = 3_000L
+
+    /** Blur only the nearest neighbours; farther lines fade without a blur pass (avoids shimmer). */
+    const val MAX_BLURRED_NEIGHBORS = 5
+
+    /** Optional per-line styling stagger. 0 keeps every row in lock-step (the default). */
+    const val STAGGER_MS_PER_LINE = 0
+
+    /** Constant vertical gap between rows, so the block never stretches. */
+    val LINE_GAP = 2.dp
+}
+
+/**
+ * Full-screen lyrics surface. Line-synced LRC drives one spring that moves every line together and
+ * rests the active line a little below the middle of the viewport; the active line brightens while
+ * neighbours dim and blur. Enhanced LRC word tags fill word by word from a smooth interpolated
+ * clock. Everything reads the real player position plus the global offset, so seeking and pausing
+ * never desync.
  */
 @Composable
 fun LiquidLyricsScreen(
@@ -199,6 +233,9 @@ fun LiquidLyricsScreen(
         derivedStateOf { LrcParser.activeLine(lines, livePosition.value) }
     }
     val listState = rememberLazyListState()
+    // Persistent spring for the one-block auto-scroll. Reusing it keeps value *and* velocity across
+    // retargets, so a line change that arrives mid-flight never snaps.
+    val scrollAnim = remember { Animatable(0f) }
     val colors = MaterialTheme.colorScheme
     val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
     val profile = LocalPerformanceProfile.current
@@ -213,8 +250,9 @@ fun LiquidLyricsScreen(
     LaunchedEffect(dragged) {
         if (dragged) {
             manualScroll = true
+            scrollAnim.stop()
         } else if (manualScroll) {
-            delay(3_000)
+            delay(LyricsMotion.USER_SCROLL_RESUME_MS)
             manualScroll = false
         }
     }
@@ -282,28 +320,51 @@ fun LiquidLyricsScreen(
         }
     }
 
-    // Auto-follow keeps the active line about a third from the top, easing with a critically damped
-    // spring so it never overshoots or stutters.
+    // One spring drives the whole block: every line moves by the same offset, so the spacing stays
+    // constant. Retargeting the same Animatable keeps the current value *and* velocity, so a line
+    // change that arrives mid-flight never snaps. The spring has a single tiny overshoot.
     LaunchedEffect(active, autoScroll, lines.size, clearForTouch) {
         if (!autoScroll || clearForTouch || active < 0 || rows.isEmpty()) return@LaunchedEffect
         val rowIndex = rows.indexOfFirst { it is LyricRow.Line && it.index == active }
         if (rowIndex < 0) return@LaunchedEffect
-        val viewport = listState.layoutInfo.viewportSize.height
-        if (viewport <= 0) return@LaunchedEffect
-        val target = viewport * 0.33f
-        if (reduceMotion) {
-            listState.scrollToItem(rowIndex, -target.toInt())
+        // Wait for the first real layout instead of silently skipping the very first anchor.
+        val viewport = snapshotFlow { listState.layoutInfo.viewportSize.height }.first { it > 0 }
+        val anchor = viewport * LyricsMotion.ACTIVE_LINE_ANCHOR
+        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == rowIndex }
+        if (info == null) {
+            // Far jump (seek, or opening mid-song): let the list make one critically damped move,
+            // then re-base the accumulator on the next line change.
+            scrollAnim.stop()
+            if (reduceMotion) {
+                listState.scrollToItem(rowIndex, -anchor.toInt())
+            } else {
+                listState.animateScrollToItem(rowIndex, -anchor.toInt())
+            }
+            scrollAnim.snapTo(0f)
             return@LaunchedEffect
         }
-        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == rowIndex }
-        if (info != null) {
-            listState.animateScrollBy(
-                value = info.offset - target,
-                animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
-            )
-        } else {
-            listState.animateScrollToItem(rowIndex, -target.toInt())
+        if (reduceMotion) {
+            // Remove-animations / animator scale 0: jump straight to the anchor.
+            val delta = info.offset - anchor
+            if (delta != 0f) listState.dispatchRawDelta(delta)
+            scrollAnim.snapTo(0f)
+            return@LaunchedEffect
         }
+        val target = scrollAnim.value + (info.offset - anchor)
+        var last = scrollAnim.value
+        scrollAnim.animateTo(
+            targetValue = target,
+            animationSpec = spring(
+                dampingRatio = LyricsMotion.DAMPING_RATIO,
+                stiffness = LyricsMotion.STIFFNESS,
+            ),
+        ) {
+            val delta = value - last
+            last = value
+            if (delta != 0f) listState.dispatchRawDelta(delta)
+        }
+        // The move finished; reset so the next target is measured from the settled position.
+        scrollAnim.snapTo(0f)
     }
 
     var dragX by remember { mutableFloatStateOf(0f) }
@@ -479,7 +540,7 @@ fun LiquidLyricsScreen(
                 }
 
                 BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-                    val centerPadding = maxHeight * 0.50f
+                    val centerPadding = maxHeight * LyricsMotion.ACTIVE_LINE_ANCHOR
                     when {
                         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -500,7 +561,7 @@ fun LiquidLyricsScreen(
                             state = listState,
                             modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
                             contentPadding = PaddingValues(top = centerPadding, bottom = centerPadding),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalArrangement = Arrangement.spacedBy(LyricsMotion.LINE_GAP),
                         ) {
                             items(rows, key = { it.key }, contentType = { it::class.simpleName }) { row ->
                                 when (row) {
@@ -517,7 +578,7 @@ fun LiquidLyricsScreen(
                                             blurAvailable = blurAvailable,
                                             blurScale = profile.blurScale,
                                             clearForTouch = clearForTouch,
-                                            motionMs = if (reduceMotion) 0 else 420,
+                                            motionMs = if (reduceMotion) 0 else LyricsMotion.STYLE_TRANSITION_MS,
                                             positionState = if (row.index == active && row.line.words.isNotEmpty()) livePosition else null,
                                             lyricsOffsetMs = lyricsOffsetMs,
                                             onSeek = onSeek,
@@ -662,6 +723,15 @@ private fun LyricLineRow(
 ) {
     val colors = MaterialTheme.colorScheme
     val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
+    // One animated 0..1 amount drives the highlight, colour and shadow so active <-> inactive
+    // blends instead of snapping. Layout-affecting properties (weight, letter spacing) stay
+    // constant below, so a line never re-wraps when it becomes active.
+    val stagger = if (motionMs == 0) 0 else LyricsMotion.STAGGER_MS_PER_LINE * distance.coerceAtMost(2)
+    val highlight by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(motionMs, delayMillis = stagger),
+        label = "lineHighlight",
+    )
     val alpha by animateFloatAsState(
         targetValue = when {
             active -> 1f
@@ -670,7 +740,7 @@ private fun LyricLineRow(
             distance == 3 -> 0.55f
             else -> 0.44f
         } * if (passed && !active) 0.9f else 1f,
-        animationSpec = tween(motionMs),
+        animationSpec = tween(motionMs, delayMillis = stagger),
         label = "lineAlpha",
     )
     val scale by animateFloatAsState(
@@ -680,20 +750,21 @@ private fun LyricLineRow(
             distance == 2 -> 0.80f
             else -> 0.76f
         },
-        animationSpec = tween(motionMs),
+        animationSpec = tween(motionMs, delayMillis = stagger),
         label = "lineScale",
     )
+    // Blur only the nearest few neighbours. Blurring every far row shimmered and cost a pass per
+    // line; beyond MAX_BLURRED_NEIGHBORS the alpha fade alone reads the same.
     val targetBlur = when {
         !blurAvailable || clearForTouch || active -> 0f
         distance == 1 -> 0f
-        distance == 2 -> blurScale
-        else -> 2.5f * blurScale
+        distance <= LyricsMotion.MAX_BLURRED_NEIGHBORS -> blurScale * if (distance == 2) 1f else 2.5f
+        else -> 0f
     }
-    val blurDp by animateDpAsState(targetBlur.dp, tween(motionMs), label = "lineBlur")
-    val shift by animateFloatAsState(
-        targetValue = if (active) 0f else if (passed) -3f else 3f,
-        animationSpec = tween(motionMs),
-        label = "lineShift",
+    val blurDp by animateDpAsState(
+        targetBlur.dp,
+        tween(motionMs, delayMillis = stagger),
+        label = "lineBlur",
     )
 
     val shape = RoundedCornerShape(14.dp)
@@ -703,30 +774,27 @@ private fun LyricLineRow(
         Auralis.extras.isDark -> Color.White
         else -> colors.onBackground
     }
+    val textColor by animateColorAsState(
+        targetValue = if (active) activeColor else colors.onSurfaceVariant,
+        animationSpec = tween(motionMs, delayMillis = stagger),
+        label = "lineTextColor",
+    )
     val family = remember(line.text) { LyricsTypography.familyFor(line.text) }
-    val activeTextStyle = remember(sizeSp, family, activeColor, accentGlow, accent) {
+    // Weight and letter spacing are deliberately identical for active and inactive lines: the
+    // bundled variable font widens with weight, so changing either would re-wrap the line mid-move.
+    val textStyle = remember(sizeSp, family, textColor, accentGlow, accent, highlight) {
         TextStyle(
-            color = activeColor,
+            color = textColor,
             fontFamily = family,
             fontSize = sizeSp.sp,
             fontWeight = FontWeight.ExtraBold,
             lineHeight = (sizeSp + 9).sp,
             letterSpacing = 0.2.sp,
             shadow = if (accentGlow) {
-                Shadow(color = accent.copy(alpha = 0.55f), blurRadius = 16f)
+                Shadow(color = accent.copy(alpha = 0.55f * highlight), blurRadius = 16f)
             } else {
                 null
             },
-        )
-    }
-    val inactiveTextStyle = remember(sizeSp, family, colors.onSurfaceVariant) {
-        TextStyle(
-            color = colors.onSurfaceVariant,
-            fontFamily = family,
-            fontSize = sizeSp.sp,
-            fontWeight = FontWeight.Medium,
-            lineHeight = (sizeSp + 9).sp,
-            letterSpacing = 0.1.sp,
         )
     }
     // Precomputed once per line; null means the word tags do not map cleanly onto the display text,
@@ -741,20 +809,21 @@ private fun LyricLineRow(
                 this.alpha = alpha
                 scaleX = scale
                 scaleY = scale
-                translationY = shift
                 transformOrigin = TransformOrigin(0f, 0.5f)
             }
             .then(if (blurDp.value > 0.05f) Modifier.blur(blurDp) else Modifier)
             .clip(shape)
             .drawBehind {
-                if (active) {
+                if (highlight > 0.01f) {
                     if (accentGlow) {
                         drawRoundRect(
-                            color = accent.copy(alpha = 0.12f),
+                            color = accent,
+                            alpha = 0.12f * highlight,
                             cornerRadius = CornerRadius(14.dp.toPx()),
                         )
                         drawRoundRect(
-                            color = accent.copy(alpha = 0.85f),
+                            color = accent,
+                            alpha = 0.85f * highlight,
                             topLeft = Offset(0f, 10.dp.toPx()),
                             size = Size(3.dp.toPx(), size.height - 20.dp.toPx()),
                             cornerRadius = CornerRadius(2.dp.toPx()),
@@ -762,6 +831,7 @@ private fun LyricLineRow(
                     } else {
                         drawRoundRect(
                             color = if (glass) GlassTokens.Cream6 else Color.White.copy(alpha = 0.05f),
+                            alpha = highlight,
                             cornerRadius = CornerRadius(14.dp.toPx()),
                         )
                     }
@@ -777,10 +847,12 @@ private fun LyricLineRow(
         if (karaoke) {
             WordSyncText(
                 line = line,
-                ranges = ranges!!,
-                position = positionState!!,
-                style = activeTextStyle,
-                dimColor = activeColor.copy(alpha = 0.42f),
+                ranges = ranges,
+                position = positionState,
+                style = textStyle,
+                // The dim base stays constant so the lit clip always reads as "fill", even while the
+                // row's colour/alpha are still blending in at the start of the line.
+                dimColor = textColor.copy(alpha = 0.42f),
                 maxLines = 6,
             )
         } else {
@@ -789,7 +861,7 @@ private fun LyricLineRow(
                 textAlign = TextAlign.Start,
                 maxLines = 6,
                 modifier = Modifier.fillMaxWidth(),
-                style = if (active) activeTextStyle else inactiveTextStyle,
+                style = textStyle,
             )
         }
     }
