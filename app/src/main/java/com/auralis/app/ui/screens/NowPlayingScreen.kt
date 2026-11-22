@@ -46,6 +46,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -125,6 +126,57 @@ fun NowPlayingScreen(
     onCancelSleepTimer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The blended layout is the portrait Now Playing screen for both themes. Landscape keeps the
+    // previous layouts: a full-bleed square art column does not fit a phone held sideways.
+    val configuration = LocalConfiguration.current
+    if (configuration.screenHeightDp >= configuration.screenWidthDp) {
+        BlendNowPlayingScreen(
+            track = track,
+            queue = queue,
+            upNext = upNext,
+            availableTracks = availableTracks,
+            favorites = favorites,
+            playback = playback,
+            settings = settings,
+            lyrics = lyrics,
+            lyricsLoading = lyricsLoading,
+            lyricsAutoScroll = lyricsAutoScroll,
+            lyricSizeSp = lyricSizeSp,
+            lyricsOffsetMs = lyricsOffsetMs,
+            onLoadLyrics = onLoadLyrics,
+            onImportLyrics = onImportLyrics,
+            onSaveLyrics = onSaveLyrics,
+            onTryAnotherLyricsSource = onTryAnotherLyricsSource,
+            onRetryLyrics = onRetryLyrics,
+            onAdjustLyricsOffset = onAdjustLyricsOffset,
+            onResetLyricsOffset = onResetLyricsOffset,
+            onSeekBy = onSeekBy,
+            doubleTapSeekSeconds = doubleTapSeekSeconds,
+            gesturesEnabled = gesturesEnabled,
+            onOpenEqualizer = onOpenEqualizer,
+            onOpenWrapped = onOpenWrapped,
+            onOpenBackup = onOpenBackup,
+            onEditMetadata = onEditMetadata,
+            onOpenAudioAnalysis = onOpenAudioAnalysis,
+            onBack = onBack,
+            onPlayPause = onPlayPause,
+            onPrevious = onPrevious,
+            onNext = onNext,
+            onSeek = onSeek,
+            onShuffle = onShuffle,
+            onRepeat = onRepeat,
+            onFavorite = onFavorite,
+            onAddToQueue = onAddToQueue,
+            onRemoveFromQueue = onRemoveFromQueue,
+            onMoveQueueItem = onMoveQueueItem,
+            onPlayQueueItem = onPlayQueueItem,
+            onClearQueue = onClearQueue,
+            onStartSleepTimer = onStartSleepTimer,
+            onCancelSleepTimer = onCancelSleepTimer,
+            modifier = modifier,
+        )
+        return
+    }
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
         GlassNowPlayingScreen(
             track = track, queue = queue, upNext = upNext, availableTracks = availableTracks, favorites = favorites, playback = playback,
