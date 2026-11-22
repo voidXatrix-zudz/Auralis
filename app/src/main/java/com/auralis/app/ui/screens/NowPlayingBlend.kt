@@ -51,7 +51,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -142,6 +141,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -152,6 +152,7 @@ import androidx.media3.common.Player
 import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Lyrics
+import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.domain.model.Track
 import com.auralis.app.playback.PlaybackController
@@ -293,17 +294,165 @@ fun BlendNowPlayingScreen(
                 }
 
                 val compact = LocalConfiguration.current.screenHeightDp < 640
+                val density = LocalDensity.current
+                val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+                val thumb = 56.dp
+                val artLeft = 20.dp
+                val artTop = statusTop + 34.dp
+                val openHeaderHeight = artTop + thumb + 12.dp
+                val side = LocalConfiguration.current.screenWidthDp.dp
+                val collapsedScale = if (compact) 0.85f else 1f
+                // One clock for the whole morph: artwork scale, offset and corner radius, the height
+                // the lyrics area gains, and the compact header fade. No second image, no cross-fade.
+                val morph by animateFloatAsState(
+                    targetValue = if (lyricsMode) 1f else 0f,
+                    animationSpec = spring(dampingRatio = 0.86f, stiffness = 300f),
+                    label = "blendHeaderMorph",
+                )
+                val headerHeight = side * collapsedScale * (1f - morph) + openHeaderHeight * morph
+
                 Column(Modifier.fillMaxSize()) {
-                    BlendHeader(
+                    Spacer(Modifier.height(headerHeight))
+                    // Fixed band between the header and the timeline. It is clipped, so no lyric line
+                    // can ever draw over the header, the progress bar or the time labels.
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .clipToBounds(),
+                        contentAlignment = Alignment.TopCenter,
+                    ) {
+                        Crossfade(
+                            targetState = lyricsMode,
+                            modifier = Modifier.fillMaxSize(),
+                            animationSpec = tween(220),
+                            label = "blendMiddle",
+                        ) { expanded ->
+                            if (expanded) {
+                                LyricsContent(
+                                    lyrics = lyrics,
+                                    loading = lyricsLoading,
+                                    playing = playback.playing,
+                                    positionMs = playback.positionMs,
+                                    durationMs = duration,
+                                    lyricsOffsetMs = lyricsOffsetMs,
+                                    autoScroll = lyricsAutoScroll,
+                                    lyricSizeSp = lyricSizeSp,
+                                    accent = palette.vibrant,
+                                    onSeek = onSeek,
+                                    onTryAnotherSource = { onTryAnotherLyricsSource(track) },
+                                    onRetry = { onRetryLyrics(track) },
+                                    onPaste = { lyricsPasteOpen = true },
+                                    onImport = {
+                                        lyricImporter.launch(
+                                            arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"),
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxSize().padding(top = 8.dp),
+                                    anchorFraction = 0.38f,
+                                    onDark = true,
+                                    edgeFade = 40.dp,
+                                    reanchorKey = morph > 0.98f,
+                                )
+                            } else {
+                                // Slides up under the shrinking header as it fades into the compact
+                                // row beside the thumbnail, so the title never jumps.
+                                Column(
+                                    Modifier
+                                        .fillMaxHeight()
+                                        .graphicsLayer { alpha = 1f - morph }
+                                        .widthIn(max = 520.dp)
+                                        .then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                                        .padding(horizontal = 32.dp),
+                                ) {
+                                    Spacer(Modifier.height(14.dp))
+                                    TitleBlock(
+                                        title = track.title.ifBlank { track.displayName }.ifBlank { "Unknown title" },
+                                        subtitle = artistAlbum(track),
+                                        isFavorite = isFavorite,
+                                        moreOpen = moreOpen,
+                                        onMoreOpenChange = { moreOpen = it },
+                                        onFavorite = { onFavorite(track) },
+                                        playback = playback,
+                                        track = track,
+                                        lyricsOffsetMs = lyricsOffsetMs,
+                                        onAdjustLyricsOffset = onAdjustLyricsOffset,
+                                        onResetLyricsOffset = onResetLyricsOffset,
+                                        sleepTimerOpen = { sleepTimerOpen = true },
+                                        onShuffle = onShuffle,
+                                        onRepeat = onRepeat,
+                                        onOpenEqualizer = onOpenEqualizer,
+                                        onOpenWrapped = onOpenWrapped,
+                                        onOpenBackup = onOpenBackup,
+                                        onEditMetadata = onEditMetadata,
+                                        onAudioInfo = { audioInfoOpen = true },
+                                        onOpenFullLyrics = { lyricsOpen = true },
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                    LyricsPreviewRow(
+                                        lyrics = lyrics,
+                                        lyricsLoading = lyricsLoading,
+                                        positionMs = playback.positionMs,
+                                        lyricsOffsetMs = lyricsOffsetMs,
+                                        onClick = { lyricsMode = true },
+                                    )
+                                    Gap(1f, 8.dp, compact)
+                                }
+                            }
+                        }
+                    }
+                    BlendControls(
+                        positionMs = playback.positionMs,
+                        durationMs = duration,
+                        quality = quality,
+                        onQualityClick = { audioInfoOpen = true },
+                        onSeek = onSeek,
+                        playing = playback.playing,
+                        onPrevious = onPrevious,
+                        onPlayPause = onPlayPause,
+                        onNext = onNext,
+                        playbackError = playback.error,
+                        bluetoothOutputName = bluetoothOutputName,
+                        deviceName = deviceName,
+                        lyricsActive = lyricsMode,
+                        lyricsLabel = if (lyricsMode) lyricsByLabel(lyrics) else null,
+                        onLyricsLabelClick = { lyricsOpen = true },
+                        onLyricsToggle = { lyricsMode = !lyricsMode },
+                        onOutput = { audioInfoOpen = true },
+                        onQueue = { queueOpen = true },
+                        compact = compact,
+                    )
+                }
+
+                // The artwork itself, drawn above the layout so it can never be clipped away while
+                // it shrinks: one image, laid out at its collapsed size and moved only through
+                // graphicsLayer. It stays visible for the whole animation and while lyrics are open.
+                BlendArtwork(
+                    track = track,
+                    artUri = playback.artworkUri,
+                    placeholder = palette.darkMuted,
+                    side = side,
+                    thumb = thumb,
+                    collapsedScale = collapsedScale,
+                    leftInset = artLeft,
+                    topInset = artTop,
+                    morph = morph,
+                    lyricsMode = lyricsMode,
+                    gesturesEnabled = gesturesEnabled,
+                    doubleTapSeekSeconds = doubleTapSeekSeconds,
+                    onSeekBy = onSeekBy,
+                    onOpenLyrics = { lyricsMode = true },
+                    modifier = Modifier.align(Alignment.TopStart),
+                )
+
+                if (morph > 0.02f) {
+                    CompactHeaderRow(
+                        alpha = morph,
+                        topInset = artTop,
+                        leftInset = artLeft,
+                        thumbnailSize = thumb,
                         track = track,
-                        artUri = playback.artworkUri,
-                        placeholder = palette.darkMuted,
-                        gesturesEnabled = gesturesEnabled,
-                        doubleTapSeekSeconds = doubleTapSeekSeconds,
-                        onSeekBy = onSeekBy,
-                        onOpenLyrics = { lyricsMode = true },
-                        lyricsMode = lyricsMode,
-                        lyrics = lyrics,
                         isFavorite = isFavorite,
                         onFavorite = { onFavorite(track) },
                         moreOpen = moreOpen,
@@ -321,96 +470,7 @@ fun BlendNowPlayingScreen(
                         onEditMetadata = onEditMetadata,
                         onAudioInfo = { audioInfoOpen = true },
                         onOpenFullLyrics = { lyricsOpen = true },
-                        compact = compact,
-                    )
-                    Box(
-                        Modifier.weight(1f).fillMaxWidth(),
-                        contentAlignment = Alignment.TopCenter,
-                    ) {
-                        if (lyricsMode) {
-                            LyricsContent(
-                                lyrics = lyrics,
-                                loading = lyricsLoading,
-                                playing = playback.playing,
-                                positionMs = playback.positionMs,
-                                durationMs = duration,
-                                lyricsOffsetMs = lyricsOffsetMs,
-                                autoScroll = lyricsAutoScroll,
-                                lyricSizeSp = lyricSizeSp,
-                                accent = palette.vibrant,
-                                onSeek = onSeek,
-                                onTryAnotherSource = { onTryAnotherLyricsSource(track) },
-                                onRetry = { onRetryLyrics(track) },
-                                onPaste = { lyricsPasteOpen = true },
-                                onImport = {
-                                    lyricImporter.launch(
-                                        arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"),
-                                    )
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                                anchorFraction = 0.38f,
-                                onDark = true,
-                            )
-                        } else {
-                            Column(
-                                Modifier
-                                    .fillMaxHeight()
-                                    .widthIn(max = 520.dp)
-                                    .then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                                    .padding(horizontal = 32.dp),
-                            ) {
-                                Spacer(Modifier.height(14.dp))
-                                TitleBlock(
-                                    title = track.title.ifBlank { track.displayName }.ifBlank { "Unknown title" },
-                                    subtitle = artistAlbum(track),
-                                    isFavorite = isFavorite,
-                                    moreOpen = moreOpen,
-                                    onMoreOpenChange = { moreOpen = it },
-                                    onFavorite = { onFavorite(track) },
-                                    playback = playback,
-                                    track = track,
-                                    lyricsOffsetMs = lyricsOffsetMs,
-                                    onAdjustLyricsOffset = onAdjustLyricsOffset,
-                                    onResetLyricsOffset = onResetLyricsOffset,
-                                    sleepTimerOpen = { sleepTimerOpen = true },
-                                    onShuffle = onShuffle,
-                                    onRepeat = onRepeat,
-                                    onOpenEqualizer = onOpenEqualizer,
-                                    onOpenWrapped = onOpenWrapped,
-                                    onOpenBackup = onOpenBackup,
-                                    onEditMetadata = onEditMetadata,
-                                    onAudioInfo = { audioInfoOpen = true },
-                                    onOpenFullLyrics = { lyricsOpen = true },
-                                )
-                                Spacer(Modifier.height(12.dp))
-                                LyricsPreviewRow(
-                                    lyrics = lyrics,
-                                    lyricsLoading = lyricsLoading,
-                                    positionMs = playback.positionMs,
-                                    lyricsOffsetMs = lyricsOffsetMs,
-                                    onClick = { lyricsMode = true },
-                                )
-                                Gap(1f, 8.dp, compact)
-                            }
-                        }
-                    }
-                    BlendControls(
-                        positionMs = playback.positionMs,
-                        durationMs = duration,
-                        quality = quality,
-                        onQualityClick = { audioInfoOpen = true },
-                        onSeek = onSeek,
-                        playing = playback.playing,
-                        onPrevious = onPrevious,
-                        onPlayPause = onPlayPause,
-                        onNext = onNext,
-                        playbackError = playback.error,
-                        bluetoothOutputName = bluetoothOutputName,
-                        deviceName = deviceName,
-                        onLyricsToggle = { lyricsMode = !lyricsMode },
-                        onOutput = { audioInfoOpen = true },
-                        onQueue = { queueOpen = true },
-                        compact = compact,
+                        modifier = Modifier.align(Alignment.TopStart),
                     )
                 }
 
@@ -479,86 +539,73 @@ private fun ColumnScope.Gap(weight: Float, compactHeight: Dp, compact: Boolean) 
 }
 
 /**
- * The header morphs between the full-bleed square artwork and a compact 56 dp thumbnail. One
- * graphicsLayer moves and scales the same [ArtworkImage] (no cross-fade to a second image), while the
- * melt mask fades out as the thumbnail appears. The header height animates too, so the lyrics area
- * can take the freed space instead of leaving a gap.
+ * The single artwork composable. It is laid out at its collapsed size and only ever moved through
+ * graphicsLayer: the scale, the offset and the corner radius all come from the same [morph] value,
+ * so one image shrinks into the top-left thumbnail with no cross-fade and no second bitmap. The melt
+ * mask fades out with the morph, leaving a clean rounded square, and the art is never alpha'd away.
  */
 @Composable
-private fun BlendHeader(
+private fun BlendArtwork(
     track: Track,
     artUri: Any?,
     placeholder: Color,
+    side: Dp,
+    thumb: Dp,
+    collapsedScale: Float,
+    leftInset: Dp,
+    topInset: Dp,
+    morph: Float,
+    lyricsMode: Boolean,
     gesturesEnabled: Boolean,
     doubleTapSeekSeconds: Int,
     onSeekBy: (Long) -> Unit,
     onOpenLyrics: () -> Unit,
-    lyricsMode: Boolean,
-    lyrics: Lyrics?,
-    isFavorite: Boolean,
-    onFavorite: () -> Unit,
-    moreOpen: Boolean,
-    onMoreOpenChange: (Boolean) -> Unit,
-    playback: PlaybackController.State,
-    lyricsOffsetMs: Int,
-    onAdjustLyricsOffset: (Int) -> Unit,
-    onResetLyricsOffset: () -> Unit,
-    sleepTimerOpen: () -> Unit,
-    onShuffle: () -> Unit,
-    onRepeat: () -> Unit,
-    onOpenEqualizer: () -> Unit,
-    onOpenWrapped: () -> Unit,
-    onOpenBackup: () -> Unit,
-    onEditMetadata: () -> Unit,
-    onAudioInfo: () -> Unit,
-    onOpenFullLyrics: () -> Unit,
-    compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val side = LocalConfiguration.current.screenWidthDp.dp * if (compact) 0.85f else 1f
-    val statusTopPx = with(density) { WindowInsets.statusBars.getTop(density) }
-    val statusTop = with(density) { statusTopPx.toDp() }
-    val thumb = 56.dp
-    // One shared clock drives the size, corner radius and offset, so the art reads as a single object
-    // sliding into the corner rather than a resize plus a separate fade.
-    val progress by animateFloatAsState(
-        targetValue = if (lyricsMode) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.84f, stiffness = 260f),
-        label = "blendHeaderProgress",
-    )
-    val headerHeight = side * (1f - progress) + (thumb + statusTop + 10.dp) * progress
     val sidePx = with(density) { side.toPx() }
     val thumbPx = with(density) { thumb.toPx() }
-    val scale = lerp(1f, if (sidePx > 0f) thumbPx / sidePx else 1f, progress)
-    val tx = with(density) { 16.dp.toPx() } * progress
-    val ty = (statusTopPx + with(density) { 10.dp.toPx() }) * progress
-    // The clip is applied in the layer's local space, so undo the scale to keep the corner constant.
-    val cornerPx = with(density) { 14.dp.toPx() } * progress / scale.coerceAtLeast(0.0001f)
+    val targetScale = if (sidePx > 0f) (thumbPx / sidePx).coerceIn(0f, 1f) else 1f
+    val scale = lerp(collapsedScale, targetScale, morph)
+    // Centred when the art is the smaller compact square; the shared clock moves it to the corner.
+    val startX = sidePx * (1f - collapsedScale) / 2f
+    val tx = lerp(startX, with(density) { leftInset.toPx() }, morph)
+    val ty = lerp(0f, with(density) { topInset.toPx() }, morph)
+    // The clip is applied in the layer's own (unscaled) space, so undo the scale to keep the
+    // on-screen corner at 10 dp once the thumbnail has fully formed.
+    val cornerLocal = with(density) {
+        (10.dp.toPx() * morph / scale.coerceAtLeast(0.0001f)).toDp()
+    }
+    val melt = (1f - morph).coerceIn(0f, 1f)
 
     var artworkDrag by remember(track.id) { mutableFloatStateOf(0f) }
     val openThreshold = with(density) { 72.dp.toPx() }
 
-    Box(modifier.fillMaxWidth().height(headerHeight).clipToBounds()) {
-        ArtworkImage(
-            track = track,
-            modifier = Modifier
-                .requiredSize(side)
-                .graphicsLayer {
-                    compositingStrategy = CompositingStrategy.Offscreen
-                    transformOrigin = TransformOrigin(0f, 0f)
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = tx
-                    translationY = ty
-                    if (progress > 0.001f) {
-                        shape = RoundedCornerShape(cornerPx)
-                        clip = true
-                    }
+    ArtworkImage(
+        track = track,
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .graphicsLayer {
+                transformOrigin = TransformOrigin(0f, 0f)
+                scaleX = scale
+                scaleY = scale
+                translationX = tx
+                translationY = ty
+                // The melt mask needs an isolated layer; the formed thumbnail does not, so the
+                // offscreen pass is dropped the moment the fade is gone.
+                compositingStrategy =
+                    if (melt > 0.002f) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+                if (morph > 0.001f) {
+                    shape = RoundedCornerShape(cornerLocal)
+                    clip = true
                 }
-                .background(placeholder)
-                .drawWithCache {
-                    val melt = 1f - progress
+            }
+            .background(placeholder)
+            .drawWithCache {
+                if (melt <= 0.002f) {
+                    onDrawWithContent { drawContent() }
+                } else {
                     val mask = Brush.verticalGradient(
                         0f to Color.Black,
                         0.55f to Color.Black,
@@ -570,70 +617,43 @@ private fun BlendHeader(
                         drawRect(brush = mask, blendMode = BlendMode.DstIn)
                     }
                 }
-                .pointerInput(track.id, lyricsMode, gesturesEnabled, doubleTapSeekSeconds) {
-                    if (lyricsMode) return@pointerInput
-                    detectTapGestures(onDoubleTap = { offset ->
-                        if (gesturesEnabled) {
-                            if (offset.x < size.width / 2f) onSeekBy(-doubleTapSeekSeconds * 1000L)
-                            else onSeekBy(doubleTapSeekSeconds * 1000L)
-                        }
-                    })
-                }
-                .pointerInput(track.id, lyricsMode) {
-                    if (lyricsMode) return@pointerInput
-                    detectHorizontalDragGestures(
-                        onDragStart = { artworkDrag = 0f },
-                        onDragEnd = {
-                            if (artworkDrag < -openThreshold) onOpenLyrics()
-                            artworkDrag = 0f
-                        },
-                        onDragCancel = { artworkDrag = 0f },
-                    ) { change, amount ->
-                        change.consume()
-                        artworkDrag += amount
+            }
+            .pointerInput(track.id, lyricsMode, gesturesEnabled, doubleTapSeekSeconds) {
+                if (lyricsMode) return@pointerInput
+                detectTapGestures(onDoubleTap = { offset ->
+                    if (gesturesEnabled) {
+                        if (offset.x < size.width / 2f) onSeekBy(-doubleTapSeekSeconds * 1000L)
+                        else onSeekBy(doubleTapSeekSeconds * 1000L)
                     }
-                },
-            shape = RectangleShape,
-            artUri = artUri,
-        )
-
-        if (progress > 0.02f) {
-            CompactHeaderRow(
-                alpha = progress,
-                topPad = statusTop + 10.dp,
-                thumbnailSize = thumb,
-                track = track,
-                lyrics = lyrics,
-                isFavorite = isFavorite,
-                onFavorite = onFavorite,
-                moreOpen = moreOpen,
-                onMoreOpenChange = onMoreOpenChange,
-                playback = playback,
-                lyricsOffsetMs = lyricsOffsetMs,
-                onAdjustLyricsOffset = onAdjustLyricsOffset,
-                onResetLyricsOffset = onResetLyricsOffset,
-                sleepTimerOpen = sleepTimerOpen,
-                onShuffle = onShuffle,
-                onRepeat = onRepeat,
-                onOpenEqualizer = onOpenEqualizer,
-                onOpenWrapped = onOpenWrapped,
-                onOpenBackup = onOpenBackup,
-                onEditMetadata = onEditMetadata,
-                onAudioInfo = onAudioInfo,
-                onOpenFullLyrics = onOpenFullLyrics,
-            )
-        }
-    }
+                })
+            }
+            .pointerInput(track.id, lyricsMode) {
+                if (lyricsMode) return@pointerInput
+                detectHorizontalDragGestures(
+                    onDragStart = { artworkDrag = 0f },
+                    onDragEnd = {
+                        if (artworkDrag < -openThreshold) onOpenLyrics()
+                        artworkDrag = 0f
+                    },
+                    onDragCancel = { artworkDrag = 0f },
+                ) { change, amount ->
+                    change.consume()
+                    artworkDrag += amount
+                }
+            },
+        shape = RectangleShape,
+        artUri = artUri,
+    )
 }
 
-/** Title, artist, provider chip, star and more, laid out beside the shrunken artwork thumbnail. */
+/** Title, artist, star and more, laid out beside the shrunken artwork thumbnail. */
 @Composable
 private fun CompactHeaderRow(
     alpha: Float,
-    topPad: Dp,
+    topInset: Dp,
+    leftInset: Dp,
     thumbnailSize: Dp,
     track: Track,
-    lyrics: Lyrics?,
     isFavorite: Boolean,
     onFavorite: () -> Unit,
     moreOpen: Boolean,
@@ -651,13 +671,24 @@ private fun CompactHeaderRow(
     onEditMetadata: () -> Unit,
     onAudioInfo: () -> Unit,
     onOpenFullLyrics: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val titleFamily = remember(track.title) { LyricsTypography.familyFor(track.title) }
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .graphicsLayer { this.alpha = alpha }
-            .padding(top = topPad, start = 16.dp + thumbnailSize + 12.dp, end = 16.dp),
+            .heightIn(min = topInset + thumbnailSize)
+            // A small upward slide as it appears, so it reads as the same block moving up rather
+            // than a second header dropping in.
+            .graphicsLayer {
+                this.alpha = alpha
+                translationY = (1f - alpha) * 8.dp.toPx()
+            }
+            .padding(
+                top = topInset,
+                start = leftInset + thumbnailSize + 12.dp,
+                end = 16.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -673,37 +704,30 @@ private fun CompactHeaderRow(
                 modifier = Modifier.fillMaxWidth().fadeEnd(24.dp),
             )
             Spacer(Modifier.height(2.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = track.artist.ifBlank { "Unknown artist" },
-                    color = Color.White.copy(alpha = 0.62f),
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                lyrics?.let {
-                    Spacer(Modifier.width(8.dp))
-                    SourceChip(it)
-                    if (it.outOfSync) {
-                        Spacer(Modifier.width(6.dp))
-                        OutOfSyncChip()
-                    }
-                }
-            }
+            Text(
+                text = track.artist.ifBlank { "Unknown artist" },
+                color = Color.White.copy(alpha = 0.62f),
+                fontSize = 14.sp,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip,
+                modifier = Modifier.fillMaxWidth().fadeEnd(24.dp),
+            )
         }
         Spacer(Modifier.width(8.dp))
         GlassCircleButton(
             icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
             description = if (isFavorite) "Remove from favourites" else "Add to favourites",
             onClick = onFavorite,
+            size = 36.dp,
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
         Box {
             GlassCircleButton(
                 icon = Icons.Rounded.MoreHoriz,
                 description = "More options",
                 onClick = { onMoreOpenChange(true) },
+                size = 36.dp,
             )
             PlayerMoreMenu(
                 expanded = moreOpen,
@@ -745,6 +769,9 @@ private fun BlendControls(
     playbackError: String?,
     bluetoothOutputName: String?,
     deviceName: String,
+    lyricsActive: Boolean,
+    lyricsLabel: String?,
+    onLyricsLabelClick: () -> Unit,
     onLyricsToggle: () -> Unit,
     onOutput: () -> Unit,
     onQueue: () -> Unit,
@@ -762,7 +789,10 @@ private fun BlendControls(
                 positionMs = positionMs,
                 durationMs = durationMs,
                 quality = quality,
-                onQualityClick = onQualityClick,
+                centerLabel = lyricsLabel,
+                onCenterLabelClick = {
+                    if (lyricsLabel != null) onLyricsLabelClick() else onQualityClick()
+                },
                 onSeek = onSeek,
             )
             Spacer(Modifier.height(if (compact) 8.dp else 14.dp))
@@ -785,6 +815,7 @@ private fun BlendControls(
             VolumeRow()
             Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
             BottomIconRow(
+                lyricsActive = lyricsActive,
                 onLyrics = onLyricsToggle,
                 onOutput = onOutput,
                 onQueue = onQueue,
@@ -1002,22 +1033,28 @@ private fun GlassCircleButton(
     icon: ImageVector,
     description: String,
     onClick: () -> Unit,
+    size: Dp = 48.dp,
 ) {
     Box(
         Modifier
-            .size(48.dp)
+            .size(size)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             Modifier
-                .size(40.dp)
+                .size(size - 8.dp)
                 .clip(CircleShape)
                 .background(Color.White.copy(alpha = 0.16f))
                 .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, description, tint = Color.White, modifier = Modifier.size(20.dp))
+            Icon(
+                icon,
+                description,
+                tint = Color.White,
+                modifier = Modifier.size(if (size <= 40.dp) 18.dp else 20.dp),
+            )
         }
     }
 }
@@ -1082,7 +1119,8 @@ private fun BlendTimeline(
     positionMs: Long,
     durationMs: Long,
     quality: QualityBadgeContent?,
-    onQualityClick: () -> Unit,
+    centerLabel: String?,
+    onCenterLabelClick: () -> Unit,
     onSeek: (Long) -> Unit,
 ) {
     val total = durationMs.coerceAtLeast(0L)
@@ -1114,20 +1152,23 @@ private fun BlendTimeline(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Rounded.Headphones,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(14.dp),
-            )
-            Spacer(Modifier.width(6.dp))
+            if (centerLabel == null) {
+                Icon(
+                    Icons.Rounded.Headphones,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
             Text(
-                text = qualityLabel(quality),
-                color = Color.White.copy(alpha = 0.85f),
-                fontSize = 13.sp,
+                text = centerLabel ?: qualityLabel(quality),
+                color = Color.White.copy(alpha = if (centerLabel != null) 0.7f else 0.85f),
+                fontSize = if (centerLabel != null) 12.sp else 13.sp,
+                textDecoration = if (centerLabel != null) TextDecoration.Underline else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable(role = Role.Button, onClick = onQualityClick),
+                modifier = Modifier.clickable(role = Role.Button, onClick = onCenterLabelClick),
             )
         }
         Text(
@@ -1242,6 +1283,7 @@ private fun VolumeRow() {
 
 @Composable
 private fun BottomIconRow(
+    lyricsActive: Boolean,
     onLyrics: () -> Unit,
     onOutput: () -> Unit,
     onQueue: () -> Unit,
@@ -1251,21 +1293,41 @@ private fun BottomIconRow(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BottomIcon(Icons.Rounded.Lyrics, "Lyrics", onLyrics)
+        BottomIcon(Icons.Rounded.Lyrics, "Lyrics", onLyrics, active = lyricsActive)
         BottomIcon(Icons.Rounded.SurroundSound, "Audio output", onOutput)
         BottomIcon(Icons.AutoMirrored.Rounded.QueueMusic, "Queue", onQueue)
     }
 }
 
 @Composable
-private fun BottomIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
+private fun BottomIcon(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    active: Boolean = false,
+) {
     Box(
         Modifier
             .size(48.dp)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, description, tint = Color.White.copy(alpha = 0.88f), modifier = Modifier.size(26.dp))
+        // Selected state: a subtle pressed glass square behind the lyrics glyph only.
+        if (active) {
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(alpha = 0.14f))
+                    .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(12.dp)),
+            )
+        }
+        Icon(
+            icon,
+            description,
+            tint = Color.White.copy(alpha = if (active) 1f else 0.88f),
+            modifier = Modifier.size(26.dp),
+        )
     }
 }
 
@@ -1776,6 +1838,21 @@ private fun sanitizeLyric(raw: String?): String {
         .replace(Regex("^\\[[^\\]]*]"), "")
         .replace(Regex("^v\\d+:\\s*", RegexOption.IGNORE_CASE), "")
         .trim()
+}
+
+/**
+ * "Lyrics by ..." for the timeline label while lyrics mode is open. Uses the same source names as the
+ * provider chip it replaces, so moving it out of the header loses nothing.
+ */
+private fun lyricsByLabel(lyrics: Lyrics?): String? {
+    val source = lyrics?.source ?: return null
+    val name = when (source) {
+        LyricsSource.USER -> "you"
+        LyricsSource.EMBEDDED -> "the file"
+        LyricsSource.LRC -> "LRC file"
+        LyricsSource.LRCLIB -> lyrics.provider ?: "online"
+    }
+    return if (lyrics.outOfSync) "Lyrics by $name · out of sync" else "Lyrics by $name"
 }
 
 /** White status/navigation icons over the artwork, restored when the screen leaves. */

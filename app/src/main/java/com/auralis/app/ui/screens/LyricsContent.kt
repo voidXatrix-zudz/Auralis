@@ -73,6 +73,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.TransformOrigin
@@ -210,6 +213,10 @@ fun LyricsContent(
     anchorFraction: Float = LyricsMotion.ACTIVE_LINE_ANCHOR,
     contentHorizontalPadding: Dp = 14.dp,
     onDark: Boolean = false,
+    /** Dissolves the list into the background over this distance at the top and bottom edges. */
+    edgeFade: Dp = 0.dp,
+    /** Changes once the surrounding layout has settled, re-anchoring the active line exactly. */
+    reanchorKey: Any? = null,
 ) {
     val lines = lyrics?.synced.orEmpty()
     val plain = lyrics?.plain
@@ -272,7 +279,7 @@ fun LyricsContent(
     // change that arrives mid-flight never snaps. The spring has a single tiny overshoot. A far jump
     // (a seek, or opening a song mid-way) uses the list's own animated scroll, which can never leave
     // the active line stranded.
-    LaunchedEffect(active, autoScroll, lines.size, clearForTouch, anchorFraction) {
+    LaunchedEffect(active, autoScroll, lines.size, clearForTouch, anchorFraction, reanchorKey) {
         if (!autoScroll || clearForTouch || active < 0 || rows.isEmpty()) return@LaunchedEffect
         val rowIndex = rows.indexOfFirst { it is LyricRow.Line && it.index == active }
         if (rowIndex < 0) return@LaunchedEffect
@@ -333,43 +340,69 @@ fun LyricsContent(
                         )
                     }
                 }
-                lines.isNotEmpty() -> LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = contentHorizontalPadding),
-                    contentPadding = PaddingValues(top = centerPadding, bottom = centerPadding),
-                    verticalArrangement = Arrangement.spacedBy(LyricsMotion.LINE_GAP),
+                lines.isNotEmpty() -> Box(
+                    Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (edgeFade > 0.dp) {
+                                Modifier
+                                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                                    .drawWithContent {
+                                        drawContent()
+                                        if (size.height > 0f) {
+                                            val band = (edgeFade.toPx() / size.height).coerceIn(0f, 0.4f)
+                                            val mask = Brush.verticalGradient(
+                                                0f to Color.Transparent,
+                                                band to Color.Black,
+                                                1f - band to Color.Black,
+                                                1f to Color.Transparent,
+                                            )
+                                            drawRect(brush = mask, blendMode = BlendMode.DstIn)
+                                        }
+                                    }
+                            } else {
+                                Modifier
+                            },
+                        ),
                 ) {
-                    items(rows, key = { it.key }, contentType = { it::class.simpleName }) { row ->
-                        when (row) {
-                            is LyricRow.Line -> {
-                                val distance = if (active >= 0) abs(row.index - active) else row.index.coerceAtMost(4)
-                                LyricLineRow(
-                                    line = row.line,
-                                    active = row.index == active,
-                                    passed = active >= 0 && row.index < active,
-                                    distance = distance,
-                                    accent = accent,
-                                    accentGlow = profile.glowEnabled,
-                                    sizeSp = lyricSizeSp,
-                                    blurAvailable = blurAvailable,
-                                    blurScale = profile.blurScale,
-                                    clearForTouch = clearForTouch,
-                                    motionMs = motionMs,
-                                    positionState = if (row.index == active && row.line.words.isNotEmpty()) livePosition else null,
-                                    lyricsOffsetMs = lyricsOffsetMs,
-                                    onSeek = onSeek,
-                                )
-                            }
-                            is LyricRow.Gap -> {
-                                val line = lines[row.index]
-                                val visible = active == row.index &&
-                                    effectivePosition - line.timeMs > 2_000 &&
-                                    row.endMs - effectivePosition > 500
-                                InstrumentalGap(
-                                    visible = visible,
-                                    accent = accent,
-                                    animated = motionEnabled,
-                                )
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().padding(horizontal = contentHorizontalPadding),
+                        contentPadding = PaddingValues(top = centerPadding, bottom = centerPadding),
+                        verticalArrangement = Arrangement.spacedBy(LyricsMotion.LINE_GAP),
+                    ) {
+                        items(rows, key = { it.key }, contentType = { it::class.simpleName }) { row ->
+                            when (row) {
+                                is LyricRow.Line -> {
+                                    val distance = if (active >= 0) abs(row.index - active) else row.index.coerceAtMost(4)
+                                    LyricLineRow(
+                                        line = row.line,
+                                        active = row.index == active,
+                                        passed = active >= 0 && row.index < active,
+                                        distance = distance,
+                                        accent = accent,
+                                        accentGlow = profile.glowEnabled,
+                                        sizeSp = lyricSizeSp,
+                                        blurAvailable = blurAvailable,
+                                        blurScale = profile.blurScale,
+                                        clearForTouch = clearForTouch,
+                                        motionMs = motionMs,
+                                        positionState = if (row.index == active && row.line.words.isNotEmpty()) livePosition else null,
+                                        lyricsOffsetMs = lyricsOffsetMs,
+                                        onSeek = onSeek,
+                                    )
+                                }
+                                is LyricRow.Gap -> {
+                                    val line = lines[row.index]
+                                    val visible = active == row.index &&
+                                        effectivePosition - line.timeMs > 2_000 &&
+                                        row.endMs - effectivePosition > 500
+                                    InstrumentalGap(
+                                        visible = visible,
+                                        accent = accent,
+                                        animated = motionEnabled,
+                                    )
+                                }
                             }
                         }
                     }
