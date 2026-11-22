@@ -217,6 +217,10 @@ fun LyricsContent(
     edgeFade: Dp = 0.dp,
     /** Changes once the surrounding layout has settled, re-anchoring the active line exactly. */
     reanchorKey: Any? = null,
+    /** List padding above the content, as a fraction of the viewport. Defaults to the anchor. */
+    topPaddingFraction: Float = anchorFraction,
+    /** List padding below the content, as a fraction of the viewport. Defaults to the anchor. */
+    bottomPaddingFraction: Float = anchorFraction,
 ) {
     val lines = lyrics?.synced.orEmpty()
     val plain = lyrics?.plain
@@ -323,7 +327,8 @@ fun LyricsContent(
 
     val viewport: @Composable () -> Unit = {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val centerPadding = maxHeight * anchorFraction
+            val topPadding = maxHeight * topPaddingFraction
+            val bottomPadding = maxHeight * bottomPaddingFraction
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -368,7 +373,7 @@ fun LyricsContent(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize().padding(horizontal = contentHorizontalPadding),
-                        contentPadding = PaddingValues(top = centerPadding, bottom = centerPadding),
+                        contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
                         verticalArrangement = Arrangement.spacedBy(LyricsMotion.LINE_GAP),
                     ) {
                         items(rows, key = { it.key }, contentType = { it::class.simpleName }) { row ->

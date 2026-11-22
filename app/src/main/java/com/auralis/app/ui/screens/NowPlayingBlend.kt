@@ -3,13 +3,18 @@ package com.auralis.app.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.database.ContentObserver
+import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,6 +27,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -59,6 +65,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,6 +78,9 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Bluetooth
+import androidx.compose.material.icons.rounded.Cast
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.CloudUpload
@@ -83,27 +93,37 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.SpeakerPhone
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.Usb
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -122,6 +142,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -154,6 +175,7 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.PlayerBackground
+import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.components.ArtworkImage
@@ -163,9 +185,15 @@ import com.auralis.app.ui.components.PlayerBackgroundImage
 import com.auralis.app.ui.components.QualityBadgeContent
 import com.auralis.app.ui.components.qualityBadgeContent
 import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
+import com.auralis.app.ui.glass.DialogBackdropBlur
+import com.auralis.app.ui.glass.glassWindowPanelColor
+import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.theme.LyricsTypography
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+/** Which middle panel, if any, is expanded. One at a time; all share the same header morph. */
+private enum class NowPlayingPanel { NONE, LYRICS, QUEUE }
 
 /**
  * The blended Now Playing screen: edge-to-edge artwork that melts into a palette-driven mesh, one
@@ -220,16 +248,15 @@ fun BlendNowPlayingScreen(
     onCancelSleepTimer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var queueOpen by rememberSaveable { mutableStateOf(false) }
+    var panel by rememberSaveable { mutableStateOf(NowPlayingPanel.NONE) }
     var addSongsOpen by rememberSaveable { mutableStateOf(false) }
     var sleepTimerOpen by rememberSaveable { mutableStateOf(false) }
     var customSleepMinutes by rememberSaveable { mutableStateOf("30") }
     var lyricsOpen by rememberSaveable { mutableStateOf(false) }
-    var lyricsMode by rememberSaveable { mutableStateOf(false) }
     var lyricsPasteOpen by rememberSaveable { mutableStateOf(false) }
     var audioInfoOpen by rememberSaveable { mutableStateOf(false) }
+    var audioOutputOpen by rememberSaveable { mutableStateOf(false) }
     var moreOpen by remember { mutableStateOf(false) }
-    var draggingQueueId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(track.id) { onLoadLyrics(track) }
     ForceWhiteSystemIcons()
@@ -246,25 +273,12 @@ fun BlendNowPlayingScreen(
     val quality = remember(track) { track.qualityBadgeContent() }
     val isFavorite = track.id in favorites
 
-    BackHandler(enabled = queueOpen) { queueOpen = false }
-    BackHandler(enabled = lyricsOpen && !queueOpen) { lyricsOpen = false }
-    BackHandler(enabled = lyricsMode && !queueOpen && !lyricsOpen) { lyricsMode = false }
-    BackHandler(enabled = !queueOpen && !lyricsOpen && !lyricsMode) { onBack() }
+    BackHandler(enabled = panel != NowPlayingPanel.NONE) { panel = NowPlayingPanel.NONE }
+    BackHandler(enabled = panel == NowPlayingPanel.NONE && lyricsOpen) { lyricsOpen = false }
+    BackHandler(enabled = panel == NowPlayingPanel.NONE && !lyricsOpen) { onBack() }
 
     Box(modifier.fillMaxSize()) {
         when {
-            queueOpen -> QueueScreen(
-                queue = queue,
-                currentId = playback.trackId,
-                draggingId = draggingQueueId,
-                onDraggingId = { draggingQueueId = it },
-                onPlayQueueItem = onPlayQueueItem,
-                onRemoveFromQueue = onRemoveFromQueue,
-                onMoveQueueItem = onMoveQueueItem,
-                onAddSongs = { addSongsOpen = true },
-                onClear = { onClearQueue(); queueOpen = false; onBack() },
-                onClose = { queueOpen = false },
-            )
             lyricsOpen -> LiquidLyricsScreen(
                 track = track,
                 lyrics = lyrics,
@@ -305,7 +319,7 @@ fun BlendNowPlayingScreen(
                 // One clock for the whole morph: artwork scale, offset and corner radius, the height
                 // the lyrics area gains, and the compact header fade. No second image, no cross-fade.
                 val morph by animateFloatAsState(
-                    targetValue = if (lyricsMode) 1f else 0f,
+                    targetValue = if (panel != NowPlayingPanel.NONE) 1f else 0f,
                     animationSpec = spring(dampingRatio = 0.86f, stiffness = 300f),
                     label = "blendHeaderMorph",
                 )
@@ -324,13 +338,13 @@ fun BlendNowPlayingScreen(
                         contentAlignment = Alignment.TopCenter,
                     ) {
                         Crossfade(
-                            targetState = lyricsMode,
+                            targetState = panel,
                             modifier = Modifier.fillMaxSize(),
                             animationSpec = tween(220),
                             label = "blendMiddle",
                         ) { expanded ->
-                            if (expanded) {
-                                LyricsContent(
+                            when (expanded) {
+                            NowPlayingPanel.LYRICS -> LyricsContent(
                                     lyrics = lyrics,
                                     loading = lyricsLoading,
                                     playing = playback.playing,
@@ -350,12 +364,25 @@ fun BlendNowPlayingScreen(
                                         )
                                     },
                                     modifier = Modifier.fillMaxSize().padding(top = 8.dp),
-                                    anchorFraction = 0.38f,
+                                    anchorFraction = 0.27f,
+                                    topPaddingFraction = 0.25f,
+                                    bottomPaddingFraction = 0.65f,
                                     onDark = true,
                                     edgeFade = 40.dp,
                                     reanchorKey = morph > 0.98f,
                                 )
-                            } else {
+                            NowPlayingPanel.QUEUE -> QueuePanel(
+                                queue = queue,
+                                currentId = playback.trackId,
+                                playing = playback.playing,
+                                onPlayQueueItem = onPlayQueueItem,
+                                onRemoveFromQueue = onRemoveFromQueue,
+                                onMoveQueueItem = onMoveQueueItem,
+                                onAddSongs = { addSongsOpen = true },
+                                onClear = onClearQueue,
+                                modifier = Modifier.fillMaxSize().padding(top = 8.dp),
+                            )
+                            NowPlayingPanel.NONE -> {
                                 // Slides up under the shrinking header as it fades into the compact
                                 // row beside the thumbnail, so the title never jumps.
                                 Column(
@@ -395,10 +422,11 @@ fun BlendNowPlayingScreen(
                                         lyricsLoading = lyricsLoading,
                                         positionMs = playback.positionMs,
                                         lyricsOffsetMs = lyricsOffsetMs,
-                                        onClick = { lyricsMode = true },
+                                        onClick = { panel = NowPlayingPanel.LYRICS },
                                     )
                                     Gap(1f, 8.dp, compact)
                                 }
+                            }
                             }
                         }
                     }
@@ -406,7 +434,7 @@ fun BlendNowPlayingScreen(
                         positionMs = playback.positionMs,
                         durationMs = duration,
                         quality = quality,
-                        onQualityClick = { audioInfoOpen = true },
+                        onQualityClick = { audioOutputOpen = false; audioInfoOpen = true },
                         onSeek = onSeek,
                         playing = playback.playing,
                         onPrevious = onPrevious,
@@ -415,12 +443,22 @@ fun BlendNowPlayingScreen(
                         playbackError = playback.error,
                         bluetoothOutputName = bluetoothOutputName,
                         deviceName = deviceName,
-                        lyricsActive = lyricsMode,
-                        lyricsLabel = if (lyricsMode) lyricsByLabel(lyrics) else null,
+                        lyricsActive = panel == NowPlayingPanel.LYRICS,
+                        lyricsLabel = if (panel == NowPlayingPanel.LYRICS) lyricsByLabel(lyrics) else null,
                         onLyricsLabelClick = { lyricsOpen = true },
-                        onLyricsToggle = { lyricsMode = !lyricsMode },
-                        onOutput = { audioInfoOpen = true },
-                        onQueue = { queueOpen = true },
+                        onLyricsToggle = {
+                            panel = if (panel == NowPlayingPanel.LYRICS) NowPlayingPanel.NONE else NowPlayingPanel.LYRICS
+                        },
+                        queueActive = panel == NowPlayingPanel.QUEUE,
+                        onQueueToggle = {
+                            panel = if (panel == NowPlayingPanel.QUEUE) NowPlayingPanel.NONE else NowPlayingPanel.QUEUE
+                        },
+                        shuffleActive = playback.shuffle,
+                        repeatMode = playback.repeat,
+                        onShuffle = onShuffle,
+                        onRepeat = onRepeat,
+                        onOutput = { audioInfoOpen = false; audioOutputOpen = true },
+                        onOutputLabelClick = { audioInfoOpen = false; audioOutputOpen = true },
                         compact = compact,
                     )
                 }
@@ -438,11 +476,11 @@ fun BlendNowPlayingScreen(
                     leftInset = artLeft,
                     topInset = artTop,
                     morph = morph,
-                    lyricsMode = lyricsMode,
+                    panelOpen = panel != NowPlayingPanel.NONE,
                     gesturesEnabled = gesturesEnabled,
                     doubleTapSeekSeconds = doubleTapSeekSeconds,
                     onSeekBy = onSeekBy,
-                    onOpenLyrics = { lyricsMode = true },
+                    onOpenLyrics = { panel = NowPlayingPanel.LYRICS },
                     modifier = Modifier.align(Alignment.TopStart),
                 )
 
@@ -486,6 +524,19 @@ fun BlendNowPlayingScreen(
                 }
             }
         }
+    }
+
+    if (audioOutputOpen) {
+        AudioOutputSheet(
+            track = track,
+            deviceName = deviceName,
+            bluetoothOutputName = bluetoothOutputName,
+            onOpenAudioInfo = {
+                audioOutputOpen = false
+                audioInfoOpen = true
+            },
+            onDismiss = { audioOutputOpen = false },
+        )
     }
 
     if (audioInfoOpen) {
@@ -555,7 +606,7 @@ private fun BlendArtwork(
     leftInset: Dp,
     topInset: Dp,
     morph: Float,
-    lyricsMode: Boolean,
+    panelOpen: Boolean,
     gesturesEnabled: Boolean,
     doubleTapSeekSeconds: Int,
     onSeekBy: (Long) -> Unit,
@@ -618,8 +669,8 @@ private fun BlendArtwork(
                     }
                 }
             }
-            .pointerInput(track.id, lyricsMode, gesturesEnabled, doubleTapSeekSeconds) {
-                if (lyricsMode) return@pointerInput
+            .pointerInput(track.id, panelOpen, gesturesEnabled, doubleTapSeekSeconds) {
+                if (panelOpen) return@pointerInput
                 detectTapGestures(onDoubleTap = { offset ->
                     if (gesturesEnabled) {
                         if (offset.x < size.width / 2f) onSeekBy(-doubleTapSeekSeconds * 1000L)
@@ -627,8 +678,8 @@ private fun BlendArtwork(
                     }
                 })
             }
-            .pointerInput(track.id, lyricsMode) {
-                if (lyricsMode) return@pointerInput
+            .pointerInput(track.id, panelOpen) {
+                if (panelOpen) return@pointerInput
                 detectHorizontalDragGestures(
                     onDragStart = { artworkDrag = 0f },
                     onDragEnd = {
@@ -773,8 +824,14 @@ private fun BlendControls(
     lyricsLabel: String?,
     onLyricsLabelClick: () -> Unit,
     onLyricsToggle: () -> Unit,
+    queueActive: Boolean,
+    onQueueToggle: () -> Unit,
+    shuffleActive: Boolean,
+    repeatMode: Int,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
     onOutput: () -> Unit,
-    onQueue: () -> Unit,
+    onOutputLabelClick: () -> Unit,
     compact: Boolean,
 ) {
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
@@ -816,9 +873,14 @@ private fun BlendControls(
             Spacer(Modifier.height(if (compact) 6.dp else 12.dp))
             BottomIconRow(
                 lyricsActive = lyricsActive,
+                queueActive = queueActive,
+                shuffleActive = shuffleActive,
+                repeatMode = repeatMode,
+                onShuffle = onShuffle,
+                onRepeat = onRepeat,
                 onLyrics = onLyricsToggle,
                 onOutput = onOutput,
-                onQueue = onQueue,
+                onQueue = onQueueToggle,
             )
             Spacer(Modifier.height(6.dp))
             Text(
@@ -828,7 +890,9 @@ private fun BlendControls(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(role = Role.Button, onClick = onOutputLabelClick),
             )
             Spacer(Modifier.height(10.dp))
         }
@@ -1284,6 +1348,11 @@ private fun VolumeRow() {
 @Composable
 private fun BottomIconRow(
     lyricsActive: Boolean,
+    queueActive: Boolean,
+    shuffleActive: Boolean,
+    repeatMode: Int,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
     onLyrics: () -> Unit,
     onOutput: () -> Unit,
     onQueue: () -> Unit,
@@ -1294,8 +1363,84 @@ private fun BottomIconRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BottomIcon(Icons.Rounded.Lyrics, "Lyrics", onLyrics, active = lyricsActive)
-        BottomIcon(Icons.Rounded.SurroundSound, "Audio output", onOutput)
-        BottomIcon(Icons.AutoMirrored.Rounded.QueueMusic, "Queue", onQueue)
+        // While the queue is open the middle slot becomes the quick shuffle/repeat pill; the swap
+        // cross-fades so the row height (and everything above it) never changes.
+        Crossfade(
+            targetState = queueActive,
+            animationSpec = tween(180),
+            label = "queueQuickControls",
+        ) { inQueue ->
+            if (inQueue) {
+                QueueQuickControls(
+                    shuffleActive = shuffleActive,
+                    repeatMode = repeatMode,
+                    onShuffle = onShuffle,
+                    onRepeat = onRepeat,
+                )
+            } else {
+                BottomIcon(Icons.Rounded.SurroundSound, "Audio output", onOutput)
+            }
+        }
+        BottomIcon(Icons.AutoMirrored.Rounded.QueueMusic, "Queue", onQueue, active = queueActive)
+    }
+}
+
+/** Compact glass pill shown in place of the output icon while the queue panel is open. */
+@Composable
+private fun QueueQuickControls(
+    shuffleActive: Boolean,
+    repeatMode: Int,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
+) {
+    Row(
+        Modifier
+            .height(44.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.14f))
+            .border(1.dp, Color.White.copy(alpha = 0.24f), CircleShape)
+            .padding(horizontal = 3.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        QuickToggle(Icons.Rounded.Shuffle, "Shuffle", shuffleActive, onShuffle)
+        QuickToggle(
+            icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+            description = "Repeat",
+            active = repeatMode != Player.REPEAT_MODE_OFF,
+            onClick = onRepeat,
+        )
+    }
+}
+
+@Composable
+private fun QuickToggle(
+    icon: ImageVector,
+    description: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (active) {
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.20f)),
+            )
+        }
+        Icon(
+            icon,
+            description,
+            tint = Color.White.copy(alpha = if (active) 1f else 0.6f),
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -1374,6 +1519,8 @@ private fun SlimSlider(
     onChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
     onCommit: ((Float) -> Unit)? = null,
+    trackColor: Color = Color.White.copy(alpha = 0.48f),
+    activeColor: Color = Color.White,
 ) {
     val fraction = value.coerceIn(0f, 1f)
     val changeState = rememberUpdatedState(onChange)
@@ -1407,14 +1554,14 @@ private fun SlimSlider(
                 .fillMaxWidth()
                 .height(8.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(Color.White.copy(alpha = 0.48f)),
+                .background(trackColor),
         )
         Box(
             Modifier
                 .fillMaxWidth(fraction)
                 .height(8.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(Color.White),
+                .background(activeColor),
         )
     }
 }
@@ -1423,8 +1570,327 @@ private fun SlimSlider(
 /* Queue                                                                                          */
 /* --------------------------------------------------------------------------------------------- */
 
+/**
+ * The queue panel that now lives inside Now Playing, between the header and the timeline. It reuses
+ * the exact same reorder/remove/play callbacks as the old full-screen page, and fades its top and
+ * bottom edges so rows never collide with the header or the timeline.
+ */
 @Composable
-private fun QueueScreen(
+private fun QueuePanel(
+    queue: List<Track>,
+    currentId: String?,
+    playing: Boolean,
+    onPlayQueueItem: (Track) -> Unit,
+    onRemoveFromQueue: (Track) -> Unit,
+    onMoveQueueItem: (Track, Int) -> Unit,
+    onAddSongs: () -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val listState = rememberLazyListState()
+    var selectMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(emptySet<String>()) }
+    var menuOpen by remember { mutableStateOf(false) }
+
+    // Bring the playing track into view once, when the panel appears.
+    LaunchedEffect(currentId) {
+        val index = queue.indexOfFirst { it.id == currentId }
+        if (index >= 0) listState.scrollToItem(index)
+    }
+    // Forget selections that left the queue (removed elsewhere, track changed).
+    LaunchedEffect(queue) {
+        if (selectedIds.isNotEmpty()) {
+            val ids = queue.mapTo(HashSet()) { it.id }
+            val kept = selectedIds.filter { it in ids }.toSet()
+            if (kept.size != selectedIds.size) selectedIds = kept
+        }
+    }
+
+    Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        Row(
+            Modifier.fillMaxWidth().height(46.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selectMode) {
+                Text(
+                    text = if (selectedIds.isEmpty()) "Select songs" else "${selectedIds.size} selected",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = {
+                        queue.filter { it.id in selectedIds }.forEach(onRemoveFromQueue)
+                        selectedIds = emptySet()
+                        selectMode = false
+                    },
+                    enabled = selectedIds.isNotEmpty(),
+                ) {
+                    Text("Remove", color = Color.White.copy(alpha = if (selectedIds.isEmpty()) 0.35f else 0.9f))
+                }
+                TextButton(onClick = { selectMode = false; selectedIds = emptySet() }) {
+                    Text("Cancel", color = Color.White.copy(alpha = 0.9f))
+                }
+            } else {
+                Text(
+                    text = "Queue",
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { selectMode = true }, enabled = queue.isNotEmpty()) {
+                    Text("Select", color = Color.White.copy(alpha = if (queue.isEmpty()) 0.35f else 0.9f))
+                }
+                Box {
+                    Box(
+                        Modifier.size(38.dp).clip(CircleShape).clickable(role = Role.Button) { menuOpen = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.MoreVert,
+                            "Queue options",
+                            tint = Color.White.copy(alpha = 0.9f),
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Add songs") },
+                            leadingIcon = { Icon(Icons.Rounded.Add, null) },
+                            onClick = { menuOpen = false; onAddSongs() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Clear queue") },
+                            leadingIcon = { Icon(Icons.Rounded.ClearAll, null) },
+                            enabled = queue.isNotEmpty(),
+                            onClick = { menuOpen = false; onClear() },
+                        )
+                    }
+                }
+            }
+        }
+
+        if (queue.isEmpty()) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.QueueMusic,
+                        null,
+                        tint = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(34.dp),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text("Nothing up next", color = Color.White.copy(alpha = 0.85f), fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Songs you queue will show up here.",
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = 13.sp,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    TextButton(onClick = onAddSongs) {
+                        Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Text("Add songs", color = Color.White, modifier = Modifier.padding(start = 6.dp))
+                    }
+                }
+            }
+        } else {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        if (size.height > 0f) {
+                            val band = (40.dp.toPx() / size.height).coerceIn(0f, 0.4f)
+                            val mask = Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                band to Color.Black,
+                                1f - band to Color.Black,
+                                1f to Color.Transparent,
+                            )
+                            drawRect(brush = mask, blendMode = BlendMode.DstIn)
+                        }
+                    },
+            ) {
+                var draggingId by remember { mutableStateOf<String?>(null) }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    itemsIndexed(queue, key = { _, item -> item.id }) { index, item ->
+                        QueuePanelRow(
+                            item = item,
+                            index = index,
+                            lastIndex = queue.lastIndex,
+                            isCurrent = item.id == currentId,
+                            playing = playing,
+                            selected = item.id in selectedIds,
+                            selectMode = selectMode,
+                            dragging = draggingId == item.id,
+                            onToggleSelected = {
+                                selectedIds = if (item.id in selectedIds) selectedIds - item.id else selectedIds + item.id
+                            },
+                            onClick = { if (selectMode) {
+                                selectedIds = if (item.id in selectedIds) selectedIds - item.id else selectedIds + item.id
+                            } else {
+                                onPlayQueueItem(item)
+                            } },
+                            onRemove = { onRemoveFromQueue(item) },
+                            onDragStart = { draggingId = item.id },
+                            onDragEnd = { draggingId = null },
+                            onDragMove = { target -> onMoveQueueItem(item, target) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueuePanelRow(
+    item: Track,
+    index: Int,
+    lastIndex: Int,
+    isCurrent: Boolean,
+    playing: Boolean,
+    selected: Boolean,
+    selectMode: Boolean,
+    dragging: Boolean,
+    onToggleSelected: () -> Unit,
+    onClick: () -> Unit,
+    onRemove: () -> Unit,
+    onDragStart: () -> Unit,
+    onDragEnd: () -> Unit,
+    onDragMove: (Int) -> Unit,
+) {
+    val density = LocalDensity.current
+    val latestIndex by rememberUpdatedState(index)
+    val latestLastIndex by rememberUpdatedState(lastIndex)
+    val latestMove by rememberUpdatedState(onDragMove)
+    val latestStart by rememberUpdatedState(onDragStart)
+    val latestEnd by rememberUpdatedState(onDragEnd)
+    var dragRemainder by remember(item.id) { mutableFloatStateOf(0f) }
+    var dragTargetIndex by remember(item.id) { mutableStateOf(index) }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isCurrent) Color.White.copy(alpha = 0.10f) else Color.Transparent)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (selectMode) {
+            Checkbox(
+                checked = selected,
+                onCheckedChange = { onToggleSelected() },
+                colors = CheckboxDefaults.colors(
+                    checkedColor = Color.White,
+                    uncheckedColor = Color.White.copy(alpha = 0.6f),
+                    checkmarkColor = Color.Black,
+                ),
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+        ArtworkImage(item, Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)))
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isCurrent) {
+                    Icon(
+                        Icons.Rounded.Equalizer,
+                        contentDescription = if (playing) "Playing" else "Paused",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    text = item.title.ifBlank { item.displayName },
+                    color = Color.White,
+                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                    fontSize = 15.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                text = if (isCurrent) "Playing · ${item.artist.ifBlank { "Unknown artist" }}" else item.artist.ifBlank { "Unknown artist" },
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Box(
+            Modifier
+                .size(40.dp)
+                .pointerInput(item.id, selectMode) {
+                    if (selectMode) return@pointerInput
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = {
+                            latestStart()
+                            dragRemainder = 0f
+                            dragTargetIndex = latestIndex
+                        },
+                        onDragEnd = { latestEnd(); dragRemainder = 0f },
+                        onDragCancel = { latestEnd(); dragRemainder = 0f },
+                    ) { change, amount ->
+                        change.consume()
+                        dragRemainder += amount.y
+                        val step = with(density) { 60.dp.toPx() }
+                        while (dragRemainder >= step && dragTargetIndex < latestLastIndex) {
+                            dragTargetIndex += 1
+                            latestMove(dragTargetIndex)
+                            dragRemainder -= step
+                        }
+                        while (dragRemainder <= -step && dragTargetIndex > 0) {
+                            dragTargetIndex -= 1
+                            latestMove(dragTargetIndex)
+                            dragRemainder += step
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.DragHandle,
+                "Drag to reorder",
+                tint = if (dragging) Color.White else Color.White.copy(alpha = 0.55f),
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        if (selectMode) {
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clickable(role = Role.Button, onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.RemoveCircleOutline,
+                    "Remove from queue",
+                    tint = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The old full-screen queue page. Now Playing no longer navigates to it, but it is kept for other
+ * entry points; it shares the same callbacks as [QueuePanel].
+ */
+@Composable
+internal fun QueueScreen(
     queue: List<Track>,
     currentId: String?,
     draggingId: String?,
@@ -1592,6 +2058,259 @@ private fun QueueIconAction(
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 1f else 0.35f),
             modifier = Modifier.size(20.dp),
         )
+    }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* Audio output sheet                                                                             */
+/* --------------------------------------------------------------------------------------------- */
+
+/** The route currently carrying media, refreshed as devices connect and disconnect. */
+private data class ActiveOutputRoute(val type: Int, val productName: String?)
+
+private const val ACTION_MEDIA_OUTPUT_PANEL = "android.settings.panel.action.MEDIA_OUTPUT"
+private const val ACTION_VOLUME_PANEL = "android.settings.panel.action.VOLUME"
+
+/** Reads the active media route without touching any permission-gated API. Best effort only. */
+private fun readActiveOutputRoute(manager: AudioManager?): ActiveOutputRoute {
+    val safe = manager ?: return ActiveOutputRoute(AudioDeviceInfo.TYPE_UNKNOWN, null)
+    val device = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val attributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+            safe.getAudioDevicesForAttributes(attributes).firstOrNull()
+        } else {
+            safe.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull()
+        }
+    }.getOrNull() ?: return ActiveOutputRoute(AudioDeviceInfo.TYPE_UNKNOWN, null)
+    return ActiveOutputRoute(
+        type = device.type,
+        productName = device.productName?.toString()?.trim()?.takeIf { it.isNotEmpty() },
+    )
+}
+
+/** Live active route, registered and unregistered with the sheet's lifecycle. */
+@Composable
+private fun rememberActiveOutputRoute(): ActiveOutputRoute {
+    val context = LocalContext.current
+    val manager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
+    var route by remember(manager) { mutableStateOf(readActiveOutputRoute(manager)) }
+    DisposableEffect(manager) {
+        if (manager == null) return@DisposableEffect onDispose {}
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+                route = readActiveOutputRoute(manager)
+            }
+
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                route = readActiveOutputRoute(manager)
+            }
+        }
+        val registered = runCatching {
+            manager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+        }.isSuccess
+        route = readActiveOutputRoute(manager)
+        onDispose { if (registered) runCatching { manager.unregisterAudioDeviceCallback(callback) } }
+    }
+    return route
+}
+
+private fun isBluetoothType(type: Int): Boolean =
+    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+
+private fun outputIcon(type: Int, bluetooth: Boolean): ImageVector = when {
+    bluetooth -> Icons.Rounded.Bluetooth
+    type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+        type == AudioDeviceInfo.TYPE_WIRED_HEADSET -> Icons.Rounded.Headphones
+    type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+        type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+        type == AudioDeviceInfo.TYPE_USB_ACCESSORY -> Icons.Rounded.Usb
+    type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> Icons.Rounded.SpeakerPhone
+    else -> Icons.AutoMirrored.Rounded.VolumeUp
+}
+
+/** One-line stream summary for the Audio Pipeline row, e.g. "FLAC · 16-bit · 44.1 kHz". */
+private fun audioPipelineSummary(track: Track): String {
+    val codec = track.codec?.takeIf { it.isNotBlank() }?.uppercase()
+        ?: track.ext.takeIf { it.isNotBlank() }?.uppercase()
+    val bitDepth = track.bitDepth?.takeIf { it > 0 }
+    val sampleRate = track.sampleRateHz?.takeIf { it > 0 }
+    if (codec == null && bitDepth == null && sampleRate == null) return "Not reported"
+    return buildList {
+        add(codec ?: if (track.lossless) "Lossless" else "Lossy")
+        bitDepth?.let { add("$it-bit") }
+        sampleRate?.let { add("%.1f kHz".format(it / 1000f)) }
+    }.joinToString(" · ")
+}
+
+/**
+ * Opens the system's media-output surface. There is no public "media output switcher" intent, so this
+ * tries the Android 13 output panel, then the volume panel, then Bluetooth settings, and only shows a
+ * toast if none of them resolve. No Cast SDK and no new permission.
+ */
+private fun openSystemMediaOutput(context: Context) {
+    val candidates = buildList {
+        add(Intent(ACTION_MEDIA_OUTPUT_PANEL))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(Intent(ACTION_VOLUME_PANEL))
+        add(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+    }
+    for (intent in candidates) {
+        val launched = runCatching {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.isSuccess
+        if (launched) return
+    }
+    Toast.makeText(context, "Couldn't open audio output settings", Toast.LENGTH_SHORT).show()
+}
+
+/** A single rounded glass row inside the Audio output sheet. */
+@Composable
+private fun OutputRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    trailing: @Composable () -> Unit,
+    onClick: (() -> Unit)?,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = if (selected) colors.primary.copy(alpha = 0.14f) else colors.onSurface.copy(alpha = 0.06f),
+        border = BorderStroke(1.dp, colors.outline.copy(alpha = 0.18f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, null, tint = colors.onSurface, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    color = colors.onSurface,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    subtitle,
+                    color = colors.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            trailing()
+        }
+    }
+}
+
+/**
+ * The Audio output bottom sheet: current route, Cast hand-off, the media volume slider (same
+ * STREAM_MUSIC observer as the Now Playing row) and a shortcut into the existing Audio info sheet.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AudioOutputSheet(
+    track: Track,
+    deviceName: String,
+    bluetoothOutputName: String?,
+    onOpenAudioInfo: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val route = rememberActiveOutputRoute()
+    val volume = rememberMediaVolume()
+    val isBluetooth = bluetoothOutputName != null || isBluetoothType(route.type)
+    val outputTitle = if (isBluetooth) (bluetoothOutputName ?: route.productName ?: deviceName) else deviceName
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = if (glass) glassWindowPanelColor() else MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        if (glass) DialogBackdropBlur()
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            Text("Audio output", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(16.dp))
+            OutputRow(
+                icon = outputIcon(route.type, isBluetooth),
+                title = outputTitle,
+                subtitle = "Playing here",
+                selected = true,
+                trailing = {
+                    Icon(
+                        Icons.Rounded.Check,
+                        contentDescription = "Current output",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                onClick = null,
+            )
+            Spacer(Modifier.height(10.dp))
+            OutputRow(
+                icon = Icons.Rounded.Cast,
+                title = "Cast",
+                subtitle = "Chromecast and Google Cast speakers",
+                selected = false,
+                trailing = {
+                    Icon(
+                        Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                onClick = { openSystemMediaOutput(context) },
+            )
+            Spacer(Modifier.height(14.dp))
+            val colors = MaterialTheme.colorScheme
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.VolumeUp,
+                    contentDescription = "Volume",
+                    tint = colors.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                SlimSlider(
+                    value = volume.value,
+                    onChange = volume.set,
+                    modifier = Modifier.weight(1f),
+                    trackColor = colors.onSurface.copy(alpha = 0.18f),
+                    activeColor = colors.primary,
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            OutputRow(
+                icon = Icons.Rounded.Equalizer,
+                title = "Audio Pipeline",
+                subtitle = audioPipelineSummary(track),
+                selected = false,
+                trailing = {
+                    Icon(
+                        Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                onClick = onOpenAudioInfo,
+            )
+            Spacer(Modifier.height(24.dp))
+        }
     }
 }
 
