@@ -123,6 +123,8 @@ import com.auralis.app.ui.screens.ExploreMoodScreen
 import com.auralis.app.ui.explore.ExploreMoods
 import com.auralis.app.ui.screens.HistoryScreen
 import com.auralis.app.ui.screens.LibraryScreen
+import com.auralis.app.ui.metadata.MetadataFillEffect
+import com.auralis.app.data.youtube.needsMetadataFill
 import com.auralis.app.ui.screens.LibrarySortOption
 import com.auralis.app.ui.screens.buildLibraryPlaylists
 import com.auralis.app.ui.screens.NowPlayingScreen
@@ -248,6 +250,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
     val youtubeHistory by viewModel.youtubeHistory.collectAsStateWithLifecycle()
+    val metadataSettled by viewModel.metadataSettled.collectAsStateWithLifecycle()
                 val mergedHistory by viewModel.mergedHistory.collectAsStateWithLifecycle()
                 val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
                 val ytPlaylist by viewModel.ytPlaylist.collectAsStateWithLifecycle()
@@ -509,6 +512,13 @@ fun AuralisRoot(viewModel: AppViewModel) {
             LocalArtistImages provides ArtistImageResolver { name, browseId, knownUrl -> viewModel.resolveArtistImage(name, browseId, knownUrl) },
         ) {
         AuralisBackdrop(themeStyle = settings.themeStyle, artColor = currentTrack?.artColor, tier = profile.tier) {
+            // The playing song is on screen in the dock on every page, so its retries follow this
+            // composition and stop when the app leaves the foreground.
+            MetadataFillEffect(
+                targets = listOfNotNull(currentTrack).filter { it.needsMetadataFill },
+                onVisible = viewModel::requestMetadata,
+                onHidden = viewModel::releaseMetadata,
+            )
             if (nowPlayingOpen && currentTrack != null) {
                 NowPlayingScreen(
                     track = currentTrack,
@@ -693,6 +703,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             currentId = playbackTrackId,
                                             onPlay = viewModel::playHistoryEntry,
                                             onClear = viewModel::clearHistory,
+                                            settledMetadata = metadataSettled,
+                                            onMetadataVisible = viewModel::requestMetadata,
+                                            onMetadataHidden = viewModel::releaseMetadata,
                                         )
                                         Destination.Logs -> LogsDiagnosticsScreen(
                                 settings,

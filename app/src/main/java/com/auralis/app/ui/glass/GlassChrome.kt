@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auralis.app.domain.model.Track
+import com.auralis.app.ui.metadata.displayTitle
 import com.auralis.app.ui.components.AuralisLogo
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.components.AccountAvatar
@@ -191,7 +192,7 @@ fun GlassMiniPlayer(
                 GlassArtwork(track, Modifier.size(48.dp), 14.dp)
                 Column(Modifier.weight(1f).padding(start = 12.dp, end = 4.dp)) {
                     Text(
-                        track.title.ifBlank { track.displayName },
+                        track.displayTitle,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,

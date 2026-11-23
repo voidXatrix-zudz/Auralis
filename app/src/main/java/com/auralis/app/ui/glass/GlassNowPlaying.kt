@@ -125,6 +125,7 @@ import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.LrcLine
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.Track
+import com.auralis.app.ui.metadata.displayTitle
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.ui.lyrics.canKaraoke
@@ -461,7 +462,7 @@ fun GlassNowPlayingScreen(
                                                 }
                                             },
                                     ) {
-                                        Text(track.title.ifBlank { track.displayName }, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(track.displayTitle, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             ArtistAvatar(name = track.artist, size = 20.dp)
                                             Text(track.artist.ifBlank { "Unknown artist" }, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

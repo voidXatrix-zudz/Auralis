@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.lerp as dpLerp
 import androidx.compose.ui.unit.sp
 import com.auralis.app.BuildConfig
 import com.auralis.app.domain.model.Track
+import com.auralis.app.ui.metadata.displayTitle
 import com.auralis.app.ui.glass.DockGlassStyle
 import com.auralis.app.ui.glass.GlassKind
 import com.auralis.app.ui.glass.LocalDockGlassStyle
@@ -790,7 +791,7 @@ private fun DockMiniPill(
                     .padding(start = 10.dp, end = 4.dp),
             ) {
                 Text(
-                    text = track.title.ifBlank { track.displayName },
+                    text = track.displayTitle,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     fontSize = if (isGlass) DockDimens.MiniTitleSize else 15.sp,

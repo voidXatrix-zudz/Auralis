@@ -48,6 +48,7 @@ import com.auralis.app.data.youtube.filterMusicTracksCounting
 import com.auralis.app.data.youtube.isMusicCard
 import com.auralis.app.data.youtube.isMusicTrack
 import com.auralis.app.data.youtube.isYouTubeTrack
+import com.auralis.app.data.youtube.filledWith
 import com.auralis.app.data.youtube.normalizeDataSyncId
 import com.auralis.app.data.youtube.normalizePlaylistBrowseId
 import com.auralis.app.data.youtube.playbackStart
@@ -428,6 +429,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      */
     private val _remoteTracks = MutableStateFlow<Map<String, Track>>(emptyMap())
     val remoteTracks = _remoteTracks.asStateFlow()
+    /** Ids whose retry window finished: metadata arrived, or the 30 s deadline passed. */
+    private val _metadataSettled = MutableStateFlow<Set<String>>(emptySet())
+    val metadataSettled = _metadataSettled.asStateFlow()
+    /**
+     * One retry helper shared by every screen. History rows and the playing song both call into it,
+     * so the same song is never looked up twice at once and the backoff rules live in one place.
+     */
+    private val metadataFiller = com.auralis.app.data.youtube.MetadataFiller(
+        scope = viewModelScope,
+        fetch = { videoId -> container.youtube.metadata(videoId) },
+        onFilled = ::persistFilledMetadata,
+        onSettled = { id -> _metadataSettled.update { it + id } },
+        fallbackArtwork = { track -> runCatching { container.artworkResolver.resolve(track) }.getOrNull() },
+    )
     /**
      * Set at launch from the saved checkpoint so the mini-player can appear instantly; the UI prefers
      * the real player as soon as it has a track, and [resumeRestored] hands playback over to it.
@@ -2165,31 +2180,55 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * Fills in title/artist/duration/artwork for a queue entry the caller only had a video id for
+     * Fills in title/artist/duration/artwork for queue entries the caller only had a video id for
      * (for example an old History row). The now-playing UI and the media notification read the same
-     * `_remoteTracks` map, so the row updates in place once the metadata arrives.
+     * `_remoteTracks` map, so the row updates in place once the metadata arrives. The retries are
+     * shared with every other screen through [metadataFiller].
      */
     private fun backfillTrackMetadata(track: Track) {
-        val videoId = track.remoteId ?: return
-        if (track.artist.isNotBlank() && !track.artworkUrl.isNullOrBlank()) return
-        viewModelScope.launch {
-            runCatching { container.youtube.metadata(videoId) }
-                .onSuccess { meta ->
-                    if (meta == null) return@onSuccess
-                    _remoteTracks.update { known ->
-                        val current = known[track.id] ?: return@update known
-                        known + (track.id to current.copy(
-                            title = current.title.ifBlank { meta.title },
-                            artist = current.artist.ifBlank { meta.artist },
-                            album = current.album.ifBlank { meta.album },
-                            durationMs = if (current.durationMs > 0L) current.durationMs else meta.durationMs,
-                            artworkUrl = current.artworkUrl?.takeIf { !com.auralis.app.data.youtube.isVideoThumbnailUrl(it) }
-                                ?: meta.thumbnailUrl?.let { com.auralis.app.data.youtube.normalizeArtworkUrl(it) },
-                        ))
-                    }
-                }
-                .onFailure { AppLog.d("YouTube", "Metadata lookup skipped for $videoId: ${it.message}") }
+        requestMetadata(listOf(track))
+    }
+
+    /**
+     * Starts the 30 s retry window for visible songs. Called by the History list and by Now Playing;
+     * ids already being retried are ignored, and a finished id becomes active again.
+     */
+    fun requestMetadata(tracks: List<Track>) {
+        if (tracks.isEmpty()) return
+        _metadataSettled.update { settled -> settled - tracks.mapTo(HashSet()) { it.id } }
+        tracks.forEach(metadataFiller::request)
+    }
+
+    /** Cancels retries for rows that left the screen or when the app goes to the background. */
+    fun releaseMetadata(ids: Collection<String>) {
+        ids.forEach(metadataFiller::release)
+    }
+
+    /** Applies a successful fill to the session map and to the mirrored history row. */
+    private suspend fun persistFilledMetadata(track: Track) {
+        _remoteTracks.update { known ->
+            val current = known[track.id] ?: return@update known + (track.id to track)
+            // The map may already hold a better copy (the player's own update); only add what is
+            // missing so a retry can never replace a good field with an older one.
+            val currentArt = current.artworkUrl
+            known + (track.id to current.copy(
+                title = current.title.ifBlank { track.title },
+                displayName = current.displayName.ifBlank { track.displayName },
+                artist = current.artist.ifBlank { track.artist },
+                albumArtist = current.albumArtist.ifBlank { track.albumArtist },
+                album = current.album.ifBlank { track.album },
+                durationMs = current.durationMs.takeIf { it > 0L } ?: track.durationMs,
+                artworkUrl = currentArt?.takeUnless {
+                    it.isBlank() || com.auralis.app.data.youtube.isVideoThumbnailUrl(it)
+                } ?: track.artworkUrl,
+            ))
         }
+        val videoId = track.remoteId ?: return
+        runCatching {
+            val dao = container.database.youtubeDao()
+            val row = dao.recent(videoId) ?: return@runCatching
+            dao.upsertRecent(row.filledWith(track))
+        }.onFailure { AppLog.d("Metadata", "Could not save metadata for $videoId: ${it.message}") }
     }
 
     /**
@@ -2303,6 +2342,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Called from MainActivity.onStop: the in-process lanes step aside for the background tier. */
     fun onAppBackgrounded() {
         appInForeground = false
+        metadataFiller.releaseAll()
         container.liveSync.onAppBackground()
         // The state collector dies with this ViewModel, so persist the exact position now; the
         // service may keep playing after the task is swiped away.

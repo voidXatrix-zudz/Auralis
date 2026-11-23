@@ -342,6 +342,10 @@ interface YouTubeDao {
     @Query("SELECT playCount FROM youtube_recents WHERE videoId = :videoId")
     suspend fun playCountOf(videoId: String): Int?
 
+    /** One mirrored row, used when a metadata fill should update it in place. */
+    @Query("SELECT * FROM youtube_recents WHERE videoId = :videoId")
+    suspend fun recent(videoId: String): YouTubeRecentEntity?
+
     @Upsert
     suspend fun upsertRecent(entry: YouTubeRecentEntity)
 

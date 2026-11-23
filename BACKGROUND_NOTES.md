@@ -81,15 +81,50 @@ after any summary/compaction.
 8. **STEP 8 ✓** — glass legibility sweep: the last indigo scrim/fill is black, login/lyrics/Now
    Playing fallbacks no longer paint indigo, stale "indigo" wording corrected. Committed. Details in
    "STEP LOG".
-9. **STEP 9** — `MetadataFiller`: dedupe ids, 30 s deadline, delays 1/3/6/10/10 s, concurrency 3,
-   cancel on leave / background, persist success, never blank-overwrite, "Unknown artist" finally.
-   Commit.
+9. **STEP 9 ✓** — one `MetadataFiller`: deduped ids, immediate lookup then 1/3/6/10/10 s retries
+   (30 s deadline), 3 concurrent, cancelled when the row leaves History or the app backgrounds;
+   results merge into `_remoteTracks` + `youtube_recents`; History shows a skeleton, then "Unknown
+   artist", never the raw video id. Committed. Details in "STEP LOG".
 10. **STEP 10** — self-review yes/no checklist; fix every "no". Commit.
 11. **STEP 11** — final report (below / in the chat reply).
 
 ---
 
 ## STEP LOG
+
+### STEP 9 — metadata retry ✓
+
+- New `data/youtube/MetadataFiller.kt`, the one helper behind every retry:
+  - `request(track)` is keyed by track id, so recomposition or a second History row can never start
+    a duplicate lookup; `release(id)`/`releaseAll()` cancel without marking the song finished.
+  - A lookup runs immediately, then retries after 1, 3, 6, 10 and 10 seconds (the gaps sum to the
+    30 s `DEADLINE_MS`); nothing is attempted after that. A `Semaphore(3)` caps concurrency.
+  - `filledWith` merges field-by-field: a real title, artist, album, duration or artwork is never
+    replaced and a blank provider result never erases a value. A stored video id counts as missing,
+    and the provider's generic "Unknown artist" is not written over a blank.
+  - Artwork uses the real square URL when the provider has one; otherwise the existing
+    `ArtworkResolver` (the same metadata providers used elsewhere) is asked once the row has a
+    searchable title and artist. Fetch path is `YouTubeRepository.metadata` → `songMetadata`.
+  - `YouTubeRecentEntity.filledWith` mirrors a result into `youtube_recents`, keeping `playedAt`
+    and `playCount`.
+- `ui/AppViewModel.kt`: owns the single filler (viewModelScope). `requestMetadata` /
+  `releaseMetadata` are the public entry points; `persistFilledMetadata` merges into `_remoteTracks`
+  without lowering a better copy and updates the history row via the new `YouTubeDao.recent(id)`.
+  `backfillTrackMetadata` (play path) now uses the same helper. `onAppBackgrounded` calls
+  `releaseAll()`. `metadataSettled` drives the "gave up" state.
+- `ui/metadata/MetadataUi.kt`: `MetadataFillEffect` starts retries on first composition and on
+  `ON_START`, cancels on `ON_STOP` and dispose; `MetadataSkeleton` draws the neutral loading bars;
+  `Track.displayTitle` hides the internal video id.
+- `data/db/Mappers.kt`: `remoteTrack` stores a blank title when the stored value is the video id, so
+  no screen can render an internal id before metadata arrives (HistorySync still recognises and
+  backfills those rows).
+- UI: History (both themes) shows skeleton bars until a row settles, then the real title or
+  "Unknown title" and the artist or "Unknown artist"; the glass/normal mini-players and both Now
+  Playing headers use `displayTitle` instead of a blank line.
+- Tests: `MetadataFillerTest` (10 cases) covers immediate completion, the exact 1/3/6/10/10 retry
+  schedule, no polling after 30 s, per-id de-duplication, cancellation, missing-field-only merge,
+  video-id replacement, blank-result safety and history play-count preservation. Full suite: 299
+  tests, 0 failures; `:app:compileDebugKotlin` BUILD SUCCESSFUL.
 
 ### STEP 8 — glass legibility sweep ✓
 

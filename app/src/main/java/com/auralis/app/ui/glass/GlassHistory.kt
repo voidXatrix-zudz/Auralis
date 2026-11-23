@@ -29,6 +29,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.auralis.app.ui.HistoryEntry
 import com.auralis.app.ui.components.LocalDockBottomInset
+import com.auralis.app.data.youtube.needsMetadataFill
+import com.auralis.app.ui.metadata.MetadataSkeleton
+import com.auralis.app.ui.metadata.displayTitle
 import com.auralis.app.ui.screens.timeAgo
 import com.auralis.app.ui.theme.GlassTokens
 
@@ -39,6 +42,7 @@ fun GlassHistoryScreen(
     currentId: String?,
     onPlay: (HistoryEntry) -> Unit,
     onClear: () -> Unit,
+    settledMetadata: Set<String>,
     modifier: Modifier = Modifier,
 ) {
     var confirmingClear by remember { mutableStateOf(false) }
@@ -77,23 +81,27 @@ fun GlassHistoryScreen(
                         ) {
                             GlassArtwork(entry.track, Modifier.size(56.dp), 16.dp)
                             Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
-                                Text(
-                                    entry.track.title.ifBlank {
-                                        entry.track.displayName.ifBlank { "Unknown title" }
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = if (entry.track.id == currentId) GlassTokens.Violet
-                                    else MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    entry.track.artist.ifBlank { "Unknown artist" },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                if (entry.track.needsMetadataFill && entry.track.id !in settledMetadata) {
+                                    MetadataSkeleton(widthFraction = 0.62f, height = 14.dp)
+                                    Spacer(Modifier.height(6.dp))
+                                    MetadataSkeleton(widthFraction = 0.42f, height = 11.dp, alpha = 0.12f)
+                                } else {
+                                    Text(
+                                        entry.track.displayTitle,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = if (entry.track.id == currentId) GlassTokens.Violet
+                                        else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Text(
+                                        entry.track.artist.ifBlank { "Unknown artist" },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                             Text(
                                 timeAgo(entry.playedAt),

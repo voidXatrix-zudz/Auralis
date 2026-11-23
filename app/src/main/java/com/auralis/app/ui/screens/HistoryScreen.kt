@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,9 +27,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.auralis.app.domain.model.ThemeStyle
+import com.auralis.app.domain.model.Track
+import com.auralis.app.data.youtube.needsMetadataFill
 import com.auralis.app.ui.HistoryEntry
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.glass.GlassHistoryScreen
+import com.auralis.app.ui.metadata.MetadataFillEffect
+import com.auralis.app.ui.metadata.MetadataSkeleton
+import com.auralis.app.ui.metadata.displayTitle
 import com.auralis.app.ui.theme.LocalThemeStyle
 
 /**
@@ -40,10 +47,19 @@ fun HistoryScreen(
     currentId: String?,
     onPlay: (HistoryEntry) -> Unit,
     onClear: () -> Unit,
+    settledMetadata: Set<String> = emptySet(),
+    onMetadataVisible: (List<Track>) -> Unit = {},
+    onMetadataHidden: (List<String>) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // Retries follow the rows that are actually on this screen and stop when it is left or the app
+    // is backgrounded, so no polling continues for a song the user can no longer see.
+    val pendingMetadata = remember(entries) {
+        entries.map { it.track }.filter { it.needsMetadataFill }
+    }
+    MetadataFillEffect(pendingMetadata, onMetadataVisible, onMetadataHidden)
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassHistoryScreen(entries, currentId, onPlay, onClear, modifier)
+        GlassHistoryScreen(entries, currentId, onPlay, onClear, settledMetadata, modifier)
         return
     }
     var confirmingClear by remember { mutableStateOf(false) }
@@ -74,21 +90,27 @@ fun HistoryScreen(
                     ) {
                         ArtworkImage(entry.track, Modifier.size(48.dp))
                         Column(Modifier.weight(1f).padding(start = 12.dp, end = 4.dp)) {
-                            Text(
-                                entry.track.title.ifBlank { entry.track.displayName.ifBlank { "Unknown title" } },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = if (entry.track.id == currentId) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                entry.track.artist.ifBlank { "Unknown artist" },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            if (entry.track.needsMetadataFill && entry.track.id !in settledMetadata) {
+                                MetadataSkeleton(widthFraction = 0.62f, height = 14.dp)
+                                Spacer(Modifier.height(6.dp))
+                                MetadataSkeleton(widthFraction = 0.42f, height = 11.dp, alpha = 0.12f)
+                            } else {
+                                Text(
+                                    entry.track.displayTitle,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = if (entry.track.id == currentId) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    entry.track.artist.ifBlank { "Unknown artist" },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                         Text(
                             timeAgo(entry.playedAt),
