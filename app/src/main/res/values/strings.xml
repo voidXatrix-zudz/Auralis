@@ -9,7 +9,7 @@
     <string name="home_try_again">Try again</string>
     <string name="home_account">Account</string>
     <string name="home_empty_title">Nothing to play yet</string>
-    <string name="home_empty_body">We couldn\'t find music for this filter. Check your connection and try again.</string>
+    <string name="home_empty_body">We couldn\'t load anything to play. Check your connection and try again.</string>
     <string name="home_connect_title">Connect YouTube Music</string>
     <string name="home_reconnect_title">Reconnect YouTube Music</string>
     <string name="home_connect_body">Sign in to see your own recommendations, playlists and listening history — never generic charts.</string>
