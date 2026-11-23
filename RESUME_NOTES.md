@@ -21,6 +21,7 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - STEP 2: checkpoint model + codec + tests. (done)
 - STEP 3: one saver for local + YouTube (collector + background save). (done)
 - STEP 4: restore at launch via virtual restored state; always paused. (done)
+- STEP 5: wire AuralisRoot (effective track/queue/playback + dock/Now Playing callbacks). (done)
 
 ---
 
@@ -81,3 +82,12 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - Restored streamed songs are added to `_remoteTracks` so the dock/Now Playing/lyrics can resolve them by id.
 - Failed checkpoint read logs **one** `AppLog.w` (no toast/crash).
 - `CheckpointTrack.toTrack()` lost its unused `localUri` parameter (local rows come from the library instead); its test now asserts a display-only local Track. Full unit suite green: 268 tests, 0 failures.
+
+---
+
+## STEP 5 — UI wiring in AuralisRoot (done)
+- `AuralisRoot` collects `restoredPlayback` and derives: `currentTrack` = real track, else `restoredPlayback.track`; `queuedTracks`/`upNextTracks` fall back to the restored queue; `showingRestored = playbackTrackId == null && restoredPlayback != null`.
+- New `displayPlayback` (a `PlaybackController.State`) is what Now Playing reads — real state when it has a track, else the restored track/queue/position/duration/shuffle/repeat, forced paused. Now Playing therefore opens on the restored song with a correct progress bar.
+- Dock + Now Playing callbacks branch on `showingRestored`: play/pause/next/previous call `resumeRestored(0/1/-1)`, seek calls `seekRestored`/`seekRestoredBy`, shuffle/repeat call `toggleRestoredShuffle`/`cycleRestoredRepeat`. Otherwise the real player's commands run unchanged. No dock/mini-pill visuals or animations changed.
+- `resumeRestored(step)` skips inside the restored queue (out-of-range skips do nothing) and starts at the saved position only for the same song; it no longer clears the placeholder itself — the collector clears it once the real player owns a track, so tapping play never blinks the pill or closes Now Playing.
+- Compile + `:app:assembleDebug` green.

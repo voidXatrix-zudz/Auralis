@@ -3352,20 +3352,47 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         rememberRemoteTracks(upgraded.queue)
     }
 
-    /** Starts the remembered song at its saved position; the mini-player then follows the real player. */
-    fun resumeRestored() {
+    /**
+     * Starts the remembered song, paused until now, at its saved position. [step] skips within the
+     * restored queue (0 = the song itself, 1 = next, -1 = previous); an out-of-range skip does nothing.
+     */
+    fun resumeRestored(step: Int = 0) {
         val restored = _restoredPlayback.value ?: return
+        val target = restored.index + step
+        if (step != 0 && target !in restored.queue.indices) return
+        val targetId = restored.queue.getOrNull(target)?.id
+        val position = if (targetId == restored.track?.id) restored.positionMs else 0L
         viewModelScope.launch {
             val queue = resolveLocalQueue(restored.queue)
             if (queue.isEmpty()) return@launch
-            val index = queue.indexOfFirst { it.id == restored.track?.id }.takeIf { it >= 0 } ?: 0
+            val index = queue.indexOfFirst { it.id == targetId }.takeIf { it >= 0 } ?: 0
             if (container.playback.state.value.connected) {
-                container.playback.restore(queue, index, restored.positionMs, wasPlaying = true, restored.shuffle, restored.repeatMode)
+                container.playback.restore(queue, index, position, wasPlaying = true, restored.shuffle, restored.repeatMode)
             } else {
                 container.playback.play(queue, index)
             }
-            _restoredPlayback.value = null
         }
+    }
+
+    /** Scrubs the paused launch placeholder before the real player exists. */
+    fun seekRestored(positionMs: Long) = _restoredPlayback.update {
+        it?.copy(positionMs = positionMs.coerceIn(0L, it.durationMs.takeIf { d -> d > 0L } ?: Long.MAX_VALUE))
+    }
+
+    fun seekRestoredBy(deltaMs: Long) = _restoredPlayback.update {
+        it?.copy(positionMs = (it.positionMs + deltaMs).coerceIn(0L, it.durationMs.takeIf { d -> d > 0L } ?: Long.MAX_VALUE))
+    }
+
+    fun toggleRestoredShuffle() = _restoredPlayback.update { it?.copy(shuffle = !it.shuffle) }
+
+    fun cycleRestoredRepeat() = _restoredPlayback.update {
+        it?.copy(
+            repeatMode = when (it.repeatMode) {
+                androidx.media3.common.Player.REPEAT_MODE_OFF -> androidx.media3.common.Player.REPEAT_MODE_ALL
+                androidx.media3.common.Player.REPEAT_MODE_ALL -> androidx.media3.common.Player.REPEAT_MODE_ONE
+                else -> androidx.media3.common.Player.REPEAT_MODE_OFF
+            },
+        )
     }
 
     /**

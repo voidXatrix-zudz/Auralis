@@ -226,6 +226,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val youtubeSearch by viewModel.youtubeSearch.collectAsStateWithLifecycle()
     val youtubeResolvingId by viewModel.youtubeResolvingId.collectAsStateWithLifecycle()
     val remoteTracks by viewModel.remoteTracks.collectAsStateWithLifecycle()
+    // The paused last-played song shown on launch, before the real player has a track.
+    val restoredPlayback by viewModel.restoredPlayback.collectAsStateWithLifecycle()
     val home by viewModel.home.collectAsStateWithLifecycle()
     val youtubeAuth by viewModel.youtubeAuth.collectAsStateWithLifecycle()
     val youtubeSessionReadError by viewModel.youtubeSessionReadError.collectAsStateWithLifecycle()
@@ -269,9 +271,35 @@ fun AuralisRoot(viewModel: AppViewModel) {
     // Build the id lookup once per library change; track lookups are O(1) instead of a scan per frame.
     // Streamed tracks are merged in so Now Playing, lyrics, dock and the notification resolve them.
     val trackById = remember(tracks, remoteTracks) { tracks.associateBy { it.id } + remoteTracks }
-    val currentTrack = remember(trackById, playbackTrackId) { playbackTrackId?.let(trackById::get) }
-    val queuedTracks = remember(queueIds, trackById) { queueIds.mapNotNull(trackById::get) }
-    val upNextTracks = remember(upNextIds, trackById) { upNextIds.mapNotNull(trackById::get) }
+    // Prefer the real player; while it has no track, fall back to the paused launch placeholder.
+    val currentTrack = remember(trackById, playbackTrackId, restoredPlayback) {
+        playbackTrackId?.let(trackById::get) ?: restoredPlayback?.track
+    }
+    val queuedTracks = remember(queueIds, trackById, restoredPlayback) {
+        if (queueIds.isNotEmpty()) queueIds.mapNotNull(trackById::get) else restoredPlayback?.queue.orEmpty()
+    }
+    val upNextTracks = remember(upNextIds, trackById, restoredPlayback) {
+        if (upNextIds.isNotEmpty()) upNextIds.mapNotNull(trackById::get)
+        else restoredPlayback?.let { it.queue.drop(it.index + 1) }.orEmpty()
+    }
+    // True while the restored placeholder owns the mini-player (the real player has no track yet).
+    val showingRestored = playbackTrackId == null && restoredPlayback != null
+    // What Now Playing reads: the real player once it owns a track, else the restored placeholder.
+    val displayPlayback = remember(playbackState, restoredPlayback) {
+        val restored = restoredPlayback
+        if (playbackState.trackId != null || restored == null) playbackState
+        else playbackState.copy(
+            trackId = restored.track?.id,
+            positionMs = restored.positionMs,
+            durationMs = restored.durationMs,
+            queueIds = restored.queue.map { it.id },
+            upNextIds = restored.queue.drop(restored.index + 1).map { it.id },
+            currentIndex = restored.index,
+            shuffle = restored.shuffle,
+            repeat = restored.repeatMode,
+            playing = false,
+        )
+    }
     // Glassmorphism is always dark; a saved Light preference only applies to the Normal theme.
     val dark = settings.themeStyle == ThemeStyle.GLASSMORPHIC || settings.theme == ThemeMode.DARK
     var folderPickerPending by rememberSaveable { mutableStateOf(false) }
@@ -475,7 +503,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     upNext = upNextTracks,
                     availableTracks = tracks,
                     favorites = mergedFavorites,
-                    playback = playbackState,
+                    playback = displayPlayback,
                     settings = settings,
                     lyrics = viewModel.lyrics.collectAsStateWithLifecycle().value,
                     lyricsLoading = viewModel.lyricsLoading.collectAsStateWithLifecycle().value,
@@ -490,15 +518,15 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onAdjustLyricsOffset = { delta -> currentTrack?.let { viewModel.adjustTrackLyricsOffset(it, delta) } },
                     onResetLyricsOffset = { currentTrack?.let { viewModel.resetTrackLyricsOffset(it) } },
                     onBack = { nowPlayingOpen = false },
-                    onPlayPause = viewModel::togglePlayback,
-                    onPrevious = viewModel::previous,
-                    onNext = viewModel::next,
-                    onSeek = viewModel::seekTo,
-                    onSeekBy = viewModel::seekBy,
+                    onPlayPause = { if (showingRestored) viewModel.resumeRestored() else viewModel.togglePlayback() },
+                    onPrevious = { if (showingRestored) viewModel.resumeRestored(-1) else viewModel.previous() },
+                    onNext = { if (showingRestored) viewModel.resumeRestored(1) else viewModel.next() },
+                    onSeek = { if (showingRestored) viewModel.seekRestored(it) else viewModel.seekTo(it) },
+                    onSeekBy = { if (showingRestored) viewModel.seekRestoredBy(it) else viewModel.seekBy(it) },
                     doubleTapSeekSeconds = settings.doubleTapSeekSeconds,
                     gesturesEnabled = settings.gestureSeekEnabled,
-                    onShuffle = viewModel::toggleShuffle,
-                    onRepeat = viewModel::cycleRepeat,
+                    onShuffle = { if (showingRestored) viewModel.toggleRestoredShuffle() else viewModel.toggleShuffle() },
+                    onRepeat = { if (showingRestored) viewModel.cycleRestoredRepeat() else viewModel.cycleRepeat() },
                     onFavorite = likeTrack,
                     onAddToQueue = viewModel::enqueue,
                     onRemoveFromQueue = { viewModel.removeQueueItem(it.id) },
@@ -868,8 +896,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
                         track = currentTrack,
                         playing = isPlaying,
                         onSelectTab = viewModel::selectTab,
-                        onTogglePlay = viewModel::togglePlayback,
-                        onNext = viewModel::next,
+                        onTogglePlay = { if (showingRestored) viewModel.resumeRestored() else viewModel.togglePlayback() },
+                        onNext = { if (showingRestored) viewModel.resumeRestored(1) else viewModel.next() },
                         onOpenNowPlaying = { nowPlayingOpen = true },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
