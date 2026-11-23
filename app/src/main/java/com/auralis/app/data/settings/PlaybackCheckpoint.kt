@@ -134,16 +134,16 @@ fun Track.toCheckpointTrack(): CheckpointTrack = CheckpointTrack(
 
 /**
  * Rebuilds a [Track] from stored display data. A remote song gets the lazy `auralis-yt://<videoId>`
- * marker (no stream URL is held); a local song needs the library URI, passed in by the caller once
- * it is known, and is otherwise a display-only placeholder.
+ * marker (no stream URL is held); a local song is display-only until the library supplies its URI,
+ * tags and artwork.
  */
-fun CheckpointTrack.toTrack(localUri: String? = null): Track {
+fun CheckpointTrack.toTrack(): Track {
     val remoteVideoId = if (isRemote) remoteId ?: id.removePrefix(YOUTUBE_TRACK_PREFIX) else null
     val trackId = if (isRemote && !id.startsWith(YOUTUBE_TRACK_PREFIX)) "$YOUTUBE_TRACK_PREFIX$remoteVideoId" else id
     return Track(
         id = trackId,
         sourceId = if (isRemote) YOUTUBE_SOURCE_ID else "",
-        uri = if (isRemote) remoteVideoId?.let(::youtubePlaybackUri).orEmpty() else localUri.orEmpty(),
+        uri = if (isRemote) remoteVideoId?.let(::youtubePlaybackUri).orEmpty() else "",
         relativePath = "",
         displayName = title,
         sizeBytes = 0L,

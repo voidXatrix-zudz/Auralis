@@ -2,6 +2,7 @@ package com.auralis.app.data.settings
 
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -78,11 +79,12 @@ class PlaybackCheckpointTest {
     }
 
     @Test
-    fun `a local checkpoint uses the library URI when given`() {
+    fun `a local checkpoint without a library URI is display-only`() {
         val checkpoint = CheckpointTrack(id = "local-1", title = "T", artist = "A", album = "Al")
-        val track = checkpoint.toTrack(localUri = "content://media/local-1")
-        assertEquals("content://media/local-1", track.uri)
+        val track = checkpoint.toTrack()
+        assertEquals("", track.uri)
         assertEquals("T", track.title)
+        assertFalse(track.isRemote)
     }
 
     @Test

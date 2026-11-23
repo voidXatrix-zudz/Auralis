@@ -20,6 +20,7 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - STEP 1: read + FINDINGS + verify R1–R7 + branch + this file. (done)
 - STEP 2: checkpoint model + codec + tests. (done)
 - STEP 3: one saver for local + YouTube (collector + background save). (done)
+- STEP 4: restore at launch via virtual restored state; always paused. (done)
 
 ---
 
@@ -69,3 +70,14 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - No stream URL is written; `wasPlaying` is still stored for compatibility but the restore will ignore it and force pause.
 - Compile green (`:app:compileDebugKotlin`).
   - NOTE: the working tree carries ~580 lines of unrelated pre-existing WIP in `AppViewModel.kt`, so this step was committed with **scoped hunk staging** (`git apply --cached` of only the resume hunks). Steps 4 and 5 touch `AppViewModel.kt`/`AuralisRoot.kt`, which also carry WIP — repeat the same scoped staging. The full working tree compiles; a commit of only these hunks cannot be compiled alone because the uncommitted WIP files still call the uncommitted WIP methods.
+
+---
+
+## STEP 4 — restore at launch, always paused (done)
+- `publishRestoredPlayback()` replaces the old Room-queue restore. It reads the DataStore checkpoint, respects a live service session (`connected.trackId != null || queueIds.isNotEmpty()` → do nothing), builds the queue from the checkpoint's own `queueJson` (falling back to the Room queue + single track for a pre-display snapshot), and publishes a `RestoredPlayback` **without starting the player** — so nothing is prepared and no YouTube URL is resolved.
+- `RestoredPlayback(queue, index, positionMs, durationMs, shuffle, repeatMode)` + `restoredPlayback: StateFlow` are new; the mini-player reads them until the real player has a track (step 5).
+- Local rows start display-only, then are upgraded from the library (URI + tags + artwork) once it loads, dropping ids the library no longer has (`awaitLibrary()` = `withTimeoutOrNull(6 s)`); if all are gone, the placeholder is cleared. YouTube-only checkpoints skip the library wait entirely.
+- Always paused: `wasPlaying` is ignored. `resumeRestored()` starts the real player (`PlaybackController.restore(..., wasPlaying = true)` when connected, else `play`) only on an explicit tap, then clears the placeholder. A collector clears it too once the real player owns a track, and `clearQueue()` clears it.
+- Restored streamed songs are added to `_remoteTracks` so the dock/Now Playing/lyrics can resolve them by id.
+- Failed checkpoint read logs **one** `AppLog.w` (no toast/crash).
+- `CheckpointTrack.toTrack()` lost its unused `localUri` parameter (local rows come from the library instead); its test now asserts a display-only local Track. Full unit suite green: 268 tests, 0 failures.
