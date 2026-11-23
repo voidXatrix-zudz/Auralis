@@ -326,7 +326,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      */
     private val youtubeHistorySync = com.auralis.app.data.youtube.YouTubeHistorySync(
         dao = container.database.youtubeDao(),
-        fetch = { container.youtube.historySongs() },
+        fetch = { container.youtube.historySongsResult() },
         fetchMetadata = { container.youtube.metadata(it) },
     )
     private var youtubeHistoryJob: Job? = null

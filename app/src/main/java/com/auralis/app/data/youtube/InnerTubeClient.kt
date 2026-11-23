@@ -599,6 +599,18 @@ class InnerTubeClient(
         runCatching { pagedSongs(BROWSE_HISTORY) }.getOrDefault(emptyList())
     }
 
+    /**
+     * Recently played songs with a real failure state, so the history mirror can tell a broken pull
+     * from an account that genuinely has no recent plays.
+     */
+    suspend fun historySongsResult(): YouTubeLoadResult<List<YtSong>> = withContext(Dispatchers.IO) {
+        try {
+            YouTubeLoadResult.Success(pagedSongs(BROWSE_HISTORY))
+        } catch (error: Exception) {
+            YouTubeLoadResult.Failure(error.message ?: "history failed", codeOf(error))
+        }
+    }
+
     /** Songs explicitly saved to the library (`FEmusic_liked_videos`). */
     suspend fun librarySongs(): List<YtSong> = withContext(Dispatchers.IO) {
         val songs = runCatching { pagedSongs(BROWSE_LIBRARY_SONGS) }.getOrDefault(emptyList())
@@ -830,7 +842,7 @@ class InnerTubeClient(
     /**
      * Minimal metadata for one song from the InnerTube `player` response, used to fill a queue entry
      * that only had a video id (old History rows, sparse search cards). Best-effort and never throws;
-     * like [reportPlayback] it must never expire the session.
+     * like [openPlayback] it must never expire the session.
      */
     suspend fun songMetadata(videoId: String): YtSong? = withContext(Dispatchers.IO) {
         runCatching {

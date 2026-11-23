@@ -24,7 +24,7 @@ import com.auralis.app.data.db.YouTubeRecentEntity
  */
 class YouTubeHistorySync(
     private val dao: YouTubeDao,
-    private val fetch: suspend () -> List<YtSong>,
+    private val fetch: suspend () -> YouTubeLoadResult<List<YtSong>>,
     /** Best-effort metadata for one video id, used to fill placeholder rows left by in-app plays. */
     private val fetchMetadata: suspend (String) -> YtSong? = { null },
 ) {
@@ -33,8 +33,12 @@ class YouTubeHistorySync(
      * placeholder rows gained real metadata, so the caller can log one honest line.
      */
     suspend fun sync(nowMs: Long = System.currentTimeMillis()): HistorySyncResult {
-        val fetched = runCatching { fetch() }
-            .getOrElse { return HistorySyncResult(merged = 0, failed = true, backfilled = 0) }
+        val fetched = when (val result = runCatching { fetch() }.getOrElse {
+            return HistorySyncResult(merged = 0, failed = true, backfilled = 0)
+        }) {
+            is YouTubeLoadResult.Failure -> return HistorySyncResult(merged = 0, failed = true, backfilled = 0)
+            is YouTubeLoadResult.Success -> result.value
+        }
         val existing = runCatching { dao.allRecents() }.getOrDefault(emptyList())
         val merged = mergeHistory(fetched, existing.associateBy { it.videoId }, nowMs)
         if (merged.isNotEmpty()) runCatching { dao.upsertRecents(merged) }

@@ -80,7 +80,7 @@ class LiveSyncManager(
      */
     private val historySync = YouTubeHistorySync(
         dao = database.youtubeDao(),
-        fetch = { youtube.historySongs() },
+        fetch = { youtube.historySongsResult() },
     )
 
     @Volatile private var enabled = false

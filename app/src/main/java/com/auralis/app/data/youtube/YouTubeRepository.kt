@@ -491,6 +491,22 @@ class YouTubeRepository(
         "History",
     )
 
+    /**
+     * Recently played songs with a real failure state, cached under the same key as [historySongs].
+     * The history mirror uses this so a rejected or offline pull reads as "the pull failed" instead
+     * of "the account has no recent plays".
+     */
+    suspend fun historySongsResult(): YouTubeLoadResult<List<YtSong>> = when (
+        val result = cachedResult(
+            key = "yt_history:${if (signedIn) "signed" else "anon"}",
+            serializer = YtSong.serializer(),
+            ttlMs = HISTORY_TTL_MS,
+        ) { innerTube.historySongsResult() }
+    ) {
+        is YouTubeLoadResult.Success -> YouTubeLoadResult.Success(musicOnly(result.value, "History"))
+        is YouTubeLoadResult.Failure -> result
+    }
+
     /** Songs saved to the account library (`FEmusic_liked_videos`), filtered on read. */
     suspend fun librarySongs(): List<YtSong> = musicOnly(
         cachedList(
