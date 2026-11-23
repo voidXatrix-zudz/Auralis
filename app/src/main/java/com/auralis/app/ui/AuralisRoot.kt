@@ -110,6 +110,7 @@ import com.auralis.app.ui.screens.AboutScreen
 import com.auralis.app.ui.settings.SettingsActions
 import com.auralis.app.ui.settings.SettingsHubScreen
 import com.auralis.app.ui.settings.SettingsSubScreen
+import com.auralis.app.ui.settings.historySyncSummary
 import com.auralis.app.data.youtube.YOUTUBE_TRACK_PREFIX
 import com.auralis.app.domain.model.Track
 import com.auralis.app.domain.model.PlayerBackground
@@ -235,6 +236,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val youtubeLikedIds by viewModel.youtubeLikedIds.collectAsStateWithLifecycle()
     val youtubeLikedTracks by viewModel.youtubeLikedTracks.collectAsStateWithLifecycle()
     val liveSyncUi by viewModel.liveSyncUi.collectAsStateWithLifecycle()
+    val playbackReporting by viewModel.playbackReporting.collectAsStateWithLifecycle()
     val youtubePlaylists by viewModel.youtubePlaylists.collectAsStateWithLifecycle()
     val youtubeLibraryError by viewModel.youtubeLibraryError.collectAsStateWithLifecycle()
     val youtubeLibraryLoading by viewModel.youtubeLibraryLoading.collectAsStateWithLifecycle()
@@ -462,6 +464,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             liveSyncLastSyncedAt = liveSyncUi.lastSyncedAt,
             onToggleLiveSync = viewModel::setLiveSyncEnabled,
             onSyncLiveNow = viewModel::syncLiveNow,
+            playbackReporting = playbackReporting,
         )
 
         BackHandler(enabled = nowPlayingOpen || nav.stack.isNotEmpty()) { if (nowPlayingOpen) nowPlayingOpen = false else viewModel.back() }
@@ -681,6 +684,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                 youtubeAuth = youtubeAuth,
                                 youtubeReadError = youtubeSessionReadError,
                                 youtubeHasSnapshot = youtubeSessionSnapshot,
+                                historySync = historySyncSummary(playbackReporting, System.currentTimeMillis()),
                             )
                                         is Destination.ExploreMood -> {
                                             val moodId = (state.top as Destination.ExploreMood).moodId

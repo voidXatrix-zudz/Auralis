@@ -113,6 +113,9 @@ data class SettingsActions(
     val liveSyncLastSyncedAt: Long = 0L,
     val onToggleLiveSync: (Boolean) -> Unit = {},
     val onSyncLiveNow: () -> Unit = {},
+    /** Outbound reports plus inbound `FEmusic_history` pulls, for the "History sync" status line. */
+    val playbackReporting: com.auralis.app.data.youtube.PlaybackReportingState =
+        com.auralis.app.data.youtube.PlaybackReportingState(),
 )
 
 // Shared, theme-aware primitives (Normal + Glass).

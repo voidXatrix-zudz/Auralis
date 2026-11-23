@@ -90,6 +90,20 @@ class PlaybackReportingCoordinator(
                 outcome = if (enabled) PlaybackReportOutcome.Idle else PlaybackReportOutcome.Off,
                 lastRefusalCode = null,
                 consecutiveFailures = 0,
+                pullFailed = false,
+            )
+        }
+    }
+
+    /**
+     * Records one `FEmusic_history` pull so Settings can show "Last pulled" beside "Last sent". A
+     * failed pull keeps the previous success time and only raises the failure flag.
+     */
+    fun noteHistoryPull(failed: Boolean, now: Long = System.currentTimeMillis()) {
+        _state.update { previous ->
+            previous.copy(
+                lastPulledAt = if (failed) previous.lastPulledAt else now,
+                pullFailed = failed,
             )
         }
     }

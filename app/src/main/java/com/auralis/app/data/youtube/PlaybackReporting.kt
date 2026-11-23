@@ -57,8 +57,9 @@ enum class PlaybackReportOutcome {
 }
 
 /**
- * The outbound report status the Settings/Logs screens read. It is a plain snapshot: no secrets, no
- * URLs, only what a user needs to tell whether plays are being sent. Mirrors
+ * The history-sync status the Settings/Logs screens read. It is a plain snapshot: no secrets, no
+ * URLs, only what a user needs to tell whether plays are being sent and whether the account's own
+ * history is being pulled. The outbound half mirrors
  * [com.auralis.app.data.youtube.LiveSyncUiState] for the inbound direction.
  */
 data class PlaybackReportingState(
@@ -73,6 +74,10 @@ data class PlaybackReportingState(
     val lastSuccessAt: Long = 0L,
     /** Consecutive refused/failed reports; reset by the next success. */
     val consecutiveFailures: Int = 0,
+    /** Epoch millis of the last successful `FEmusic_history` pull; 0 means "never in this install". */
+    val lastPulledAt: Long = 0L,
+    /** True when the most recent `FEmusic_history` pull failed; cleared by the next success. */
+    val pullFailed: Boolean = false,
 )
 
 /**

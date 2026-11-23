@@ -70,6 +70,8 @@ import androidx.compose.ui.unit.dp
 import com.auralis.app.data.lyrics.LyricsProviderCatalog
 import com.auralis.app.data.metadata.MetadataProviderCatalog
 import com.auralis.app.data.youtube.LiveSyncState
+import com.auralis.app.data.youtube.PlaybackReportOutcome
+import com.auralis.app.data.youtube.PlaybackReportingState
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.PerformanceMode
@@ -480,7 +482,13 @@ private fun YouTubeMusicSettingsPage(settings: AppSettings, actions: SettingsAct
             item { SettingsSectionLabel("Sync to YouTube") }
             item {
                 SettingsGroupCard {
-                    SettingsSwitchRow(Icons.Rounded.History, "Sync listening history", "Report plays to your account", settings.youtubeSyncHistory) { on -> actions.onUpdate { it.copy(youtubeSyncHistory = on) } }
+                    SettingsSwitchRow(Icons.Rounded.History, "Sync my listening to YouTube Music", "Report plays to your account", settings.youtubeSyncHistory) { on -> actions.onUpdate { it.copy(youtubeSyncHistory = on) } }
+                    SettingsDivider()
+                    SettingsRow(
+                        Icons.Rounded.Sync,
+                        "History sync",
+                        summary = historySyncStatus(actions.playbackReporting),
+                    )
                     SettingsDivider()
                     SettingsSwitchRow(Icons.Rounded.Favorite, "Sync liked songs", "Mirror likes to your account", settings.youtubeSyncLikes) { on -> actions.onUpdate { it.copy(youtubeSyncLikes = on) } }
                     SettingsDivider()
@@ -736,12 +744,47 @@ private fun liveSyncStatus(state: LiveSyncState, lastSyncedAt: Long): String {
     val age = if (lastSyncedAt <= 0L) {
         "never"
     } else {
-        val seconds = (now - lastSyncedAt).coerceAtLeast(0L) / 1000L
-        when {
-            seconds < 60 -> "${seconds}s ago"
-            seconds < 3600 -> "${seconds / 60}m ago"
-            else -> "${seconds / 3600}h ago"
-        }
+        ageText(lastSyncedAt, now)
     }
     return "$label · synced $age"
+}
+
+/** "12s ago" / "3m ago" / "2h ago" for a past instant; callers decide what "never" reads like. */
+private fun ageText(at: Long, now: Long): String {
+    val seconds = (now - at).coerceAtLeast(0L) / 1000L
+    return when {
+        seconds < 60 -> "${seconds}s ago"
+        seconds < 3600 -> "${seconds / 60}m ago"
+        else -> "${seconds / 3600}h ago"
+    }
+}
+
+/**
+ * The one-line "History sync" status: what was last sent to the account and what was last pulled
+ * from it, plus a short refusal reason. No URLs, no secrets.
+ */
+internal fun historySyncSummary(state: PlaybackReportingState, now: Long): String {
+    if (!state.enabled) return "Off — plays are not sent to YouTube Music"
+    val sent = if (state.lastSuccessAt <= 0L) "never" else ageText(state.lastSuccessAt, now)
+    val pulled = if (state.lastPulledAt <= 0L) "never" else ageText(state.lastPulledAt, now)
+    val issue = when {
+        state.outcome == PlaybackReportOutcome.Refused ->
+            " · refused" + state.lastRefusalCode?.let { " (HTTP $it)" }.orEmpty()
+        state.outcome == PlaybackReportOutcome.NoTrackingUrl -> " · no tracking block"
+        state.pullFailed -> " · pull failed"
+        else -> ""
+    }
+    return "Last sent $sent · last pulled $pulled$issue"
+}
+
+/** [historySyncSummary] with a calm 5-second clock; never animates continuously. */
+@Composable
+internal fun historySyncStatus(state: PlaybackReportingState): String {
+    val now by produceState(initialValue = System.currentTimeMillis(), state) {
+        while (true) {
+            delay(5_000)
+            value = System.currentTimeMillis()
+        }
+    }
+    return historySyncSummary(state, now)
 }

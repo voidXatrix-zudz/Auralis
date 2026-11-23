@@ -1239,6 +1239,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         if (youtubeHistoryJob?.isActive == true) return
         youtubeHistoryJob = viewModelScope.launch {
             val result = youtubeHistorySync.sync()
+            container.playbackReporting.noteHistoryPull(result.failed)
             when {
                 result.failed -> AppLog.w("YouTube", "History: FEmusic_history pull failed")
                 result.merged > 0 -> AppLog.i("YouTube", "History: merged=${result.merged} from FEmusic_history")

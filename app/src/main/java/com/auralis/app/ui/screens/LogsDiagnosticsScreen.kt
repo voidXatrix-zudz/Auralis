@@ -109,6 +109,8 @@ fun LogsDiagnosticsScreen(
     youtubeAuth: YouTubeAuth? = null,
     youtubeReadError: String? = null,
     youtubeHasSnapshot: Boolean = youtubeAuth != null,
+    /** One-line outbound/inbound history status; blank hides the card. */
+    historySync: String = "",
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -206,6 +208,8 @@ fun LogsDiagnosticsScreen(
         }
 
         item { SummaryCard(checks) }
+
+        if (historySync.isNotBlank()) item { HistorySyncCard(historySync) }
 
         item { SectionTitle("What's not working") }
         items(checks) { check -> DiagnosticRow(check) }
@@ -331,6 +335,25 @@ private fun SummaryCard(checks: List<DiagnosticCheck>) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun HistorySyncCard(status: String) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text("History sync", style = MaterialTheme.typography.titleSmall)
+            Text(
+                status,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
