@@ -117,7 +117,7 @@ fun Modifier.glassSurface(
  *
  * The recipe is deliberately thin so it stays smooth at 120 Hz:
  *  1. real Haze backdrop blur (one capture sample per surface, no second blur layer),
- *  2. a faint Midnight-Indigo tint — never cream/white — so artwork colours glow through,
+ *  2. a faint black tint — never cream/white — so artwork colours glow through,
  *  3. a thin gradient rim, bright on opposite corners,
  *  4. a soft inner top highlight plus one curved specular sheen,
  *  5. the caller's soft shadow (drawn outside this modifier).
@@ -148,14 +148,14 @@ private fun Modifier.dockLiquidGlass(
     val canRefract = refraction && canBlur && Build.VERSION.SDK_INT >= 33
 
     // Haze contributes ONLY the blurred backdrop. Tints are empty and noise is zero because both
-    // read as a grey film over the artwork; the indigo tint below is the only fill.
+    // read as a grey film over the artwork; the black fill below is the only fill.
     val hazeStyle = remember(blurDp) {
         HazeStyle(
             backgroundColor = Color.Transparent,
             tints = emptyList(),
             blurRadius = blurDp.dp,
             noiseFactor = 0f,
-            fallbackTint = HazeTint(GlassTokens.Indigo.copy(alpha = 0.18f)),
+            fallbackTint = HazeTint(GlassTokens.Canvas.copy(alpha = 0.18f)),
         )
     }
 
@@ -181,14 +181,14 @@ private fun Modifier.dockLiquidGlass(
         modifier
     }
 
-    // Faint indigo fill. Colour is constant; Dock transparency only moves the alpha. Without a
+    // Faint black fill. Colour is constant; Dock transparency only moves the alpha. Without a
     // usable backdrop blur the floor keeps cream text legible instead of washing the surface out.
     val fill = if (canBlur) {
         tintAlpha.coerceIn(0f, 0.60f)
     } else {
         maxOf(tintAlpha, GlassMapping.DOCK_NO_BLUR_MIN_FILL).coerceIn(0f, 0.60f)
     }
-    modifier = modifier.background(GlassTokens.Indigo.copy(alpha = fill))
+    modifier = modifier.background(GlassTokens.Canvas.copy(alpha = fill))
 
     if (sheen) modifier = modifier.glassInnerSheen()
     return modifier
@@ -280,7 +280,7 @@ fun Modifier.glassTint(
 
 /**
  * Window-level glass fill. Dialogs and sheets live in their own window and cannot sample the
- * app's Haze layer, so the fill itself must carry readability: a dense indigo scrim plus the
+ * app's Haze layer, so the fill itself must carry readability: a dense black scrim plus the
  * clarity-driven cream tint. Used by [glassWindowSurface] and by Material sheets that draw their
  * own container colour.
  */
@@ -289,12 +289,12 @@ fun glassWindowPanelColor(): Color {
     val clarity = LocalGlassSettings.current.glassClarity
     val tint = maxOf(GlassMapping.surfaceFillAlpha(clarity), GlassMapping.WINDOW_MIN_FILL)
     return GlassTokens.Cream.copy(alpha = tint)
-        .compositeOver(GlassTokens.Indigo.copy(alpha = GlassMapping.WINDOW_SCRIM))
+        .compositeOver(GlassTokens.Canvas.copy(alpha = GlassMapping.WINDOW_SCRIM))
 }
 
 /**
  * The shared material for every surface that lives in a dialog or bottom-sheet window:
- * rounded clip, indigo scrim, clarity tint and the palette hairline. Pair it with
+ * rounded clip, black scrim, clarity tint and the palette hairline. Pair it with
  * [DialogBackdropBlur] so the window behind is actually blurred on API 31+.
  */
 @Composable
@@ -366,7 +366,7 @@ private fun Modifier.liquidGlass(
     val hazeStyle = remember(blurDp, fallbackSurface, noBlurMinAlpha) {
         HazeStyle(
             backgroundColor = Color.Transparent,
-            // Haze contributes ONLY the blurred backdrop. The cream/indigo fill is drawn by this
+            // Haze contributes ONLY the blurred backdrop. The cream fill is drawn by this
             // modifier below the effect, because Haze draws nothing when no source area is usable
             // (for example a card inside the captured scroll pane, whose source is its own
             // ancestor and is therefore excluded). Relying on Haze tints would make those

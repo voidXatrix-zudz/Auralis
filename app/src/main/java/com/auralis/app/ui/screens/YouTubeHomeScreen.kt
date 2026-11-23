@@ -104,14 +104,16 @@ fun YouTubeHomeScreen(
         if (recents >= 0) recents else if (rows.isNotEmpty()) 0 else -1
     }
     val bottomPadding = rememberHomeBottomPadding(style.glass)
+    // The root paints the one black canvas in Glass; Normal Home keeps its own black field.
+    val backdrop = if (style.glass) Modifier else Modifier.background(HomeCardPalette.Canvas)
 
     PullToRefreshBox(
         isRefreshing = state.refreshing,
         onRefresh = onRefresh,
-        modifier = modifier.fillMaxSize().background(HomeCardPalette.Canvas),
+        modifier = modifier.fillMaxSize().then(backdrop),
     ) {
         LazyColumn(
-            Modifier.fillMaxSize().background(HomeCardPalette.Canvas),
+            Modifier.fillMaxSize().then(backdrop),
             contentPadding = PaddingValues(bottom = bottomPadding),
         ) {
             item(key = "topbar") {

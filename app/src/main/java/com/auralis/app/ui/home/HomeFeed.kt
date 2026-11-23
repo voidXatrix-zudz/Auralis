@@ -201,7 +201,9 @@ fun LocalHomeFeed(
     val dockInset = LocalDockBottomInset.current
     val bottomPadding = if (style.glass) HomeDimens.ListBottomPadding + dockInset else HomeDimens.ListBottomPadding
 
-    Box(modifier.fillMaxSize().background(HomeCardPalette.Canvas)) {
+    // The root paints the one black canvas in Glass; Normal Home keeps its own black field.
+    val backdrop = if (style.glass) Modifier else Modifier.background(HomeCardPalette.Canvas)
+    Box(modifier.fillMaxSize().then(backdrop)) {
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = bottomPadding),

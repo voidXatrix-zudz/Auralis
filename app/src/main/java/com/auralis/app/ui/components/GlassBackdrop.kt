@@ -14,9 +14,9 @@ import com.auralis.app.ui.theme.GlassTokens
 /**
  * App-wide background.
  *
- * NORMAL reproduces the original solid background exactly. GLASSMORPHIC draws a flat Midnight
- * Indigo field: the two-colour palette forbids gradients and artwork-derived ambient pools, and
- * every glass surface is a Vanilla Cream tint on top of this one colour.
+ * NORMAL reproduces the original solid background exactly. GLASSMORPHIC draws a flat pure-black
+ * field: the theme's one background, with every page transparent on top of it and every glass
+ * surface a Vanilla Cream tint over that single colour.
  */
 @Composable
 fun AuralisBackdrop(
@@ -26,6 +26,6 @@ fun AuralisBackdrop(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val base = if (themeStyle == ThemeStyle.GLASSMORPHIC) GlassTokens.Indigo else MaterialTheme.colorScheme.background
+    val base = if (themeStyle == ThemeStyle.GLASSMORPHIC) GlassTokens.Canvas else MaterialTheme.colorScheme.background
     Box(modifier.fillMaxSize().background(base), content = content)
 }

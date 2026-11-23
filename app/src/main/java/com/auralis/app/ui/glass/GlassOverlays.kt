@@ -73,7 +73,7 @@ val LocalGlassOverlay = staticCompositionLocalOf { GlassOverlayState() }
 fun GlassOverlayScrim(modifier: Modifier = Modifier) {
     val overlay = LocalGlassOverlay.current
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC && overlay.openMenus > 0) {
-        Box(modifier.fillMaxSize().background(GlassTokens.Indigo.copy(alpha = GlassMapping.MENU_BACKDROP_SCRIM)))
+        Box(modifier.fillMaxSize().background(GlassTokens.Canvas.copy(alpha = GlassMapping.MENU_BACKDROP_SCRIM)))
     }
 }
 
@@ -162,7 +162,7 @@ fun GlassSheet(
         containerColor = glassWindowPanelColor(),
         contentColor = GlassTokens.Cream,
         tonalElevation = 0.dp,
-        scrimColor = GlassTokens.Indigo.copy(alpha = GlassMapping.SHEET_SCRIM),
+        scrimColor = GlassTokens.Canvas.copy(alpha = GlassMapping.SHEET_SCRIM),
     ) {
         DialogBackdropBlur()
         content()
@@ -211,7 +211,7 @@ fun GlassMaterialAlertDialog(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(GlassTokens.Indigo.copy(alpha = GlassMapping.DIALOG_SCRIM))
+                    .background(GlassTokens.Canvas.copy(alpha = GlassMapping.DIALOG_SCRIM))
                     .clickable(onClick = onDismissRequest),
             )
             Column(

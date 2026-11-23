@@ -58,10 +58,10 @@ after any summary/compaction.
 
 ## NEXT
 
-1. **STEP 1 (this)** — branch + notes + FINDINGS (below).
-2. **STEP 2** — black canvas: `GlassTokens.Canvas`, re-base surfaces + ColorScheme + scrims, root-only
-   background, transparent pages, black system bars / splash / `StartupSurface`; classify every
-   Indigo / Obsidian use; both themes compile. Commit.
+1. **STEP 1 ✓** — branch + notes + FINDINGS (below).
+2. **STEP 2 ✓** — black canvas: `GlassTokens.Canvas`, re-based surfaces + ColorScheme + scrims,
+   root-only background, transparent pages, black splash / `StartupSurface`; classified every
+   Indigo / Obsidian use; both themes compile. Committed. Details in "STEP LOG" below.
 3. **STEP 3** — transitions: fade-through (out ~90 ms, in ~140 ms, tiny scale/slide), scaled by
    Performance mode; no ghosting / flash; preserve scroll + state. Commit.
 4. **STEP 4** — one `AuralisLogo` composable on `ic_logo_header`, same position + size everywhere;
@@ -77,6 +77,39 @@ after any summary/compaction.
    Commit.
 10. **STEP 10** — self-review yes/no checklist; fix every "no". Commit.
 11. **STEP 11** — final report (below / in the chat reply).
+
+---
+
+## STEP LOG
+
+### STEP 2 — one black canvas ✓
+
+- `ui/theme/GlassTheme.kt`: added `GlassTokens.Canvas = Color(0xFF000000)`; re-based
+  `Surface`/`Surface2`/`SurfaceHigh` on `Canvas`; `Obsidian = Canvas`; `GlassColorScheme`
+  `background` + `surfaceContainerLowest = Canvas`; switch OFF track (`auralisSwitchColors` and the
+  custom `GlassSwitch`) → `Cream14`. `Indigo` kept strictly as the on-cream foreground.
+- `ui/components/GlassBackdrop.kt`: Glass base → `Canvas` (root paints black once).
+- `ui/components/ThemeStyleSelector.kt`: glass preview field → `Canvas`.
+- `ui/glass/GlassKit.kt`, `GlassOverlays.kt`, `LiquidGlass.kt`: dialog / sheet / menu scrims, the
+  dock + window glass fills and the window panel tint → `Canvas` (all black-based).
+- `ui/glass/GlassSettings.kt`: `DockGlassPreview` field → `Canvas`; custom `GlassSwitch` OFF →
+  `Cream14` (the compact top bar already used `Obsidian`, now black).
+- `ui/AuralisRoot.kt`: `StartupSurface` → `Canvas` (no cold-start blue flash); dropped the
+  `DarkPalette` import.
+- `ui/home/HomeFeed.kt` + `ui/screens/YouTubeHomeScreen.kt`: Home only paints its own black field in
+  Normal; in Glass the root black shows through (Home no longer paints a second black).
+- `res/values/colors.xml`: `sf_background_dark` `#FF0A0C0F` → `#FF000000` (window/splash black;
+  `themes.xml` already points at it, status/nav bars already transparent).
+- Verified: `:app:compileDebugKotlin` BUILD SUCCESSFUL.
+- Indigo classification (all remaining `GlassTokens.Indigo`): nav active icon/text, selected chip
+  text, primary-button icon/text, switch thumb, LIKED-tile icon, login button content, lyrics
+  `onPrimary`, Now Playing play glyph, and the ColorScheme's `on*`/`inverse*` slots — every one is a
+  dark foreground on a cream fill.
+- Deliberate exceptions (protected screens, not page backgrounds): the full-screen lyrics backdrop
+  (`LiquidLyricsScreen`), the login backdrop (`LoginScreen`), the lyrics dark surface
+  (`LyricsContent`) and the Now Playing fallback palette (`NowPlayingPalette`) keep their own
+  artwork/flow treatment; the task's DON'T-list protects Now Playing, lyrics and login — only the
+  shared *page* background is unified to black.
 
 ---
 

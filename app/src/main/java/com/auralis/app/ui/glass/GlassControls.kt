@@ -86,7 +86,7 @@ object GlassMapping {
     private const val DOCK_FILL_MAX = 0.55f
     /**
      * Even at maximum see-through the dock keeps a whisper of indigo so cream labels stay legible
-     * over bright album art. Colour is always [com.auralis.app.ui.theme.GlassTokens.Indigo].
+     * over bright album art. Colour is always [com.auralis.app.ui.theme.GlassTokens.Canvas].
      */
     private const val DOCK_FILL_MIN = 0.10f
     private const val SURFACE_FILL_MAX = 0.40f

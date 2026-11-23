@@ -28,20 +28,24 @@ import com.auralis.app.ui.performance.VisualPerformanceTier
 /**
  * Glassmorphic design tokens.
  *
- * The Glassmorphic theme uses exactly two base colours and nothing else:
- * Midnight Indigo (#212842) for the background, Vanilla Cream (#F0E7D5) for everything drawn
- * on top of it. Every other value below is one of those two at a fixed opacity. Components must
- * read these tokens instead of hardcoding a colour.
+ * The Glassmorphic theme uses exactly three base colours and nothing else: pure Black (#000000)
+ * for the one app background, Vanilla Cream (#F0E7D5) for everything drawn on top of it, and
+ * Midnight Indigo (#212842) only as the inverted foreground on cream fills (selected chips,
+ * primary buttons, the active nav icon, switch thumbs). Every other value below is one of those
+ * at a fixed opacity. Components must read these tokens instead of hardcoding a colour.
  */
 object GlassTokens {
-    /** Midnight Indigo — the app background and the inverted (on-cream) foreground. */
+    /** Pure Black — the one app background; every page is transparent on top of it. */
+    val Canvas = Color(0xFF000000)
+
+    /** Midnight Indigo — the inverted (on-cream) foreground only. Never a background. */
     val Indigo = Color(0xFF212842)
 
     /** Vanilla Cream — primary text, icons, borders and the only accent. */
     val Cream = Color(0xFFF0E7D5)
 
     // Cream at each opacity the palette spells out. Derive new steps from Cream, never re-hex.
-    /** Surface fill over the indigo background. */
+    /** Surface fill over the black canvas. */
     val Cream6 = Cream.copy(alpha = 0.06f)
     /** Pressed surface, dividers. */
     val Cream10 = Cream.copy(alpha = 0.10f)
@@ -60,13 +64,13 @@ object GlassTokens {
     /** Secondary text. */
     val Cream65 = Cream.copy(alpha = 0.65f)
 
-    // Material slots cannot carry alpha, so surfaces are pre-composited cream over indigo.
-    val Surface = blend(Cream, Indigo, 0.06f)
-    val Surface2 = blend(Cream, Indigo, 0.10f)
-    val SurfaceHigh = blend(Cream, Indigo, 0.14f)
+    // Material slots cannot carry alpha, so surfaces are pre-composited cream over the canvas.
+    val Surface = blend(Cream, Canvas, 0.06f)
+    val Surface2 = blend(Cream, Canvas, 0.10f)
+    val SurfaceHigh = blend(Cream, Canvas, 0.14f)
 
     // Semantic aliases kept so every existing call site recolours through this one file.
-    val Obsidian = Indigo
+    val Obsidian = Canvas
     val Silver = Cream
     val SilverMuted = Cream65
     /** The old accent; the palette has no separate accent hue. */
@@ -128,11 +132,11 @@ private val GlassColorScheme = darkColorScheme(
     secondary = GlassTokens.Cream, onSecondary = GlassTokens.Indigo,
     secondaryContainer = GlassTokens.Surface2, onSecondaryContainer = GlassTokens.Cream,
     tertiary = GlassTokens.Cream, onTertiary = GlassTokens.Indigo,
-    background = GlassTokens.Indigo, onBackground = GlassTokens.Cream,
+    background = GlassTokens.Canvas, onBackground = GlassTokens.Cream,
     surface = GlassTokens.Surface, onSurface = GlassTokens.Cream,
     surfaceVariant = GlassTokens.Surface2, onSurfaceVariant = GlassTokens.Cream65,
     surfaceTint = GlassTokens.Cream,
-    surfaceContainerLowest = GlassTokens.Indigo, surfaceContainerLow = GlassTokens.Surface,
+    surfaceContainerLowest = GlassTokens.Canvas, surfaceContainerLow = GlassTokens.Surface,
     surfaceContainer = GlassTokens.Surface, surfaceContainerHigh = GlassTokens.Surface2,
     surfaceContainerHighest = GlassTokens.SurfaceHigh,
     outline = GlassTokens.Cream20, outlineVariant = GlassTokens.Cream14,
@@ -174,8 +178,8 @@ val LocalThemeStyle = staticCompositionLocalOf { ThemeStyle.NORMAL }
 
 /**
  * Switch colours for the active theme. NORMAL returns Material's own defaults unchanged;
- * GLASSMORPHIC applies the palette rules: ON = cream track + indigo thumb, OFF = indigo track
- * with a cream-60 border and a cream-60 thumb (so the off switch never vanishes into indigo).
+ * GLASSMORPHIC applies the palette rules: ON = cream track + indigo thumb, OFF = cream-14 track
+ * with a cream-60 border and a cream-60 thumb (so the off switch reads against the black canvas).
  */
 @Composable
 fun auralisSwitchColors(): SwitchColors =
@@ -186,7 +190,7 @@ fun auralisSwitchColors(): SwitchColors =
             checkedBorderColor = Color.Transparent,
             checkedIconColor = GlassTokens.Indigo,
             uncheckedThumbColor = GlassTokens.Cream60,
-            uncheckedTrackColor = GlassTokens.Indigo,
+            uncheckedTrackColor = GlassTokens.Cream14,
             uncheckedBorderColor = GlassTokens.Cream60,
             uncheckedIconColor = GlassTokens.Cream60,
         )

@@ -128,7 +128,7 @@ fun GlassDialog(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(GlassTokens.Indigo.copy(alpha = GlassMapping.DIALOG_SCRIM))
+                    .background(GlassTokens.Canvas.copy(alpha = GlassMapping.DIALOG_SCRIM))
                     .clickable(onClick = onDismiss),
             )
             Column(
@@ -171,7 +171,7 @@ fun GlassDialog(
 
 /**
  * Glass dialog used for text prompts (connect/confirm). Dialogs live in their own window, so the
- * shared [DialogBackdropBlur] blurs the app behind on API 31+, a strong indigo scrim removes the
+ * shared [DialogBackdropBlur] blurs the app behind on API 31+, a strong black scrim removes the
  * busy content from under the text, and [glassWindowSurface] adds the palette fill and hairline.
  */
 @Composable
@@ -193,7 +193,7 @@ fun GlassAlertDialog(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(GlassTokens.Indigo.copy(alpha = GlassMapping.DIALOG_SCRIM))
+                    .background(GlassTokens.Canvas.copy(alpha = GlassMapping.DIALOG_SCRIM))
                     .clickable(onClick = onDismissRequest),
             )
             Column(

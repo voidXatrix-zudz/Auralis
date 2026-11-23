@@ -63,7 +63,7 @@ private fun StyleCard(style: ThemeStyle, selected: Boolean, onClick: () -> Unit,
                 .height(84.dp)
                 .clip(previewShape)
                 .background(
-                    if (glass) Brush.linearGradient(listOf(GlassTokens.Indigo, GlassTokens.Indigo))
+                    if (glass) Brush.linearGradient(listOf(GlassTokens.Canvas, GlassTokens.Canvas))
                     else Brush.linearGradient(listOf(Color(0xFF2A2D31), Color(0xFF2A2D31))),
                 ),
         ) {

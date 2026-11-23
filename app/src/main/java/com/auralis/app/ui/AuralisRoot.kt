@@ -137,7 +137,7 @@ import com.auralis.app.ui.screens.AudioAnalysisScreen
 import com.auralis.app.ui.screens.LogsDiagnosticsScreen
 import com.auralis.app.ui.update.UpdateDialog
 import com.auralis.app.ui.theme.AuralisAppTheme
-import com.auralis.app.ui.theme.DarkPalette
+import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.ui.performance.LocalPerformanceMode
 import com.auralis.app.ui.performance.LocalPerformanceProfile
@@ -591,8 +591,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
                         Column(
                             Modifier
                                 .fillMaxSize()
-                                // Home owns its own non-pinned top bar and draws the black canvas
-                                // behind the status bar; every other tab keeps the shared inset.
+                                // Home owns its own non-pinned top bar and draws edge-to-edge behind
+                                // the status bar; every other tab keeps the shared inset.
                                 .then(
                                     if (nav.top == null && nav.tab == Tab.HOME) Modifier
                                     else Modifier.statusBarsPadding(),
@@ -1082,13 +1082,13 @@ private fun Modifier.dockBottomSpace(scroll: DockScrollState, hasTrack: Boolean)
 
 /**
  * Neutral first frame while the single settings read is in flight. It deliberately matches the
- * window/splash background instead of Material's Normal surface, so no theme is previewed before
- * the saved one is known.
+ * black window/splash background instead of Material's Normal surface, so no theme is previewed
+ * before the saved one is known and there is no cold-start flash.
  */
 @Composable
 private fun StartupSurface() {
     SystemBarsAppearance(darkTheme = true)
-    Box(Modifier.fillMaxSize().background(DarkPalette.background))
+    Box(Modifier.fillMaxSize().background(GlassTokens.Canvas))
 }
 
 /** Keeps status/navigation bar icons readable against the in-app theme, not the system theme. */

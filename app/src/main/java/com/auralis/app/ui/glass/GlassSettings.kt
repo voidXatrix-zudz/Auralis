@@ -969,8 +969,8 @@ private fun GlassSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
         Modifier
             .size(width = trackWidth, height = trackHeight)
             .clip(CircleShape)
-            // ON: cream track, indigo thumb. OFF: indigo track, 1.5dp cream-60 border and thumb.
-            .background(if (checked) GlassTokens.Cream else GlassTokens.Indigo)
+            // ON: cream track, indigo thumb. OFF: cream-14 track, 1.5dp cream-60 border and thumb.
+            .background(if (checked) GlassTokens.Cream else GlassTokens.Cream14)
             .border(1.5.dp, if (checked) Color.Transparent else GlassTokens.Cream60, CircleShape)
             .toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
         contentAlignment = Alignment.CenterStart,
@@ -1060,7 +1060,7 @@ private fun DockGlassPreview(tintAlpha: Float, blurDp: Float, outlines: Boolean,
         modifier
             .height(112.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(GlassTokens.Indigo),
+            .background(GlassTokens.Canvas),
     ) {
         // Blurred "artwork" behind the glass: its softness tracks the real effective radius.
         Box(
