@@ -88,7 +88,9 @@ after any summary/compaction.
 10. **STEP 10 ✓** — self-review yes/no checklist; two "no" findings fixed (metadata effect no longer
     restarts other rows' windows, and the square-art resolver is now actually reachable); build +
     301 tests green. Committed. Details in "STEP LOG".
-11. **STEP 11** — final report (below / in the chat reply).
+11. **STEP 11 ✓** — final report recorded below, with the verification runs and the one pre-existing
+    caveat (the branch's committed tree relies on the user's uncommitted WIP, as it already did at
+    the base). Committed.
 
 ---
 
@@ -409,6 +411,61 @@ One line per section-2 file, then the verdicts.
 
 ---
 
-## FINAL REPORT (STEP 11)
+## FINAL REPORT (STEP 11) ✓
 
-_(filled in at the end.)_
+Branch `black-background`, ten commits on top of `history-sync` (`8f082d1`):
+
+| # | Commit | Change |
+|---|--------|--------|
+| 1 | `0186844` | notes + findings (B1–B5 confirmed) |
+| 2 | `bfc7a41` | one pure-black glass canvas (tokens, ColorScheme, scrims, splash, root-only background) |
+| 3 | `0d62263` | fade-through navigation, scaled by the performance profile |
+| 4 | `3bd674e` | one `AuralisLogo`; duplicate `AuralisMark` deleted |
+| 5 | `fe6afab` | Library header: History chip gone in both themes, auto-sizing title |
+| 6 | `975d632` | Glass Appearance: Mode + Accent hidden, subtitle + search updated |
+| 7 | `6edabef` | mini-player artwork: track-sourced, 96 px, opaque black placeholder |
+| 8 | `e056023` | last indigo scrim/fill → black; wording corrected |
+| 9 | `7a88719` | `MetadataFiller`: deduped 30 s retry window |
+| 10 | `c3ff3f5` | self-review fixes (effect diffing; square-art resolver reachable) |
+
+### Result
+
+- **Glass is pure black.** `GlassTokens.Canvas = 0xFF000000`; surfaces are cream-over-black; the
+  ColorScheme `background`/`surface`/`surfaceContainerLowest` are black; the root paints the
+  background once and every page is transparent (Home included); dialog/sheet/menu scrims, the
+  window/splash background and `StartupSurface` are black.
+- **Cream is the only foreground.** Every remaining `GlassTokens.Indigo` is dark text/icon on a cream
+  fill (selected chip, primary button, nav active, switch thumb, LIKED tile, login button, lyrics
+  `onPrimary`). No indigo background or fill remains.
+- **Library / Appearance** match the spec (chip removed, one-line title, Glass-only Appearance).
+- **Mini-player** art comes from the track on every page and theme, 96 px, flat black placeholder.
+- **Metadata retry** is one helper with the exact 1/3/6/10/10 s back-off over a 30 s deadline,
+  concurrency 3, per-id dedupe, cancellation on leave/background, blank-safe merges, persistence to
+  `_remoteTracks` + `youtube_recents`, and skeleton → "Unknown title"/"Unknown artist" instead of a
+  raw video id.
+- **Protected areas untouched:** dock/mini-pill shape+size+layout+animation, Now Playing layout,
+  lyrics, playlists/history sync behaviour, login/Clerk, downloads, equalizer, Normal colours,
+  package/version/signing; no new libraries or permissions; no Room schema change (one new DAO query).
+
+### Verification
+
+- `.\gradlew :app:compileDebugKotlin` — **BUILD SUCCESSFUL**.
+- `.\gradlew :app:testDebugUnitTest` — **52 suites, 301 tests, 0 failures**
+  (`MetadataFillerTest` = 12 cases).
+- Static audit: no `background(...Indigo)` / indigo container remains; scrims are
+  `Canvas.copy(alpha = …)`; `ui/theme/Color.kt` and `ui/theme/Theme.kt` have **no diff** across
+  steps 1–10.
+- Steps 1–10 changed only task files — no `build.gradle`, `AndroidManifest.xml`, Room schema or WIP
+  symbols; the ~41 unrelated WIP files are still unstaged.
+
+### Caveat (pre-existing, not introduced here)
+
+The committed tree does **not** build on its own, because it already did not at the base
+`8f082d1`: committed code such as `data/youtube/YouTubeHistorySync.kt` calls
+`YouTubeDao.allRecents()`/`upsertRecents()` and `ui/glass/GlassOverlays.kt` uses
+`GlassMapping.MENU_BACKDROP_SCRIM`/`SHEET_SCRIM`, which exist only in the uncommitted WIP. That is a
+property of the branch before this task and the DON'T-list forbids committing those WIP changes, so
+they were left in the working tree. Every symbol the new task files use (`songMetadata`, `metadata`,
+`ArtworkResolver.resolve`, `YouTubeDao.recent`, `isVideoThumbnailUrl`, `fallbackThumbnailUrl`,
+`normalizeArtworkUrl`, `YOUTUBE_TRACK_PREFIX`, `youtubePlaybackUri`, `YOUTUBE_SOURCE_ID`) is present
+at the committed HEAD, and the compile/test runs above pass on the working tree (WIP present).
