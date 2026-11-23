@@ -415,6 +415,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      */
     private val _restoredPlayback = MutableStateFlow<RestoredPlayback?>(null)
     val restoredPlayback = _restoredPlayback.asStateFlow()
+    /** Guards [resumeRestored] against a second tap while the first hand-off is still running. */
+    private var resumeInFlight = false
     private val youtubeQuery = MutableStateFlow("")
     private val youtubeRequest = MutableStateFlow(0)
     private var remoteQueueEpoch = 0
@@ -3279,7 +3281,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private fun checkpointFor(state: PlaybackController.State, trackId: String): PlaybackSnapshot {
-        val known = tracks.value.associateBy { it.id } + _remoteTracks.value
+        val known = tracks.value.associateBy { it.id } + downloads.value.associateBy { it.id } + _remoteTracks.value
         val current = known[trackId]
         return PlaybackSnapshot(
             trackId = trackId,
@@ -3340,7 +3342,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         if (saved.none { !it.isRemote }) return
 
         // Local rows need their library URI, tags and artwork; drop the ones that no longer exist.
-        val library = awaitLibrary().associateBy { it.id }
+        val library = awaitLibrary()
         val showing = _restoredPlayback.value ?: return
         val resolved = saved.mapNotNull { item -> if (item.isRemote) item.checkpointToTrack() else library[item.id] }
         if (resolved.isEmpty()) {
@@ -3358,18 +3360,24 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun resumeRestored(step: Int = 0) {
         val restored = _restoredPlayback.value ?: return
+        if (resumeInFlight) return
         val target = restored.index + step
         if (step != 0 && target !in restored.queue.indices) return
         val targetId = restored.queue.getOrNull(target)?.id
         val position = if (targetId == restored.track?.id) restored.positionMs else 0L
+        resumeInFlight = true
         viewModelScope.launch {
-            val queue = resolveLocalQueue(restored.queue)
-            if (queue.isEmpty()) return@launch
-            val index = queue.indexOfFirst { it.id == targetId }.takeIf { it >= 0 } ?: 0
-            if (container.playback.state.value.connected) {
-                container.playback.restore(queue, index, position, wasPlaying = true, restored.shuffle, restored.repeatMode)
-            } else {
-                container.playback.play(queue, index)
+            try {
+                val queue = resolveLocalQueue(restored.queue)
+                if (queue.isEmpty()) return@launch
+                val index = queue.indexOfFirst { it.id == targetId }.takeIf { it >= 0 } ?: 0
+                if (container.playback.state.value.connected) {
+                    container.playback.restore(queue, index, position, wasPlaying = true, restored.shuffle, restored.repeatMode)
+                } else {
+                    container.playback.play(queue, index)
+                }
+            } finally {
+                resumeInFlight = false
             }
         }
     }
@@ -3402,10 +3410,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private suspend fun savedQueueFor(snapshot: PlaybackSnapshot): List<CheckpointTrack> {
         val decoded = PlaybackCheckpointCodec.decode(snapshot.queueJson)
         if (decoded.isNotEmpty()) return decoded
-        val roomIds = runCatching { container.database.queueDao().getAll() }
+        val ids = runCatching { container.database.queueDao().getAll() }
             .getOrDefault(emptyList())
             .map { it.trackId }
-        return roomIds.ifEmpty { listOfNotNull(snapshot.trackId) }.map { id ->
+            .toMutableList()
+        // A pre-display checkpoint has no queue of its own, so reuse the local Room queue; make sure
+        // the song that was playing is present even if that queue had been trimmed.
+        val saved = snapshot.trackId
+        if (saved != null && ids.none { it == saved }) ids.add(saved)
+        return ids.map { id ->
             CheckpointTrack(
                 id = id,
                 isRemote = id.startsWith(YOUTUBE_TRACK_PREFIX),
@@ -3430,7 +3443,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Swaps display-only local entries for their library rows, which carry the URI needed to play. */
     private suspend fun resolveLocalQueue(queue: List<Track>): List<Track> {
         if (queue.all { it.isRemote || it.uri.isNotBlank() }) return queue
-        val library = awaitLibrary().associateBy { it.id }
+        val library = awaitLibrary()
         return queue.mapNotNull { track ->
             when {
                 track.isRemote || track.uri.isNotBlank() -> track
@@ -3439,9 +3452,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** The library's first real snapshot, or empty if it never arrives (a streamed-only library). */
-    private suspend fun awaitLibrary(): List<Track> =
-        withTimeoutOrNull(LIBRARY_WAIT_MS) { tracks.first { it.isNotEmpty() } }.orEmpty()
+    /**
+     * Local playable rows (library + downloads) once they load, keyed by id; empty if they never do
+     * (a streamed-only account). Downloads live in their own table, so both sources must be awaited.
+     */
+    private suspend fun awaitLibrary(): Map<String, Track> =
+        withTimeoutOrNull(LIBRARY_WAIT_MS) {
+            combine(tracks, downloads) { library, offline -> library + offline }.first { it.isNotEmpty() }
+        }?.associateBy { it.id }.orEmpty()
 
     /** Makes restored streamed songs resolvable by id for the dock, Now Playing and lyrics. */
     private fun rememberRemoteTracks(queue: List<Track>) {

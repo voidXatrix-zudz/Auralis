@@ -22,6 +22,7 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - STEP 3: one saver for local + YouTube (collector + background save). (done)
 - STEP 4: restore at launch via virtual restored state; always paused. (done)
 - STEP 5: wire AuralisRoot (effective track/queue/playback + dock/Now Playing callbacks). (done)
+- STEP 6: edge cases (downloads, legacy queue, double tap, streamed-only). (done)
 
 ---
 
@@ -91,3 +92,13 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - Dock + Now Playing callbacks branch on `showingRestored`: play/pause/next/previous call `resumeRestored(0/1/-1)`, seek calls `seekRestored`/`seekRestoredBy`, shuffle/repeat call `toggleRestoredShuffle`/`cycleRestoredRepeat`. Otherwise the real player's commands run unchanged. No dock/mini-pill visuals or animations changed.
 - `resumeRestored(step)` skips inside the restored queue (out-of-range skips do nothing) and starts at the saved position only for the same song; it no longer clears the placeholder itself — the collector clears it once the real player owns a track, so tapping play never blinks the pill or closes Now Playing.
 - Compile + `:app:assembleDebug` green.
+
+---
+
+## STEP 6 — edge cases (done)
+- **Downloads are local rows too.** Offline YouTube downloads live in their own table and rebuild as `isRemote = false` tracks with a `file://` URI, so the checkpoint's queue/current-song lookup (`checkpointFor`) now includes `downloads.value`, and `awaitLibrary()` combines `tracks` + `downloads`. A downloaded song therefore restores and plays without any network.
+- **Legacy checkpoint with no queue.** `savedQueueFor` reuses the Room queue but now guarantees the saved `trackId` is present even if that queue was trimmed (appends it), so an old snapshot still lands on the right song.
+- **Double tap on play.** `resumeRestored` sets a `resumeInFlight` guard (cleared in `finally`) so a second tap while the first hand-off is still resolving its local rows cannot start playback twice; a real skip out of the queue still does nothing.
+- **Streamed-only account (no local library, no downloads).** `awaitLibrary()` times out after 6 s and returns empty; a YouTube-only checkpoint returns before the wait anyway, and a mixed queue falls back to its remote entries. Nothing is prepared, so no stream URL is resolved and nothing autoplays.
+- **Gone local song.** Ids the library no longer has are dropped during upgrade; if that empties the queue the placeholder is cleared, otherwise the index moves to the next valid entry. `clearQueue()` and the real-player collector both clear the placeholder.
+- Full unit suite green: 268 tests, 0 failures; `:app:assembleDebug` green.
