@@ -62,12 +62,18 @@ fun HomeSkeleton(style: HomeStyle, modifier: Modifier = Modifier) {
     val fill = lerp(HomeCardPalette.Surface, HomeCardPalette.SurfaceAlt, pulse)
     Column(modifier.fillMaxWidth()) {
         SkeletonBox(
-            Modifier.padding(start = HomeDimens.ScreenPadding, top = 18.dp).width(140.dp).height(18.dp),
-            RoundedCornerShape(9.dp),
+            Modifier
+                .padding(start = HomeDimens.ScreenPadding, top = HomeDimens.SkeletonTitleTop)
+                .width(HomeDimens.SkeletonBarWidth)
+                .height(HomeDimens.SkeletonBarHeight),
+            RoundedCornerShape(HomeDimens.SkeletonBarRadius),
             fill,
         )
         LazyRow(
-            contentPadding = PaddingValues(horizontal = HomeDimens.ScreenPadding, vertical = 10.dp),
+            contentPadding = PaddingValues(
+                horizontal = HomeDimens.ScreenPadding,
+                vertical = HomeDimens.SkeletonRowPadV,
+            ),
             horizontalArrangement = Arrangement.spacedBy(HomeDimens.CardGap),
             userScrollEnabled = false,
         ) {
@@ -80,15 +86,21 @@ fun HomeSkeleton(style: HomeStyle, modifier: Modifier = Modifier) {
             }
         }
         SkeletonBox(
-            Modifier.padding(start = HomeDimens.ScreenPadding, top = 6.dp).width(120.dp).height(18.dp),
-            RoundedCornerShape(9.dp),
+            Modifier
+                .padding(start = HomeDimens.ScreenPadding, top = HomeDimens.SkeletonLineGap)
+                .width(HomeDimens.SkeletonBarWidthShort)
+                .height(HomeDimens.SkeletonBarHeight),
+            RoundedCornerShape(HomeDimens.SkeletonBarRadius),
             fill,
         )
         repeat(4) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = HomeDimens.ScreenPadding, vertical = 6.dp),
+                    .padding(
+                        horizontal = HomeDimens.ScreenPadding,
+                        vertical = HomeDimens.SkeletonLineGap,
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SkeletonBox(
@@ -97,9 +109,17 @@ fun HomeSkeleton(style: HomeStyle, modifier: Modifier = Modifier) {
                     fill,
                 )
                 Column(Modifier.weight(1f).padding(start = HomeDimens.SongRowGap)) {
-                    SkeletonBox(Modifier.fillMaxWidth(0.7f).height(14.dp), RoundedCornerShape(7.dp), fill)
-                    Spacer(Modifier.height(6.dp).width(1.dp))
-                    SkeletonBox(Modifier.fillMaxWidth(0.45f).height(12.dp), RoundedCornerShape(6.dp), fill)
+                    SkeletonBox(
+                        Modifier.fillMaxWidth(0.7f).height(HomeDimens.SkeletonLineHeight),
+                        RoundedCornerShape(HomeDimens.SkeletonLineRadius),
+                        fill,
+                    )
+                    Spacer(Modifier.height(HomeDimens.SkeletonLineGap))
+                    SkeletonBox(
+                        Modifier.fillMaxWidth(0.45f).height(HomeDimens.SkeletonSubHeight),
+                        RoundedCornerShape(HomeDimens.SkeletonSubRadius),
+                        fill,
+                    )
                 }
             }
         }
@@ -122,10 +142,10 @@ fun HomeErrorBanner(
     Row(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = HomeDimens.ScreenPadding, vertical = 8.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .padding(horizontal = HomeDimens.ScreenPadding, vertical = HomeDimens.StateVerticalPad)
+            .clip(RoundedCornerShape(HomeDimens.StateRadius))
             .background(style.surface)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = HomeDimens.StateCardPadH, vertical = HomeDimens.StateCardPadV),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -143,9 +163,14 @@ fun HomeErrorBanner(
 @Composable
 fun HomeEmpty(style: HomeStyle, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 48.dp),
+        modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = HomeDimens.StateHorizontalPad,
+                vertical = HomeDimens.EmptyVerticalPad,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(HomeDimens.EmptyGap),
     ) {
         Text(
             stringResource(R.string.home_empty_title),
@@ -160,7 +185,7 @@ fun HomeEmpty(style: HomeStyle, onRetry: () -> Unit, modifier: Modifier = Modifi
         )
         OutlinedButton(
             onClick = onRetry,
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(HomeDimens.StateRadius),
             border = BorderStroke(1.dp, style.accent),
         ) {
             Text(stringResource(R.string.home_try_again), color = style.accent)
@@ -177,14 +202,14 @@ fun HomeConnectCard(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(HomeDimens.StateRadius),
         color = style.surface,
         border = BorderStroke(1.dp, style.outline.copy(alpha = 0.4f)),
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = HomeDimens.ScreenPadding, vertical = 12.dp),
+            .padding(horizontal = HomeDimens.ScreenPadding, vertical = HomeDimens.StateVerticalPad),
     ) {
-        Column(Modifier.padding(18.dp)) {
+        Column(Modifier.padding(HomeDimens.StateCardInner)) {
             Text(
                 stringResource(if (expired) R.string.home_reconnect_title else R.string.home_connect_title),
                 color = style.text,
@@ -194,7 +219,7 @@ fun HomeConnectCard(
                 stringResource(R.string.home_connect_body),
                 color = style.textDim,
                 style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = 6.dp),
+                modifier = Modifier.padding(top = HomeDimens.ConnectBodyTop),
             )
             Button(
                 onClick = onConnect,
@@ -203,7 +228,7 @@ fun HomeConnectCard(
                     containerColor = style.accent,
                     contentColor = HomeCardPalette.Canvas,
                 ),
-                modifier = Modifier.padding(top = 14.dp),
+                modifier = Modifier.padding(top = HomeDimens.ConnectActionTop),
             ) {
                 Text(stringResource(if (expired) R.string.home_reconnect_action else R.string.home_connect_action))
             }
@@ -223,15 +248,20 @@ fun HomeEmptyLibrary(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 40.dp),
+        modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = HomeDimens.StateHorizontalPad,
+                vertical = HomeDimens.EmptyVerticalPadSmall,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(HomeDimens.EmptyGapLarge),
     ) {
         Icon(
             Icons.Rounded.LibraryMusic,
             contentDescription = null,
             tint = style.accent,
-            modifier = Modifier.size(64.dp),
+            modifier = Modifier.size(HomeDimens.EmptyIconSize),
         )
         Text(
             stringResource(if (noFolder) R.string.home_no_folder_title else R.string.home_offline_title),

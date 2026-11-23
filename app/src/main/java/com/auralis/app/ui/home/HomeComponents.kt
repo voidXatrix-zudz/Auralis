@@ -77,6 +77,44 @@ object HomeDimens {
     val SectionGap = 24.dp
     val ListBottomPadding = 32.dp
     val PageSize = 4
+    val CardInnerPad = 16.dp
+    val CaptionGap = 8.dp
+    val CardMarkWidth = 20.dp
+    val CardMarkHeight = 10.dp
+    val MiniCardRadius = 18.dp
+    val PlaceholderIcon = 32.dp
+    val RowEndGap = 8.dp
+    val CompactEndGap = 4.dp
+    val IconButtonSize = 40.dp
+    val RowIconSize = 24.dp
+    val PageMinWidth = 240.dp
+    val ShowAllGap = 8.dp
+    val StateRadius = 20.dp
+    val StateCardInner = 18.dp
+    val StateCardPadH = 16.dp
+    val StateCardPadV = 12.dp
+    val StateVerticalPad = 12.dp
+    val StateHorizontalPad = 24.dp
+    val EmptyVerticalPad = 48.dp
+    val EmptyVerticalPadSmall = 40.dp
+    val EmptyIconSize = 64.dp
+    val EmptyGap = 12.dp
+    val EmptyGapLarge = 16.dp
+    val ConnectBodyTop = 6.dp
+    val ConnectActionTop = 14.dp
+    val SkeletonTitleTop = 18.dp
+    val SkeletonRowPadV = 10.dp
+    val SkeletonBarWidth = 140.dp
+    val SkeletonBarWidthShort = 120.dp
+    val SkeletonBarHeight = 18.dp
+    val SkeletonBarRadius = 9.dp
+    val SkeletonLineHeight = 14.dp
+    val SkeletonLineRadius = 7.dp
+    val SkeletonSubHeight = 12.dp
+    val SkeletonSubRadius = 6.dp
+    val SkeletonLineGap = 6.dp
+    val RingStroke = 3.dp
+    val BandWidth = 28.dp
 }
 
 /** Every Home text size in one place; the family comes from the app's Material typography. */
@@ -232,7 +270,7 @@ fun HomeSectionTitle(
                 stringResource(R.string.home_show_all),
                 Modifier
                     .clickable(role = Role.Button, onClick = onShowAll)
-                    .padding(start = 8.dp),
+                    .padding(start = HomeDimens.ShowAllGap),
                 color = style.textDim,
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = HomeText.ShowAll),
                 maxLines = 1,

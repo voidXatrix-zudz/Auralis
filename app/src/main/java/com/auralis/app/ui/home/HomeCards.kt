@@ -90,12 +90,12 @@ fun TopPickCard(
         AuralisMark(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(16.dp)
-                .width(20.dp)
-                .height(10.dp),
+                .padding(HomeDimens.CardInnerPad)
+                .width(HomeDimens.CardMarkWidth)
+                .height(HomeDimens.CardMarkHeight),
             color = HomeCardPalette.TextOnArt.copy(alpha = 0.4f),
         )
-        Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
+        Column(Modifier.align(Alignment.BottomStart).padding(HomeDimens.CardInnerPad)) {
             if (pick.caption.isNotBlank()) {
                 Text(
                     pick.caption,
@@ -162,13 +162,13 @@ fun LibraryTile(tile: LibraryTileData, style: HomeStyle, modifier: Modifier = Mo
                     Icons.Rounded.MusicNote,
                     contentDescription = null,
                     tint = style.textDim,
-                    modifier = Modifier.align(Alignment.Center).size(32.dp),
+                    modifier = Modifier.align(Alignment.Center).size(HomeDimens.PlaceholderIcon),
                 )
             }
         }
         Text(
             tile.title,
-            Modifier.padding(top = 8.dp),
+            Modifier.padding(top = HomeDimens.CaptionGap),
             color = style.text,
             style = MaterialTheme.typography.titleSmall.copy(
                 fontSize = HomeText.LibraryTitle,
@@ -231,7 +231,7 @@ fun VideoCard(card: YtCard, style: HomeStyle, onClick: () -> Unit, modifier: Mod
         }
         Text(
             card.title,
-            Modifier.padding(top = 8.dp),
+            Modifier.padding(top = HomeDimens.CaptionGap),
             color = style.text,
             style = MaterialTheme.typography.titleSmall.copy(
                 fontSize = HomeText.VideoTitle,
@@ -279,7 +279,7 @@ fun SquareArtCard(card: YtCard, style: HomeStyle, onClick: () -> Unit, modifier:
         }
         Text(
             card.title,
-            Modifier.padding(top = 8.dp),
+            Modifier.padding(top = HomeDimens.CaptionGap),
             color = style.text,
             style = MaterialTheme.typography.titleSmall.copy(
                 fontSize = HomeText.SquareTitle,
@@ -306,7 +306,7 @@ fun HomeArtistCard(card: YtCard, style: HomeStyle, onClick: () -> Unit, modifier
     Column(
         modifier
             .width(HomeDimens.ArtistCard)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(HomeDimens.MiniCardRadius))
             .clickable(role = Role.Button, onClick = onClick)
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -319,7 +319,7 @@ fun HomeArtistCard(card: YtCard, style: HomeStyle, onClick: () -> Unit, modifier
         )
         Text(
             card.title,
-            Modifier.padding(top = 8.dp),
+            Modifier.padding(top = HomeDimens.CaptionGap),
             color = style.text,
             style = MaterialTheme.typography.titleSmall.copy(fontSize = HomeText.LibraryTitle),
             maxLines = 1,
@@ -344,7 +344,7 @@ fun HomeMoreCard(style: HomeStyle, onClick: () -> Unit, modifier: Modifier = Mod
         modifier
             .width(HomeDimens.MoreCard)
             .height(HomeDimens.MoreCard)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(HomeDimens.MiniCardRadius))
             .background(style.surfaceAlt)
             .clickable(role = Role.Button, onClick = onClick),
         verticalArrangement = Arrangement.Center,

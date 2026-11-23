@@ -63,7 +63,7 @@ fun PagedSongColumns(
     val pages = remember(row.tracks) { row.tracks.chunked(HomeDimens.PageSize) }
     val state = rememberLazyListState()
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        val pageWidth = (maxWidth - HomeDimens.PagePeek).coerceAtLeast(240.dp)
+        val pageWidth = (maxWidth - HomeDimens.PagePeek).coerceAtLeast(HomeDimens.PageMinWidth)
         LazyRow(
             state = state,
             flingBehavior = rememberSnapFlingBehavior(lazyListState = state),
@@ -147,7 +147,7 @@ private fun SongRow(
             shape = RoundedCornerShape(HomeDimens.SongCoverRadius),
             modifier = Modifier.size(HomeDimens.SongCover),
         )
-        Column(Modifier.weight(1f).padding(start = HomeDimens.SongRowGap, end = 8.dp)) {
+        Column(Modifier.weight(1f).padding(start = HomeDimens.SongRowGap, end = HomeDimens.RowEndGap)) {
             Text(
                 title,
                 color = if (playing) style.accent else style.text,
@@ -169,12 +169,12 @@ private fun SongRow(
             }
         }
         Box {
-            IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = { menu = true }, modifier = Modifier.size(HomeDimens.IconButtonSize)) {
                 Icon(
                     Icons.Rounded.MoreVert,
                     contentDescription = stringResource(R.string.home_more_actions, title),
                     tint = style.textDim,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(HomeDimens.RowIconSize),
                 )
             }
             SongOptionsMenu(
@@ -218,7 +218,7 @@ private fun CompactVideoRow(
                 .width(HomeDimens.CompactThumbWidth)
                 .aspectRatio(16f / 9f),
         )
-        Column(Modifier.weight(1f).padding(start = HomeDimens.SongRowGap, end = 4.dp)) {
+        Column(Modifier.weight(1f).padding(start = HomeDimens.SongRowGap, end = HomeDimens.CompactEndGap)) {
             Text(
                 title,
                 color = style.text,
@@ -237,12 +237,12 @@ private fun CompactVideoRow(
             }
         }
         Box {
-            IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = { menu = true }, modifier = Modifier.size(HomeDimens.IconButtonSize)) {
                 Icon(
                     Icons.Rounded.MoreVert,
                     contentDescription = stringResource(R.string.home_more_actions, title),
                     tint = style.textDim,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(HomeDimens.RowIconSize),
                 )
             }
             SongOptionsMenu(

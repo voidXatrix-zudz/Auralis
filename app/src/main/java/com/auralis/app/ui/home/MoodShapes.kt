@@ -11,7 +11,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.unit.dp
 
 /** Generic geometric artwork for artwork-less Top Pick cards. Picked by a stable hash of the id. */
 enum class MoodShape { FOUR_POINT_STAR, CHEVRON_STACK, RINGS, DIAGONAL_BANDS, DOTS }
@@ -74,7 +73,7 @@ private fun DrawScope.drawMoodShape(shape: MoodShape, color: Color) {
         }
 
         MoodShape.RINGS -> {
-            val stroke = 3.dp.toPx()
+            val stroke = HomeDimens.RingStroke.toPx()
             listOf(0.16f, 0.28f, 0.40f).forEach { fraction ->
                 drawCircle(
                     color = color,
@@ -86,7 +85,7 @@ private fun DrawScope.drawMoodShape(shape: MoodShape, color: Color) {
         }
 
         MoodShape.DIAGONAL_BANDS -> {
-            val band = 28.dp.toPx()
+            val band = HomeDimens.BandWidth.toPx()
             repeat(4) { index ->
                 val x = left - side * 0.24f + index * side * 0.30f
                 drawLine(
