@@ -75,7 +75,9 @@ after any summary/compaction.
 6. **STEP 6 ✓** — Appearance (Glass): Mode chips + Accent circles hidden (kept in Normal); Glass
    subtitle "Theme and player background"; Glass search no longer matches "accent"/"mode"; Glass
    stays dark-only (root already forces dark). Committed. Details in "STEP LOG".
-7. **STEP 7** — mini-player art on every page / theme, ~96 px, dark neutral placeholder. Commit.
+7. **STEP 7 ✓** — mini-player art: always drawn from the track's own art (same fields as the Home
+   lists) with a ~96 px decode, opaque pure-black placeholder (no vinyl glyph, no grey fill), and
+   nothing painted over it. Committed. Details in "STEP LOG".
 8. **STEP 8** — glass legibility sweep (Cream-on-black contrast, no leftover indigo washes). Commit.
 9. **STEP 9** — `MetadataFiller`: dedupe ids, 30 s deadline, delays 1/3/6/10/10 s, concurrency 3,
    cancel on leave / background, persist success, never blank-overwrite, "Unknown artist" finally.
@@ -86,6 +88,23 @@ after any summary/compaction.
 ---
 
 ## STEP LOG
+
+### STEP 7 — mini-player artwork ✓
+
+- `ui/components/ArtworkImage.kt` gained two opt-in knobs (defaults unchanged, so every existing
+  caller keeps today's behaviour):
+  - `requestSizePx`: a fixed decode size that overrides the on-screen measurement. The dock passes
+    `DockDimens.MiniArtRequestPx = 96`.
+  - `neutralPlaceholder`: an opaque pure-black tile with no album glyph and no `AsyncImage`
+    placeholder/error painter, so nothing (no themed grey, no vinyl disc, no text) shows through
+    while art loads or when it is missing.
+  - Candidate list now always appends the track's own `artworkUrl` / `artKey` file even when the
+    player supplied an `artUri`, so the mini-art resolves from the same track fields the Home lists
+    use and can fall back when the playback URI fails.
+- `ui/components/AppDock.kt`: `DockMiniPill` draws through the shared `ArtworkImage` with
+  `neutralPlaceholder = true` and `requestSizePx = 96`; the dock is a single root-level component,
+  so the art appears on every page and in both themes.
+- Verified: `:app:compileDebugKotlin` BUILD SUCCESSFUL.
 
 ### STEP 6 — Appearance for Glass ✓
 

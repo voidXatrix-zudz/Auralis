@@ -145,6 +145,8 @@ object DockDimens {
     val NavIconSize = 28.dp
     val NavLabelSize = 12.sp
     val MiniArtSize = 48.dp
+    /** Decode request for the mini art: small on purpose, it is only ever a 48dp tile. */
+    const val MiniArtRequestPx = 96
     val MiniPadding = 8.dp
     val MiniTitleSize = 16.sp
     val MiniArtistSize = 14.sp
@@ -779,6 +781,8 @@ private fun DockMiniPill(
                 modifier = Modifier.size(if (isGlass) DockDimens.MiniArtSize else 44.dp),
                 shape = RoundedCornerShape(12.dp),
                 artUri = artworkUri,
+                neutralPlaceholder = true,
+                requestSizePx = DockDimens.MiniArtRequestPx,
             )
             Column(
                 Modifier

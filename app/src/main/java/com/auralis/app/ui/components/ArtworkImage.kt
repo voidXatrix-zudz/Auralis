@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
@@ -57,6 +58,10 @@ fun ArtworkImage(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(12.dp),
     artUri: Any? = null,
+    /** The mini-player's flat dark tile: no album glyph, no themed grey fill. */
+    neutralPlaceholder: Boolean = false,
+    /** Fixed decode size for small slots; null lets the on-screen size decide. */
+    requestSizePx: Int? = null,
 ) {
     val context = LocalContext.current
     val profile = LocalPerformanceProfile.current
@@ -64,17 +69,22 @@ fun ArtworkImage(
     // Ordered candidates: real art (largest square) → its smaller square variant → the video
     // thumbnail as an absolute last resort. Coil's Crop keeps everything square.
     val candidates: List<Any> = remember(artUri, track?.artKey, track?.artworkUrl, track?.remoteId, track?.uri) {
-        val primary = artUri?.let { uri ->
+        val fromPlayback = artUri?.let { uri ->
             when (uri) {
                 is Uri -> uri
                 is String -> uri.takeIf { it.isNotBlank() }?.let { normalizeArtworkUrl(it) }
                 else -> uri
             }
-        } ?: track?.artworkUrl?.takeIf { it.isNotBlank() }?.let(::localOrRemoteArt)
-          ?: track?.artKey?.takeIf { it.matches(ArtworkKeyPattern) }
-              ?.let { key -> File(context.filesDir, "artwork/$key.jpg").takeIf(File::isFile) }
+        }
+        // The same track-derived art the Home lists use, kept as a fallback even when the player
+        // supplied its own URI: the mini-player must resolve artwork exactly like the lists do.
+        val fromTrack = track?.artworkUrl?.takeIf { it.isNotBlank() }?.let(::localOrRemoteArt)
+            ?: track?.artKey?.takeIf { it.matches(ArtworkKeyPattern) }
+                ?.let { key -> File(context.filesDir, "artwork/$key.jpg").takeIf(File::isFile) }
+        val primary = fromPlayback ?: fromTrack
         buildList {
             if (primary != null) add(primary)
+            if (fromTrack != null) add(fromTrack)
             if (primary is String) {
                 val smaller = ArtworkResolver.smallerVariant(primary)
                 if (smaller != primary) add(smaller)
@@ -90,7 +100,9 @@ fun ArtworkImage(
     val effectiveImage = candidates.getOrNull(attempt)
 
     BoxWithConstraints(
-        modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier.clip(shape).background(
+            if (neutralPlaceholder) Color.Black else MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
         contentAlignment = Alignment.Center,
     ) {
         val density = LocalDensity.current
@@ -100,7 +112,7 @@ fun ArtworkImage(
             val h = if (maxHeight.value.isFinite()) maxHeight.toPx() else 0f
             maxOf(w, h)
         }
-        val targetPx = displayPx.toInt().coerceIn(1, profile.artworkMaxPx)
+        val targetPx = (requestSizePx ?: displayPx.toInt()).coerceIn(1, profile.artworkMaxPx)
         // Build the request once per image + size: a fresh ImageRequest on every recomposition can
         // restart Coil's load.
         val request = remember(context, effectiveImage, targetPx, profile.artworkCrossfade) {
@@ -130,19 +142,21 @@ fun ArtworkImage(
 
         val albumPainter = rememberVectorPainter(Icons.Rounded.Album)
 
-        Icon(
-            Icons.Rounded.Album,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxSize(0.42f),
-        )
+        if (!neutralPlaceholder) {
+            Icon(
+                Icons.Rounded.Album,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxSize(0.42f),
+            )
+        }
         if (request != null) {
             AsyncImage(
                 model = request,
                 contentDescription = track?.title?.let { "Album artwork for $it" } ?: "Album artwork",
-                placeholder = albumPainter,
-                error = albumPainter,
-                fallback = albumPainter,
+                placeholder = if (neutralPlaceholder) null else albumPainter,
+                error = if (neutralPlaceholder) null else albumPainter,
+                fallback = if (neutralPlaceholder) null else albumPainter,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
