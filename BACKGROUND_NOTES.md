@@ -69,8 +69,9 @@ after any summary/compaction.
    Home and the two login states; `AuralisMark` (the duplicate white three-line mark) and its Home
    card call deleted. Glass header logo aligned to Normal's 16 dp start / 0.10 collapse scale.
    Committed. Details in "STEP LOG".
-5. **STEP 5** — Library header: drop the History chip (both themes); keep Settings > History + the
-   "+" menu item; "Your Library" fits one line at font scale 1.3 / 360 dp. Commit.
+5. **STEP 5 ✓** — Library header: History chip removed in both themes; Settings > History and the
+   "+" menu History item kept; "Your Library" now auto-sizes to stay on one line (18 sp floor
+   Normal / 16 sp Glass) at font scale 1.3 on 360 dp. Committed. Details in "STEP LOG".
 6. **STEP 6** — Appearance (Glass): hide Mode chips + Accent circles; Glass subtitle
    "Theme and player background"; hide Accent/Mode from Settings search when Glass. Commit.
 7. **STEP 7** — mini-player art on every page / theme, ~96 px, dark neutral placeholder. Commit.
@@ -84,6 +85,19 @@ after any summary/compaction.
 ---
 
 ## STEP LOG
+
+### STEP 5 — Library header ✓
+
+- `ui/screens/LibraryScreen.kt` (Normal): deleted the header History pill (and the 8 dp gap that
+  separated it from the "+" pill) and its now-unused `Rounded.History` import. The "+" menu still
+  carries History, and Settings > History is untouched.
+- `ui/glass/GlassScreens.kt` (Glass): deleted `GlassChip("History", …)` and its spacer; the "+"
+  menu still carries History.
+- "Your Library" in both themes now uses Compose `TextAutoSize.StepBased`, capped at the theme's
+  `headlineMedium` size and floored at 18 sp (Normal) / 16 sp (Glass). At the default scale it still
+  renders at full size (the freed chip space is enough); at font scale 1.3 on a 360 dp screen it
+  shrinks just enough to remain one line instead of ellipsizing.
+- Verified: `:app:compileDebugKotlin` BUILD SUCCESSFUL.
 
 ### STEP 4 — one logo ✓
 
