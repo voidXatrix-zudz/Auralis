@@ -19,9 +19,10 @@ Rules: Home only; no ADB/emulator; no new libraries; reuse existing data/navigat
 - Don't change package name, version codes or signing.
 
 ## NEXT
-- Compile check is green. Next: visual polish pass (spacing/typography), verify the status-bar
-  strip on each theme, confirm Show all → Explore and the three-dot menu actions, then finish notes
-  and report.
+- Nothing required. Optional follow-ups if the look needs tuning: card-corner radii, the
+  status-bar strip on the Glass theme, or adding "Show all" targets to the local-library rows.
+- Pre-existing uncommitted work outside Home (glass-overlay screens, lyrics providers, Clerk auth,
+  YouTube history sync) is intentionally left untouched in the working tree.
 
 ---
 
@@ -146,3 +147,7 @@ TOP_PICKS, RECENTS, MOODS, MOST_PLAYED, YouTube shelves…, QUICK_PICKS (failure
 - `:app:compileDebugKotlin` succeeds with JDK 21 and Gradle 8.14.3 (only pre-existing warnings).
 - Note: `gradle/wrapper/gradle-wrapper.properties` had been bumped to Gradle 9.7.1, which AGP
   8.13.2 rejects; it was restored to the committed 8.14.3 to build.
+
+### Polish
+- Every literal size now lives in `HomeDimens`; the files are ~118–360 lines each (all < 500).
+- Committed on branch `home-redesign` in three steps (shared system, size tokens, notes).
