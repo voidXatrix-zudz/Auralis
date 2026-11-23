@@ -19,7 +19,7 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 ## NEXT
 - STEP 1: read + FINDINGS + verify R1–R7 + branch + this file. (done)
 - STEP 2: checkpoint model + codec + tests. (done)
-- STEP 3: one saver for local + YouTube (collector + background save). (next)
+- STEP 3: one saver for local + YouTube (collector + background save). (done)
 
 ---
 
@@ -59,3 +59,13 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - `PlaybackSnapshotRepository.kt` now writes/reads all keys (old 5 keys kept, defaults for the rest) and gained `clear()`.
 - Remote ids are normalised to `yt:<videoId>` in `toTrack`; remote tracks get the lazy `auralis-yt://<videoId>` URI (no URL stored).
 - Tests: `app/src/test/java/com/auralis/app/data/settings/PlaybackCheckpointTest.kt` — round-trip, cap 50, malformed → empty, blank/null → empty, old 5-key store loads, empty store → null, remote rebuild has no URL, local rebuild uses the library URI, Track↔checkpoint round-trip. All green via `:app:testDebugUnitTest`.
+
+---
+
+## STEP 3 — one saver for local + YouTube (done)
+- `AppViewModel`'s old 5-field snapshot writer replaced by `CheckpointKey` + `savePlaybackCheckpoint()`: still fed by one collector on `container.playback.state` (filtered to `connected && trackId != null`), keyed on track/play/queue/shuffle/repeat + a 5 s `positionBucket` (`CHECKPOINT_POSITION_STEP_MS`), so identical states coalesce into one DataStore edit.
+- `checkpointFor` resolves the current song from `tracks + _remoteTracks` (so a YouTube song saves its title/artist/album/duration/artwork), marks `isRemote` from the track or the `yt:` prefix, and stores `queueJson` = a window of ≤50 `CheckpointTrack`s centred on the current index (`checkpointWindow`).
+- `onAppBackgrounded` now calls `savePlaybackCheckpoint()` after `liveSync.onAppBackground()`, so a swipe-away keeps the exact position; the Room `queueDao` saver above is untouched.
+- No stream URL is written; `wasPlaying` is still stored for compatibility but the restore will ignore it and force pause.
+- Compile green (`:app:compileDebugKotlin`).
+  - NOTE: the working tree carries ~580 lines of unrelated pre-existing WIP in `AppViewModel.kt`, so this step was committed with **scoped hunk staging** (`git apply --cached` of only the resume hunks). Steps 4 and 5 touch `AppViewModel.kt`/`AuralisRoot.kt`, which also carry WIP — repeat the same scoped staging. The full working tree compiles; a commit of only these hunks cannot be compiled alone because the uncommitted WIP files still call the uncommitted WIP methods.

@@ -20,7 +20,11 @@ import com.auralis.app.data.db.toDomain
 import com.auralis.app.data.db.toYouTubeLikeEntity
 import com.auralis.app.data.db.toYouTubeRecentEntity
 import com.auralis.app.data.metadata.TagData
+import com.auralis.app.data.settings.CheckpointTrack
+import com.auralis.app.data.settings.PlaybackCheckpointCodec
 import com.auralis.app.data.settings.PlaybackSnapshot
+import com.auralis.app.data.settings.toCheckpointTrack
+import com.auralis.app.data.settings.toTrack as checkpointToTrack
 import com.auralis.app.data.update.UpdateUiState
 import com.auralis.app.data.auth.ClerkAccount
 import com.auralis.app.data.auth.EmailCodeChallenge
@@ -50,6 +54,7 @@ import com.auralis.app.data.youtube.playbackStart
 import com.auralis.app.data.youtube.routeLibraryPlay
 import com.auralis.app.data.youtube.toTrack
 import com.auralis.app.playback.HISTORY_MIN_MS
+import com.auralis.app.playback.PlaybackController
 import com.auralis.app.playback.PlaybackHistoryTracker
 import com.auralis.app.ui.screens.YouTubeCapturedSession
 import com.auralis.app.data.youtube.toYouTubeLikeEntity as ytSongToLikeEntity
@@ -82,6 +87,9 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+/** Progress is rounded to this bucket before the checkpoint is rewritten, so writes stay rare. */
+private const val CHECKPOINT_POSITION_STEP_MS = 5_000L
 
 /** YouTube search state. Remote results are session-only; nothing is written to the library. */
 data class YouTubeSearchUiState(
@@ -589,19 +597,17 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             container.playback.state
                 .filter { it.connected && it.trackId != null }
                 .map { state ->
-                    PlaybackSnapshot(
+                    CheckpointKey(
                         trackId = state.trackId,
-                        positionMs = (state.positionMs / 5_000L) * 5_000L,
-                        wasPlaying = state.playing,
+                        playing = state.playing,
+                        queueIds = state.queueIds,
                         shuffle = state.shuffle,
-                        repeatMode = state.repeat,
+                        repeat = state.repeat,
+                        positionBucket = (state.positionMs / CHECKPOINT_POSITION_STEP_MS) * CHECKPOINT_POSITION_STEP_MS,
                     )
                 }
                 .distinctUntilChanged()
-                .collect { snapshot ->
-                    runCatching { container.playbackSnapshot.save(snapshot) }
-                        .onFailure { report("Couldn't save the playback position", it) }
-                }
+                .collect { savePlaybackCheckpoint() }
         }
 
         // ONE history rule for local and YouTube songs: a play counts only after ten seconds of real
@@ -2225,6 +2231,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Called from MainActivity.onStop: the in-process lanes step aside for the background tier. */
     fun onAppBackgrounded() {
         container.liveSync.onAppBackground()
+        // The state collector dies with this ViewModel, so persist the exact position now; the
+        // service may keep playing after the task is swiped away.
+        savePlaybackCheckpoint()
     }
 
     fun addFolder(uri: Uri) { viewModelScope.launch {
@@ -3233,6 +3242,73 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         if (library.isEmpty()) return null
         val local = library.mapTo(HashSet()) { it.id }
         return ids.filter { it in local }
+    }
+
+    /** The fields that decide when a checkpoint write is needed (a 5 s progress bucket included). */
+    private data class CheckpointKey(
+        val trackId: String?,
+        val playing: Boolean,
+        val queueIds: List<String>,
+        val shuffle: Boolean,
+        val repeat: Int,
+        val positionBucket: Long,
+    )
+
+    /**
+     * Writes the rich checkpoint (current display data + a compact queue) from the live player state.
+     * One DataStore edit; the caller's distinct key coalesces the 500 ms position ticks into one
+     * write per 5 s. Also called from [onAppBackgrounded], so a swipe-away keeps the last position.
+     */
+    private fun savePlaybackCheckpoint() {
+        val state = container.playback.state.value
+        val trackId = state.trackId
+        if (!state.connected || trackId == null) return
+        val snapshot = checkpointFor(state, trackId)
+        viewModelScope.launch {
+            runCatching { container.playbackSnapshot.save(snapshot) }
+                .onFailure { report("Couldn't save the playback position", it) }
+        }
+    }
+
+    private fun checkpointFor(state: PlaybackController.State, trackId: String): PlaybackSnapshot {
+        val known = tracks.value.associateBy { it.id } + _remoteTracks.value
+        val current = known[trackId]
+        return PlaybackSnapshot(
+            trackId = trackId,
+            positionMs = state.positionMs.coerceAtLeast(0L),
+            wasPlaying = state.playing,
+            shuffle = state.shuffle,
+            repeatMode = state.repeat,
+            title = current?.title?.ifBlank { current.displayName },
+            artist = current?.artist,
+            album = current?.album,
+            durationMs = state.durationMs.takeIf { it > 0L } ?: (current?.durationMs ?: 0L),
+            artworkUrl = current?.artworkUrl,
+            isRemote = current?.isRemote ?: trackId.startsWith(YOUTUBE_TRACK_PREFIX),
+            remoteId = current?.remoteId,
+            queueJson = PlaybackCheckpointCodec.encode(checkpointQueue(state.queueIds, state.currentIndex, known)),
+            savedAt = System.currentTimeMillis(),
+        )
+    }
+
+    private fun checkpointQueue(
+        ids: List<String>,
+        index: Int,
+        known: Map<String, Track>,
+    ): List<CheckpointTrack> = checkpointWindow(ids, index).map { id ->
+        known[id]?.toCheckpointTrack() ?: CheckpointTrack(
+            id = id,
+            isRemote = id.startsWith(YOUTUBE_TRACK_PREFIX),
+            remoteId = if (id.startsWith(YOUTUBE_TRACK_PREFIX)) id.removePrefix(YOUTUBE_TRACK_PREFIX) else null,
+        )
+    }
+
+    /** At most [PlaybackCheckpointCodec.MAX_QUEUE] ids, centred on the current song. */
+    private fun checkpointWindow(ids: List<String>, index: Int): List<String> {
+        val max = PlaybackCheckpointCodec.MAX_QUEUE
+        if (ids.size <= max) return ids
+        val start = (index - max / 2).coerceIn(0, ids.size - max)
+        return ids.subList(start, start + max)
     }
 
     private fun report(label: String, error: Throwable) {
