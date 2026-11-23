@@ -5,7 +5,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.Buffer
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,7 +44,7 @@ class YouTubeExpiryTest {
     )
 
     @Test
-    fun `player refusal never expires the session or probes the account menu`() = runBlocking {
+    fun `player refusal never expires the session, probes the account menu, or is remembered`() = runBlocking {
         var expired = 0
         val paths = mutableListOf<String>()
         val client = client({ expired++ }) { path, _ ->
@@ -57,9 +56,12 @@ class YouTubeExpiryTest {
             }
         }
 
-        assertFalse(client.reportPlayback("video", 30))
-        assertFalse(client.reportPlayback("video", 30))
+        val first = client.openPlayback("video")
+        val second = client.openPlayback("video")
 
+        assertEquals(PlaybackReportResult.Refused(403), first)
+        // The refusal is not remembered for the run: the next play is still attempted.
+        assertEquals(PlaybackReportResult.Refused(403), second)
         assertEquals(0, expired)
         assertTrue(paths.none { it.endsWith("account_menu") })
         assertTrue(paths.all { it.endsWith("/player") })

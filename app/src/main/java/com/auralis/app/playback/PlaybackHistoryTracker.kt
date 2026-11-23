@@ -29,6 +29,14 @@ class PlaybackHistoryTracker(
     private var lastWallMs = -1L
     private var fired = false
 
+    /**
+     * Bumped each time a new occurrence starts: a track change, a repeat/re-listen, or a stop. It is
+     * the app's single "this is a different play" signal, reused by the history reporter so the two
+     * never disagree about what counts as a new play.
+     */
+    var generation: Long = 0L
+        private set
+
     /** Total listening time accumulated for the current track. */
     val listenedMs: Long get() = accumulatedMs
 
@@ -50,6 +58,7 @@ class PlaybackHistoryTracker(
      */
     fun onTick(trackId: String?, positionMs: Long, playing: Boolean, wallClockMs: Long): Boolean {
         if (trackId.isNullOrBlank()) {
+            if (currentId != null) generation++
             reset()
             return false
         }
@@ -59,6 +68,7 @@ class PlaybackHistoryTracker(
             lastPositionMs = positionMs
             lastWallMs = wallClockMs
             fired = false
+            generation++
             return false
         }
         val wallDelta = wallClockMs - lastWallMs
@@ -75,6 +85,7 @@ class PlaybackHistoryTracker(
             if (fired) {
                 accumulatedMs = 0L
                 fired = false
+                generation++
             }
             return false
         }
