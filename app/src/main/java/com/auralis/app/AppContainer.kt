@@ -17,6 +17,9 @@ import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.performance.DevicePerformanceMonitor
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 
 /**
@@ -25,6 +28,13 @@ import okhttp3.OkHttpClient
  */
 class AppContainer(context: Context) {
     val appContext: Context = context.applicationContext
+
+    /**
+     * Process-lifetime scope for work that must outlive the UI (backgrounded playback reporting).
+     * A playback service keeps audio going after the task is swiped away, so reporting cannot ride
+     * on `viewModelScope`; [SupervisorJob] keeps one failed child from cancelling the others.
+     */
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // Room opens lazily, so a broken migration or a corrupt file only surfaces on the first DAO call
     // (deep inside the ViewModel) as a launch crash. Opening it here, once, lets the UI show a
@@ -165,6 +175,20 @@ class AppContainer(context: Context) {
             silentRefresh = { youTubeSilentRefresh.refresh() },
             youtubeJs = youtubeJsProvider,
             metered = { com.auralis.app.data.network.NetworkQuality.isMetered(appContext) },
+            signatureTimestamp = { youtubeJsEngine.signatureTimestamp() },
+        )
+    }
+    /**
+     * Reports plays to the account history from an application-level scope, so reporting survives a
+     * locked screen or a swiped-away task. One instance for the whole process.
+     */
+    val playbackReporting: com.auralis.app.data.youtube.PlaybackReportingCoordinator by lazy {
+        com.auralis.app.data.youtube.PlaybackReportingCoordinator(
+            scope = applicationScope,
+            playbackState = playback.state,
+            settings = settings.settings,
+            authenticated = { youtubeAuth.snapshot()?.signedIn == true },
+            gateway = youtube.playbackHistory,
         )
     }
     /** Offline YouTube downloads: WorkManager jobs into the app's music folder. */

@@ -313,6 +313,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** The email the prompt hands to the YouTube sign-in WebView as `login_hint`. */
     private val _youtubeConnectEmail = MutableStateFlow<String?>(null)
     val youtubeConnectEmail = _youtubeConnectEmail.asStateFlow()
+    /**
+     * Outbound history-report status for Settings and Logs. Reporting itself runs on an
+     * application-level scope inside [com.auralis.app.AppContainer.playbackReporting], so it survives
+     * a locked screen or a swiped-away task; the ViewModel only reads the status here.
+     */
+    val playbackReporting = container.playbackReporting.state
     /** The in-flight email-code challenge, kept between "send code" and "verify code". */
     private var pendingEmail: EmailCodeChallenge? = null
     /** Recently played YouTube songs, mapped to [Track] for Continue Listening and recommendations. */
@@ -1977,6 +1983,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         // Connected: the prompt must never appear again, even if a snooze was running.
         _youtubeConnectPrompt.value = false
         _youtubeConnectExpired.value = false
+        container.playbackReporting.reset()
         container.youtube.invalidateHome()
         // Ordered, not parallel: account menu verifies the new cookie before anything else runs.
         syncYouTubeAccount(includeHome = true)
@@ -1987,6 +1994,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     fun signOutYouTube() {
         youtubeSyncJob?.cancel()
+        container.playbackReporting.reset()
         container.youtubeAuth.clear(SessionClearRules.DISCONNECT)
         // The explicit Disconnect is one of only two moments the browser cookies are removed.
         clearYouTubeWebSessionCookies()
@@ -3205,8 +3213,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * A YouTube song crossed the ten-second mark. The local mirror always records; reporting to the
-     * account stays opt-in and fully swallowed so it can never break playback.
+     * A YouTube song crossed the ten-second mark. Only the local mirror is written here; reporting
+     * the play to the account is handled separately by the application-level reporting coordinator,
+     * which waits for its own threshold and retries, so playback is never delayed by it.
      */
     private fun recordYouTubePlay(trackId: String, positionMs: Long) {
         val videoId = trackId.removePrefix(YOUTUBE_TRACK_PREFIX)
@@ -3229,12 +3238,6 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 dao.upsertRecent(entity)
             }.onFailure { report("Couldn't save history", it) }
-        }
-        if (settings.value.youtubeSyncHistory && youTubeSignedIn()) {
-            viewModelScope.launch {
-                runCatching { container.youtube.reportPlayback(videoId, positionMs / 1000L) }
-                    .onFailure { AppLog.d("YouTube", "History report skipped: ${it.message}") }
-            }
         }
     }
 
