@@ -47,11 +47,10 @@ after any summary/compaction.
   2. `5636bce` outbound: real `PlaybackReportResult` + correct tracking pings.
   3. `a9b9a8c` outbound: three-ping policy + reporter tests.
   4. `4202a3b` outbound: report from an application-level scope + status state.
-  5. inbound: merge/backfill/background hook (this step).
-- **STEP 6** — status UI: one subtitle line under the existing "Sync my listening to YouTube Music"
-  switch + one "History sync" entry in Logs/Diagnostics.
-- **STEP 7** — self-review (yes/no checklist).
-- **STEP 8** — final report.
+  5. `5bbb841` inbound: merge rule, failure flag, metadata backfill, background hook.
+  6. `b9a69dc` status UI: one Settings row + a Logs card ("Last sent … last pulled …").
+  7. `07e6066` self-review: a failed pull is now a real failure (not an empty page).
+- **STEP 8** — final report (written below / in the chat reply).
 
 
 ## FINDINGS
@@ -191,4 +190,40 @@ One line per section-2 file, then the verdicts.
 - The inbound unit tests stay on the pure merge/backfill helpers (`mergeHistory`, `metadataTargets`,
   `withMetadata`); the thin `sync()`/DAO wiring is intentionally not faked, matching this file's
   existing test boundary.
+
+### STEP 6 decisions
+
+- `PlaybackReportingState` gained the inbound half (`lastPulledAt`, `pullFailed`) so one state flow
+  and one line describe both directions; `PlaybackReportingCoordinator.noteHistoryPull(failed)` is
+  the single writer, called from `syncYouTubeHistory()`.
+- The status is one `SettingsRow` directly under the existing switch (no layout change beyond the
+  row itself) plus one `HistorySyncCard` in Logs & diagnostics, both fed by the pure
+  `historySyncSummary(state, now)`. Wording is only ages and short words: "Last sent 2m ago · last
+  pulled 1h ago · refused (HTTP 403)". No URLs, no secrets.
+- The switch label is the acceptance wording, "Sync my listening to YouTube Music" (was "Sync
+  listening history").
+- `ageText(...)` is extracted from `liveSyncStatus` so the two status lines cannot drift; the
+  existing live-sync string is byte-for-byte unchanged (covered by the new `HistorySyncSummaryTest`,
+  289 tests green).
+
+### STEP 7 decisions (self-review)
+
+- Two real defects were found and fixed:
+  1. `YouTubeHistorySync.fetch` returned a bare list and the repository's `historySongs()` swallows
+     every error, so `HistorySyncResult.failed` could never be true — a dead flag. The mirror now
+     fetches through `InnerTubeClient.historySongsResult()` / `YouTubeRepository.historySongsResult()`
+     (the existing `cachedResult` pattern), so a rejected or offline pull is a genuine failure.
+  2. The removed `reportPlayback` was still linked from the `songMetadata` KDoc; the dangling link
+     now points at `openPlayback`.
+- Commit hygiene: the step-6 commit was amended to include `PlaybackReporting.kt` +
+  `PlaybackReportingCoordinator.kt`, which had been left unstaged and would not have compiled
+  (`historySyncSummary` reads `lastPulledAt`/`pullFailed`). The step-6 commit is now self-contained.
+- Cache-key note: `YouTubeRepository.historySongsResult()` deliberately reuses the key
+  `yt_history:<session>` that `historySongs()` has **at the committed base**, because the working tree
+  also carries an unrelated, uncommitted per-account cache-key change (`accountSuffix()`). When that
+  change is committed, `historySongsResult()` must adopt the same suffix so the two share one row and
+  one account's history can never be served to another.
+- Verified: no task hunk is left unstaged in any shared file; no WIP symbol (clerk timers, glass
+  helpers, `accountSuffix`, `lastHomeFromCache`, `HomeCurator`, …) appears added anywhere in the
+  branch diff; `289` unit tests pass; only one reporter and one coordinator exist.
 
