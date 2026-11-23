@@ -560,27 +560,31 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
     SettingsPage("Appearance", onBack) {
         item { SettingsSectionLabel("Theme style") }
         item { SettingsGroupCard { Box(Modifier.padding(12.dp)) { ThemeStyleSelector(selected = settings.themeStyle, onSelect = { s -> actions.onUpdate { it.copy(themeStyle = s) } }) } } }
-        item { SettingsSectionLabel("Mode") }
-        item {
-            SettingsGroupCard {
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ThemeMode.entries.forEach { mode ->
-                        FilterChip(selected = settings.theme == mode, onClick = { actions.onUpdate { it.copy(theme = mode) } }, label = { Text(label(mode.name)) }, shape = CircleShape)
+        // Glass is a fixed dark treatment: the light/dark mode chips and the accent palette only
+        // apply to the Normal theme, so they are hidden here while Glass is selected.
+        if (!isGlass) {
+            item { SettingsSectionLabel("Mode") }
+            item {
+                SettingsGroupCard {
+                    Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ThemeMode.entries.forEach { mode ->
+                            FilterChip(selected = settings.theme == mode, onClick = { actions.onUpdate { it.copy(theme = mode) } }, label = { Text(label(mode.name)) }, shape = CircleShape)
+                        }
                     }
                 }
             }
-        }
-        item { SettingsSectionLabel("Accent") }
-        item {
-            SettingsGroupCard {
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Accents.all.forEach { (name, color) ->
-                        val selected = settings.accent == name
-                        Box(
-                            Modifier.size(40.dp).clip(CircleShape).background(color)
-                                .border(2.dp, if (selected) MaterialTheme.colorScheme.onBackground else Color.Transparent, CircleShape)
-                                .clickable { actions.onUpdate { it.copy(accent = name) } },
-                        )
+            item { SettingsSectionLabel("Accent") }
+            item {
+                SettingsGroupCard {
+                    Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Accents.all.forEach { (name, color) ->
+                            val selected = settings.accent == name
+                            Box(
+                                Modifier.size(40.dp).clip(CircleShape).background(color)
+                                    .border(2.dp, if (selected) MaterialTheme.colorScheme.onBackground else Color.Transparent, CircleShape)
+                                    .clickable { actions.onUpdate { it.copy(accent = name) } },
+                            )
+                        }
                     }
                 }
             }

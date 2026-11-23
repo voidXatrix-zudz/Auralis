@@ -72,8 +72,9 @@ after any summary/compaction.
 5. **STEP 5 ✓** — Library header: History chip removed in both themes; Settings > History and the
    "+" menu History item kept; "Your Library" now auto-sizes to stay on one line (18 sp floor
    Normal / 16 sp Glass) at font scale 1.3 on 360 dp. Committed. Details in "STEP LOG".
-6. **STEP 6** — Appearance (Glass): hide Mode chips + Accent circles; Glass subtitle
-   "Theme and player background"; hide Accent/Mode from Settings search when Glass. Commit.
+6. **STEP 6 ✓** — Appearance (Glass): Mode chips + Accent circles hidden (kept in Normal); Glass
+   subtitle "Theme and player background"; Glass search no longer matches "accent"/"mode"; Glass
+   stays dark-only (root already forces dark). Committed. Details in "STEP LOG".
 7. **STEP 7** — mini-player art on every page / theme, ~96 px, dark neutral placeholder. Commit.
 8. **STEP 8** — glass legibility sweep (Cream-on-black contrast, no leftover indigo washes). Commit.
 9. **STEP 9** — `MetadataFiller`: dedupe ids, 30 s deadline, delays 1/3/6/10/10 s, concurrency 3,
@@ -85,6 +86,19 @@ after any summary/compaction.
 ---
 
 ## STEP LOG
+
+### STEP 6 — Appearance for Glass ✓
+
+- `ui/settings/SettingsSubPages.kt`: in `AppearanceSettingsPage`, the "Mode" chips and "Accent"
+  circles are wrapped in `if (!isGlass)`. Glass keeps only Theme style, Player background and its
+  Glass controls; Normal is unchanged. Glass was already forced dark at the root
+  (`AuralisRoot` `dark = themeStyle == GLASSMORPHIC || theme == DARK`), so it stays dark-only.
+- `ui/settings/SettingsHub.kt`: the Appearance category summary is now
+  `"Theme and player background"` for Glass and the previous `"Theme, accent and playback
+  background"` for Normal. Search filters label + summary, so typing "accent" (or "mode") no longer
+  surfaces Appearance while Glass is selected. The category list is now keyed on `isGlass`, and the
+  filter on `(query, categories)` so the summary switch takes effect immediately.
+- Verified: `:app:compileDebugKotlin` BUILD SUCCESSFUL.
 
 ### STEP 5 — Library header ✓
 

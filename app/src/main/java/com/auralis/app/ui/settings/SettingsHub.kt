@@ -343,21 +343,29 @@ fun SettingsHubScreen(
     val isGlass = glass()
     var query by remember { mutableStateOf("") }
     var normalSearchOpen by remember { mutableStateOf(false) }
-    val categories = remember {
+    val categories = remember(isGlass) {
         listOf(
             SettingsCategory("History", "Songs you played", Icons.Rounded.History, Destination.History, 1),
             SettingsCategory("Playback & Quality", "Streaming quality, data saver, gestures", Icons.Rounded.PlayArrow, Destination.SettingsPlayback, 1),
             SettingsCategory("Metadata & Lyrics", "Providers, tag fixes, lyrics display", Icons.Rounded.Lyrics, Destination.SettingsMetadataLyrics, 1),
             SettingsCategory("Downloads", "Location, quality and lyrics", Icons.Rounded.Download, Destination.SettingsDownloads, 1),
             SettingsCategory("YouTube Music", "Account and sync", Icons.Rounded.MusicNote, Destination.SettingsYouTubeMusic, 2),
-            SettingsCategory("Appearance", "Theme, accent and playback background", Icons.Rounded.Palette, Destination.SettingsAppearance, 2),
+            // Glass has no accent or light/dark choice, so its searchable summary must not advertise
+            // either; typing "accent" or "mode" then finds nothing while Glass is selected.
+            SettingsCategory(
+                "Appearance",
+                if (isGlass) "Theme and player background" else "Theme, accent and playback background",
+                Icons.Rounded.Palette,
+                Destination.SettingsAppearance,
+                2,
+            ),
             SettingsCategory("Performance", "Visual effects and battery", Icons.Rounded.Speed, Destination.SettingsPerformance, 2),
             SettingsCategory("Storage", "Cache, downloads and library folders", Icons.Rounded.Storage, Destination.SettingsStorage, 2),
             SettingsCategory("Backup", "Export and restore your library", Icons.Rounded.Backup, Destination.Backup, 3),
             SettingsCategory("About", "Version, updates and diagnostics", Icons.Rounded.Info, Destination.SettingsAbout, 3),
         )
     }
-    val filtered = remember(query) {
+    val filtered = remember(query, categories) {
         val q = query.trim()
         if (q.isBlank()) categories else categories.filter {
             it.label.contains(q, ignoreCase = true) || it.summary.contains(q, ignoreCase = true)
