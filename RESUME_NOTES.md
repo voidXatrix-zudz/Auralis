@@ -18,6 +18,8 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 
 ## NEXT
 - STEP 1: read + FINDINGS + verify R1–R7 + branch + this file. (done)
+- STEP 2: checkpoint model + codec + tests. (done)
+- STEP 3: one saver for local + YouTube (collector + background save). (next)
 
 ---
 
@@ -49,3 +51,11 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - kotlinx.serialization is applied (`@Serializable`, generated `.serializer()`, `Json { ignoreUnknownKeys = true; encodeDefaults = true }` is already the project pattern in `YouTubeRepository`).
 - Unit tests live under `app/src/test/java/com/auralis/app/...` and are plain JVM tests.
 - The player outlives the Activity, so the restore must respect an existing session (`connected.trackId != null || queueIds.isNotEmpty()` → do nothing).
+
+---
+
+## STEP 2 — checkpoint model + storage (done)
+- New `data/settings/PlaybackCheckpoint.kt`: `PlaybackSnapshotKeys`, `PlaybackSnapshot` (moved here, extended with `title/artist/album/durationMs/artworkUrl/isRemote/remoteId/queueJson/savedAt`), `@Serializable CheckpointTrack`, `PlaybackCheckpointCodec` (`encode/decode`, cap `MAX_QUEUE = 50`, malformed → empty), `playbackSnapshotFrom(prefs)`, `Track.toCheckpointTrack()`, `CheckpointTrack.toTrack(localUri)`.
+- `PlaybackSnapshotRepository.kt` now writes/reads all keys (old 5 keys kept, defaults for the rest) and gained `clear()`.
+- Remote ids are normalised to `yt:<videoId>` in `toTrack`; remote tracks get the lazy `auralis-yt://<videoId>` URI (no URL stored).
+- Tests: `app/src/test/java/com/auralis/app/data/settings/PlaybackCheckpointTest.kt` — round-trip, cap 50, malformed → empty, blank/null → empty, old 5-key store loads, empty store → null, remote rebuild has no URL, local rebuild uses the library URI, Track↔checkpoint round-trip. All green via `:app:testDebugUnitTest`.
