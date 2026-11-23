@@ -2464,7 +2464,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun clearQueue() {
         _restoredPlayback.value = null
         container.playback.clearQueue()
-        viewModelScope.launch { runCatching { container.database.queueDao().clear() }.onFailure { report("Couldn't clear the saved queue", it) } }
+        viewModelScope.launch {
+            runCatching { container.database.queueDao().clear() }.onFailure { report("Couldn't clear the saved queue", it) }
+            // The user asked for an empty queue, so forget the resume checkpoint as well.
+            runCatching { container.playbackSnapshot.clear() }.onFailure { report("Couldn't clear the playback checkpoint", it) }
+        }
     }
     /** Unified playlist entries: on-device tracks and streamed YouTube songs, in order. */
     fun playlistItems(playlistId: Long): List<PlaylistItem> {

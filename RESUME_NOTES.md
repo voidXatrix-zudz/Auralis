@@ -23,6 +23,9 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - STEP 4: restore at launch via virtual restored state; always paused. (done)
 - STEP 5: wire AuralisRoot (effective track/queue/playback + dock/Now Playing callbacks). (done)
 - STEP 6: edge cases (downloads, legacy queue, double tap, streamed-only). (done)
+- STEP 7: optional Settings switch — **SKIPPED** (would need a 4th file; see below).
+- STEP 8: self-review + cleanup (done).
+- STEP 9: final report. (done — see bottom)
 
 ---
 
@@ -102,3 +105,24 @@ Branch: `resume-last-song` (created from `home-redesign`). Repo root: `C:\Users\
 - **Streamed-only account (no local library, no downloads).** `awaitLibrary()` times out after 6 s and returns empty; a YouTube-only checkpoint returns before the wait anyway, and a mixed queue falls back to its remote entries. Nothing is prepared, so no stream URL is resolved and nothing autoplays.
 - **Gone local song.** Ids the library no longer has are dropped during upgrade; if that empties the queue the placeholder is cleared, otherwise the index moves to the next valid entry. `clearQueue()` and the real-player collector both clear the placeholder.
 - Full unit suite green: 268 tests, 0 failures; `:app:assembleDebug` green.
+
+---
+
+## STEP 7 — optional "Show last played song on launch" switch — SKIPPED
+- The prompt allowed this step **only if it touches just** `AppSettings.kt`, `SettingsRepository.kt` and one row in `SettingsSubPages.kt`. A switch that actually does something must also be read where the restore is published (`AppViewModel.publishRestoredPlayback`) and/or where the checkpoint is saved — a fourth file — and a switch that is never read would be dead code. It therefore falls outside the allowed footprint and was not implemented. Nothing was added, so behaviour is unchanged: the last played song is always shown, paused. (Say the word and it can be added as a 4-file change.)
+
+---
+
+## STEP 8 — self-review + cleanup (done)
+- Removed dead code: `PlaybackSnapshotRepository.clear()` existed but was never called. It is now used by `clearQueue()` — the user who asks for an empty queue also forgets the resume checkpoint — so no unused API remains.
+- Verified the restore path touches no main-thread disk/network: the DataStore read, the Room queue read and the library wait are all suspending; nothing is `prepare()`d until the user taps play, so no stream URL is fetched or held.
+- Verified one failure log only (`AppLog.w("Playback", …)`, no toast/crash) and no `!!` in new main code; the only `!!` is in a test on a value the test itself builds.
+- Verified no forbidden area changed: the diff for this feature is `PlaybackCheckpoint.kt` (new), `PlaybackSnapshotRepository.kt`, `AppViewModel.kt` and `AuralisRoot.kt` only — no dock/pill visuals or animations, no Now Playing layout, no Home/Library/Explore/lyrics/playlists/history/login/download/equalizer code, no manifest/permission/package/version change, and no Room schema change (the checkpoint stays in DataStore).
+- Verified `State` fields copied by `displayPlayback` exist and that every new helper is referenced (`resumeRestored`, `seekRestored`, `seekRestoredBy`, `toggleRestoredShuffle`, `cycleRestoredRepeat`, `restoredPlayback` all consumed by the UI).
+- Full unit suite green: 268 tests, 0 failures; `:app:assembleDebug` green after the cleanup.
+
+---
+
+## STEP 9 — final report
+- See the summary in the chat reply. Feature commits on `resume-last-song`: `f824448` (model+codec+tests), `2d87e9d` (saver), `13a8b2a` (restore), `2b6856b` (UI wiring), `bd360f4` (edge cases), plus this notes/cleanup commit. Root of the work: `27bd654` (home-redesign).
+- Not verified at runtime (no device/emulator by instruction): the owner builds and tests on the phone. Suggested checks are in the chat reply.

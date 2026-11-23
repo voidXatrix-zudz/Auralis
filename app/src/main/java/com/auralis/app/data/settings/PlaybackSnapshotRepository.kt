@@ -39,7 +39,7 @@ class PlaybackSnapshotRepository(context: Context) {
         }
     }
 
-    /** Drops the checkpoint entirely (used only when the user clears/stops playback). */
+    /** Drops the checkpoint entirely (used when the user clears the queue). */
     suspend fun clear() {
         store.edit { it.clear() }
     }
