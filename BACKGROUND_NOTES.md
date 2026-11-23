@@ -65,8 +65,10 @@ after any summary/compaction.
 3. **STEP 3 ✓** — transitions: fade-through (out ~90 ms, in ~140 ms, 0.985 scale), scaled by the
    Performance profile and "Remove animations"; sequential fades so glass can't ghost; scroll/state
    untouched. Committed. Details in "STEP LOG".
-4. **STEP 4** — one `AuralisLogo` composable on `ic_logo_header`, same position + size everywhere;
-   remove `AuralisMark` (the duplicate white three-line mark). Commit.
+4. **STEP 4 ✓** — one `AuralisLogo` composable on `ic_logo_header`, used by both top bars, YouTube
+   Home and the two login states; `AuralisMark` (the duplicate white three-line mark) and its Home
+   card call deleted. Glass header logo aligned to Normal's 16 dp start / 0.10 collapse scale.
+   Committed. Details in "STEP LOG".
 5. **STEP 5** — Library header: drop the History chip (both themes); keep Settings > History + the
    "+" menu item; "Your Library" fits one line at font scale 1.3 / 360 dp. Commit.
 6. **STEP 6** — Appearance (Glass): hide Mode chips + Accent circles; Glass subtitle
@@ -82,6 +84,20 @@ after any summary/compaction.
 ---
 
 ## STEP LOG
+
+### STEP 4 — one logo ✓
+
+- Added `ui/components/AuralisLogo.kt`: the single `Image(painterResource(ic_logo_header))` with
+  `ContentScale.Fit` and the "AURALIS" label. Callers pass only size/position.
+- Replaced every wordmark draw: `GlassChrome.GlassTopBar`, `AuralisRoot.TopBar`,
+  `HomeComponents.HomeTopBar`, and both `LoginScreen` states. No file re-declares the drawable now.
+- Header parity: the Glass top bar dropped its extra `start = 6.dp` (row padding is 16 dp, matching
+  Normal's 8 dp row + 8 dp logo padding) and its collapse scale is now `0.10` like Normal, so the
+  logo sits and animates identically in both themes. Login keeps its centred 56 dp size (protected
+  screen, layout untouched) but now draws through the same composable.
+- Deleted `ui/components/AuralisMark.kt` and its `TopPickCard` call in `HomeCards.kt`; removed the
+  now-unused `CardMarkWidth` / `CardMarkHeight` dimens. No code-drawn mark remains.
+- Verified: `:app:compileDebugKotlin` BUILD SUCCESSFUL.
 
 ### STEP 3 — fade-through navigation ✓
 

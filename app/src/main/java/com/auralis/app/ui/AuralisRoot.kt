@@ -53,7 +53,6 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -95,10 +94,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
@@ -107,7 +104,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
-import com.auralis.app.R
+import com.auralis.app.ui.components.AuralisLogo
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.nav.Tab
@@ -1065,10 +1062,7 @@ private fun TopBar(
                 )
             }
         } else {
-            Image(
-                painter = painterResource(R.drawable.ic_logo_header),
-                contentDescription = "AURALIS",
-                contentScale = ContentScale.Fit,
+            AuralisLogo(
                 modifier = Modifier
                     .padding(start = 8.dp)
                     .height(lerp(38.dp, 30.dp, progress))

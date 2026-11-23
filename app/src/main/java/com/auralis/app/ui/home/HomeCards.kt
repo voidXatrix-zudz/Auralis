@@ -41,7 +41,6 @@ import com.auralis.app.data.youtube.YtCard
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.ArtworkImage
-import com.auralis.app.ui.components.AuralisMark
 
 /** Big discovery card: artwork or a flat AURALIS colour field with a generic geometric shape. */
 @Composable
@@ -86,14 +85,6 @@ fun TopPickCard(
                     1f to HomeCardPalette.Scrim,
                 ),
             ),
-        )
-        AuralisMark(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(HomeDimens.CardInnerPad)
-                .width(HomeDimens.CardMarkWidth)
-                .height(HomeDimens.CardMarkHeight),
-            color = HomeCardPalette.TextOnArt.copy(alpha = 0.4f),
         )
         Column(Modifier.align(Alignment.BottomStart).padding(HomeDimens.CardInnerPad)) {
             if (pick.caption.isNotBlank()) {

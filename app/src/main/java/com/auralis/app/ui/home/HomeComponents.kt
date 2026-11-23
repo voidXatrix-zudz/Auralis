@@ -2,7 +2,6 @@ package com.auralis.app.ui.home
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,8 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auralis.app.R
 import com.auralis.app.domain.model.ThemeStyle
+import com.auralis.app.ui.components.AuralisLogo
 import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LocalThemeStyle
@@ -79,8 +77,6 @@ object HomeDimens {
     val PageSize = 4
     val CardInnerPad = 16.dp
     val CaptionGap = 8.dp
-    val CardMarkWidth = 20.dp
-    val CardMarkHeight = 10.dp
     val MiniCardRadius = 18.dp
     val PlaceholderIcon = 32.dp
     val RowEndGap = 8.dp
@@ -215,11 +211,9 @@ fun HomeTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Image(
-            painter = painterResource(R.drawable.ic_logo_header),
-            contentDescription = stringResource(R.string.app_name),
-            contentScale = ContentScale.Fit,
+        AuralisLogo(
             modifier = Modifier.height(HomeDimens.LogoHeight),
+            contentDescription = stringResource(R.string.app_name),
         )
         Box(
             Modifier

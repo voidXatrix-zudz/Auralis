@@ -47,19 +47,16 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.Image
-import com.auralis.app.R
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.AuthUiState
+import com.auralis.app.ui.components.AuralisLogo
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LocalThemeStyle
 
@@ -165,12 +162,7 @@ fun LoginScreen(
             verticalArrangement = Arrangement.Center,
         ) {
             Spacer(Modifier.height(24.dp))
-            Image(
-                painter = painterResource(R.drawable.ic_logo_header),
-                contentDescription = "AURALIS",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.height(56.dp),
-            )
+            AuralisLogo(modifier = Modifier.height(56.dp))
             Spacer(Modifier.height(12.dp))
             Text(
                 "Music, reimagined",
@@ -418,12 +410,7 @@ fun SignInUnavailable(
             verticalArrangement = Arrangement.Center,
         ) {
             Spacer(Modifier.height(24.dp))
-            Image(
-                painter = painterResource(R.drawable.ic_logo_header),
-                contentDescription = "AURALIS",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.height(56.dp),
-            )
+            AuralisLogo(modifier = Modifier.height(56.dp))
             Spacer(Modifier.height(12.dp))
             Text(
                 "Music, reimagined",
