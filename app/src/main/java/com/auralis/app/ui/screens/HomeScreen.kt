@@ -1,13 +1,12 @@
 package com.auralis.app.ui.screens
 
+import com.auralis.app.data.youtube.YtPlaylist
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassHomeScreen
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,80 +19,118 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.auralis.app.data.db.PlaylistEntity
+import com.auralis.app.data.youtube.YtCard
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
-import com.auralis.app.data.youtube.YtCard
-import com.auralis.app.ui.AppViewModel
-import com.auralis.app.ui.HomeCategory
 import com.auralis.app.ui.HomeUiState
-import com.auralis.app.ui.components.SectionTitle
+import com.auralis.app.ui.home.LocalHomeFeed
 
 @Composable
 fun HomeScreen(
     sources: List<MusicSource>, tracks: List<Track>, favorites: Set<String>, currentId: String?,
     onAddMusic: () -> Unit, onScan: () -> Unit, onPlay: (Track) -> Unit, onFavorite: (Track) -> Unit,
-    playlists: List<com.auralis.app.data.db.PlaylistEntity>, onAddToPlaylist: (Long, Track) -> Unit,
+    playlists: List<PlaylistEntity>, onAddToPlaylist: (Long, Track) -> Unit,
     modifier: Modifier = Modifier, onQueue: (Track) -> Unit = {}, scanning: Boolean = false, onPlayNext: (Track) -> Unit = onQueue,
-    onOpenSettings: () -> Unit = {}, settingsBadge: Boolean = false,
+    onOpenSettings: () -> Unit = {},
     youtubeEnabled: Boolean = false,
+    personalizedHome: Boolean = true,
     home: HomeUiState = HomeUiState(),
     youtubeAvatarUrl: String? = null,
     youtubeAccountName: String? = null,
     youtubeSignedIn: Boolean = false,
+    youtubeExpired: Boolean = false,
     onOpenHome: () -> Unit = {},
     onRefreshHome: () -> Unit = {},
-    onSelectHomeCategory: (HomeCategory) -> Unit = {},
     onPlayYtTrack: (Track) -> Unit = onPlay,
     onOpenYtCard: (YtCard) -> Unit = {},
     onLikeYtTrack: (Track) -> Unit = onFavorite,
     onLoadMoreHomeRow: (String) -> Unit = {},
     onCloseHomeCollection: () -> Unit = {},
     onYouTubeSignIn: () -> Unit = {},
-    onYouTubeSignOut: () -> Unit = {},
-    onYouTubeSwitchAccount: () -> Unit = onYouTubeSignOut,
     onOpenExplore: () -> Unit = {},
+    libraryPlaylists: List<LibraryPlaylistRow> = emptyList(),
+    onOpenPlaylist: (Long) -> Unit = {},
+    onOpenYouTubePlaylist: (YtPlaylist) -> Unit = {},
+    onOpenLibrary: () -> Unit = {},
 ) {
-    if (youtubeEnabled) {
+    // Personalized Home: the YouTube-powered feed when the integration is on AND the setting is on.
+    // Otherwise (integration off, or "Personalized Home" turned off) Home is the local library.
+    if (youtubeEnabled && personalizedHome) {
         YouTubeHomeScreen(
             state = home,
             accountName = youtubeAccountName,
             avatarUrl = youtubeAvatarUrl,
             signedIn = youtubeSignedIn,
+            favorites = favorites,
+            currentId = currentId,
+            playlists = playlists,
+            onAddToPlaylist = onAddToPlaylist,
+            onPlayNext = onPlayNext,
+            expired = youtubeExpired,
             onOpen = onOpenHome,
             onRefresh = onRefreshHome,
-            onSelectCategory = onSelectHomeCategory,
             onPlayTrack = onPlayYtTrack,
             onOpenCard = onOpenYtCard,
             onLike = onLikeYtTrack,
             onLoadMore = onLoadMoreHomeRow,
             onCloseCollection = onCloseHomeCollection,
             onSignIn = onYouTubeSignIn,
-            onSignOut = onYouTubeSignOut,
-            onSwitchAccount = onYouTubeSwitchAccount,
             onOpenExplore = onOpenExplore,
+            onOpenSettings = onOpenSettings,
             modifier = modifier,
         )
         return
     }
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassHomeScreen(sources, tracks, favorites, currentId, onAddMusic, onScan, onPlay, onFavorite, playlists, onAddToPlaylist, modifier, onQueue, scanning, onPlayNext, onOpenSettings, settingsBadge)
+        GlassHomeScreen(
+            sources = sources,
+            tracks = tracks,
+            favorites = favorites,
+            currentId = currentId,
+            onAddMusic = onAddMusic,
+            onScan = onScan,
+            onPlay = onPlay,
+            onFavorite = onFavorite,
+            playlists = playlists,
+            onAddToPlaylist = onAddToPlaylist,
+            modifier = modifier,
+            scanning = scanning,
+            onPlayNext = onPlayNext,
+            onOpenSettings = onOpenSettings,
+            avatarUrl = youtubeAvatarUrl,
+            accountName = youtubeAccountName,
+            libraryPlaylists = libraryPlaylists,
+            onOpenPlaylist = onOpenPlaylist,
+            onOpenYouTubePlaylist = onOpenYouTubePlaylist,
+            onOpenLibrary = onOpenLibrary,
+            onOpenExplore = onOpenExplore,
+        )
         return
     }
-    Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            SectionTitle("Your music")
-            TextButton(onClick = onScan, enabled = !scanning) {
-                if (scanning) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text(if (scanning) "Scanning" else "Scan device", Modifier.padding(start = if (scanning) 8.dp else 0.dp))
-            }
-        }
-        if (sources.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 100.dp).padding(horizontal = 16.dp)) { items(sources) { FolderRow(it.name) } }
-        if (tracks.isEmpty()) EmptyLibraryHero(onAddMusic, onScan, Modifier.weight(1f), scanning, onOpenSettings, sources.isEmpty())
-        else {
-            Text("Songs · ${tracks.size}", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.titleMedium)
-            TrackRows(tracks, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
-        }
-    }
+    LocalHomeFeed(
+        sources = sources,
+        tracks = tracks,
+        favorites = favorites,
+        currentId = currentId,
+        libraryPlaylists = libraryPlaylists,
+        scanning = scanning,
+        avatarUrl = youtubeAvatarUrl,
+        accountName = youtubeAccountName,
+        playlists = playlists,
+        onAddMusic = onAddMusic,
+        onScan = onScan,
+        onPlay = onPlay,
+        onFavorite = onFavorite,
+        onPlayNext = onPlayNext,
+        onAddToPlaylist = onAddToPlaylist,
+        onOpenSettings = onOpenSettings,
+        onOpenPlaylist = onOpenPlaylist,
+        onOpenYouTubePlaylist = onOpenYouTubePlaylist,
+        onOpenLibrary = onOpenLibrary,
+        onOpenExplore = onOpenExplore,
+        modifier = modifier,
+    )
 }
 
 @Composable

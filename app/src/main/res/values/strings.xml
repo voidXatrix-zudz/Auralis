@@ -1,4 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AURALIS</string>
+
+    <!-- Home -->
+    <string name="home_show_all">Show all</string>
+    <string name="home_more">More</string>
+    <string name="home_retry">Retry</string>
+    <string name="home_try_again">Try again</string>
+    <string name="home_account">Account</string>
+    <string name="home_empty_title">Nothing to play yet</string>
+    <string name="home_empty_body">We couldn\'t find music for this filter. Check your connection and try again.</string>
+    <string name="home_connect_title">Connect YouTube Music</string>
+    <string name="home_reconnect_title">Reconnect YouTube Music</string>
+    <string name="home_connect_body">Sign in to see your own recommendations, playlists and listening history — never generic charts.</string>
+    <string name="home_connect_action">Connect</string>
+    <string name="home_reconnect_action">Reconnect</string>
+
+    <string name="home_play_next">Play next</string>
+    <string name="home_like">Like</string>
+    <string name="home_unlike">Unlike</string>
+    <string name="home_download">Download</string>
+    <string name="home_delete_download">Delete download</string>
+    <string name="home_add_to_playlist">Add to %1$s</string>
+    <string name="home_more_actions">More actions for %1$s</string>
+    <string name="home_no_songs">No songs found.</string>
+    <string name="home_like_song">Like %1$s</string>
+    <string name="home_play_song">Play %1$s</string>
+
+    <string name="home_top_picks_for_you">Top picks for you</string>
+    <string name="home_recents">Recents</string>
+    <string name="home_quick_picks">Quick picks</string>
+    <string name="home_from_library">From your library</string>
+    <string name="home_liked_songs">Liked Songs</string>
+    <string name="home_caption_you">You</string>
+    <string name="home_track_count">%1$s · %2$d tracks</string>
+
+    <string name="home_offline_title">Your music, offline</string>
+    <string name="home_offline_body">Scan songs on this device or add a folder.</string>
+    <string name="home_no_folder_title">Choose a music folder to start</string>
+    <string name="home_no_folder_body">AURALIS only scans the folders you choose.</string>
+    <string name="home_scan">Scan device</string>
+    <string name="home_scanning">Scanning…</string>
+    <string name="home_add_folder">Add folder</string>
+    <string name="home_choose_folder">Choose a music folder</string>
+
+    <!-- Fixed fallback shelf titles; live shelf titles still come from the app's data. -->
+    <string name="home_trending_now">Trending now</string>
+    <string name="home_covers_and_remixes">Covers and remixes</string>
+    <string name="home_forgotten_favorites">Forgotten favorites</string>
+    <string name="home_albums_and_singles">Albums and singles</string>
+    <string name="home_music_videos">Music videos</string>
 </resources>

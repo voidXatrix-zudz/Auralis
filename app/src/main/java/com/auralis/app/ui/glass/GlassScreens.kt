@@ -43,9 +43,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.ViewList
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -70,12 +68,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.data.db.PlaylistEntryEntity
 import com.auralis.app.data.db.PlaylistYtEntryEntity
 import com.auralis.app.data.youtube.routeLibraryPlay
+import com.auralis.app.data.youtube.YtPlaylist
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
 import androidx.compose.material.icons.rounded.Close
@@ -84,6 +81,7 @@ import com.auralis.app.ui.components.AccountAvatar
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.LiveDot
 import com.auralis.app.ui.components.LocalDockBottomInset
+import com.auralis.app.ui.home.LocalHomeFeed
 import com.auralis.app.data.youtube.LiveSyncState
 import com.auralis.app.ui.screens.LibraryFilter
 import com.auralis.app.ui.screens.LibraryPlaylistKind
@@ -92,8 +90,6 @@ import com.auralis.app.ui.screens.LibrarySortOption
 import com.auralis.app.ui.screens.buildLibraryPlaylists
 import com.auralis.app.ui.screens.isLibraryEmpty
 import com.auralis.app.ui.theme.GlassTokens
-import java.time.LocalTime
-import java.time.ZoneId
 
 private val GlassLibraryTabs = listOf("Songs", "Albums", "Artists", "Genres", "Favorites", "Playlists")
 
@@ -106,241 +102,39 @@ fun GlassHomeScreen(
     sources: List<MusicSource>, tracks: List<Track>, favorites: Set<String>, currentId: String?,
     onAddMusic: () -> Unit, onScan: () -> Unit, onPlay: (Track) -> Unit, onFavorite: (Track) -> Unit,
     playlists: List<PlaylistEntity>, onAddToPlaylist: (Long, Track) -> Unit,
-    modifier: Modifier, onQueue: (Track) -> Unit, scanning: Boolean, onPlayNext: (Track) -> Unit,
-    onOpenSettings: () -> Unit = {}, settingsBadge: Boolean = false,
+    modifier: Modifier, scanning: Boolean, onPlayNext: (Track) -> Unit,
+    onOpenSettings: () -> Unit = {},
+    avatarUrl: String? = null, accountName: String? = null,
+    libraryPlaylists: List<LibraryPlaylistRow> = emptyList(),
+    onOpenPlaylist: (Long) -> Unit = {},
+    onOpenYouTubePlaylist: (YtPlaylist) -> Unit = {},
+    onOpenLibrary: () -> Unit = {},
+    onOpenExplore: () -> Unit = {},
 ) {
-    // Recomputed from the device's local clock on every resume so it never goes stale.
-    var greeting by remember { mutableStateOf(greetingFor(LocalTime.now(ZoneId.systemDefault()))) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        greeting = greetingFor(LocalTime.now(ZoneId.systemDefault()))
-    }
-    Column(modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    if (tracks.isEmpty()) "Welcome" else greeting,
-                    style = MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = GlassTokens.Silver,
-                )
-                Text(
-                    if (tracks.isEmpty()) "Your offline library" else "${tracks.size} songs · ${sources.size} folders",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = GlassTokens.SilverMuted,
-                )
-            }
-            GlassIconButton(
-                Icons.Rounded.Refresh,
-                if (scanning) "Scanning" else "Scan library",
-                onScan,
-                enabled = !scanning,
-            )
-            GlassIconButton(
-                Icons.Rounded.Settings,
-                "Settings",
-                onOpenSettings,
-                modifier = Modifier.padding(start = 8.dp),
-                badge = settingsBadge,
-            )
-        }
-        if (tracks.isEmpty()) {
-            if (sources.isEmpty()) {
-                GlassEmptyState("Choose a music folder to start", "AURALIS only scans the folders you choose.", Modifier.weight(1f)) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        GlassPrimaryButton("Choose a music folder", onOpenSettings, icon = Icons.Rounded.FolderOpen)
-                        GlassGhostButton("Add folder", onAddMusic, icon = Icons.Rounded.FolderOpen, enabled = !scanning)
-                    }
-                }
-            } else GlassEmptyState("Your music, offline", "Scan songs on this device or add a folder.", Modifier.weight(1f)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    GlassPrimaryButton(if (scanning) "Scanning..." else "Scan device", onScan, enabled = !scanning)
-                    GlassGhostButton("Add folder", onAddMusic, icon = Icons.Rounded.FolderOpen, enabled = !scanning)
-                }
-            }
-        } else {
-            val recent = remember(tracks) { tracks.sortedByDescending { it.addedAt }.take(12) }
-            val liked = remember(tracks, favorites) { tracks.filter { it.id in favorites }.take(12) }
-            val albums = remember(tracks) {
-                tracks.groupBy { it.album.ifBlank { "Unknown album" } }
-                    .entries
-                    .sortedBy { it.key.lowercase() }
-                    .take(12)
-            }
-            LazyColumn(
-                Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp + LocalDockBottomInset.current),
-            ) {
-                item { GlassHeroCarousel(recent, currentId, onPlay, Modifier.padding(top = 12.dp)) }
-                if (sources.isNotEmpty()) item {
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(sources, key = { it.id }) { source -> GlassFolderChip(source.name) }
-                    }
-                }
-                item { HomeSectionHeader("Recently added") }
-                item { GlassArtworkRow(recent, currentId, onPlay) }
-                if (liked.isNotEmpty()) {
-                    item { HomeSectionHeader("Favorites") }
-                    item { GlassArtworkRow(liked, currentId, onPlay) }
-                }
-                if (albums.isNotEmpty()) {
-                    item { HomeSectionHeader("Albums") }
-                    item { GlassAlbumRow(albums, onPlay) }
-                }
-                item { HomeSectionHeader("All songs · ${tracks.size}") }
-                items(tracks, key = { it.id }) { track ->                    GlassTrackRow(
-                        track, track.id == currentId, track.id in favorites, onPlay, onFavorite, onQueue, onPlayNext, playlists, onAddToPlaylist,
-                        Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** Large rounded hero cards with artwork, gradient scrim and a floating play affordance. */
-@Composable
-private fun HomeSectionHeader(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleLarge,
-        fontWeight = FontWeight.Bold,
-        color = GlassTokens.Silver,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 10.dp),
+    LocalHomeFeed(
+        sources = sources,
+        tracks = tracks,
+        favorites = favorites,
+        currentId = currentId,
+        libraryPlaylists = libraryPlaylists,
+        scanning = scanning,
+        avatarUrl = avatarUrl,
+        accountName = accountName,
+        playlists = playlists,
+        onAddMusic = onAddMusic,
+        onScan = onScan,
+        onPlay = onPlay,
+        onFavorite = onFavorite,
+        onPlayNext = onPlayNext,
+        onAddToPlaylist = onAddToPlaylist,
+        onOpenSettings = onOpenSettings,
+        onOpenPlaylist = onOpenPlaylist,
+        onOpenYouTubePlaylist = onOpenYouTubePlaylist,
+        onOpenLibrary = onOpenLibrary,
+        onOpenExplore = onOpenExplore,
+        modifier = modifier,
     )
 }
-
-@Composable
-private fun GlassHeroCarousel(tracks: List<Track>, currentId: String?, onPlay: (Track) -> Unit, modifier: Modifier = Modifier) {
-    LazyRow(
-        modifier,
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(tracks, key = { it.id }) { track ->
-            Box(
-                Modifier
-                    .width(276.dp)
-                    .height(160.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .clickable { onPlay(track) },
-            ) {
-                GlassArtwork(track, Modifier.matchParentSize(), 24.dp)
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.30f), Color.Black.copy(alpha = 0.82f)),
-                            ),
-                        ),
-                )
-                Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
-                    Text(
-                        if (track.id == currentId) "NOW PLAYING" else "FEATURED",
-                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.6.sp),
-                        fontWeight = FontWeight.SemiBold,
-                        color = GlassTokens.Violet,
-                    )
-                    Text(
-                        track.title.ifBlank { track.displayName },
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = GlassTokens.Silver,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                    Text(
-                        track.artist.ifBlank { "Unknown artist" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = GlassTokens.Cream65,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(GlassTokens.Indigo.copy(alpha = 0.42f))
-                        .border(1.dp, GlassTokens.Cream14, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Rounded.PlayArrow, "Play ${track.title}", tint = GlassTokens.Silver, modifier = Modifier.size(22.dp))
-                }
-            }
-        }
-    }
-}
-
-/** Rounded artwork cards with a title and a grey subtitle. */
-@Composable
-private fun GlassArtworkRow(tracks: List<Track>, currentId: String?, onPlay: (Track) -> Unit) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(tracks, key = { it.id }) { track ->
-            Column(Modifier.width(132.dp).clickable { onPlay(track) }) {
-                GlassArtwork(track, Modifier.size(132.dp), 20.dp)
-                Text(
-                    track.title.ifBlank { track.displayName },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = if (track.id == currentId) GlassTokens.Violet else GlassTokens.Silver,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-                Text(
-                    track.artist.ifBlank { "Unknown artist" },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = GlassTokens.SilverMuted,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun GlassAlbumRow(albums: List<Map.Entry<String, List<Track>>>, onPlay: (Track) -> Unit) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(albums, key = { it.key }) { entry ->
-            val first = entry.value.firstOrNull() ?: return@items
-            Column(Modifier.width(132.dp).clickable { onPlay(first) }) {
-                GlassArtwork(first, Modifier.size(132.dp), 20.dp)
-                Text(
-                    entry.key,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = GlassTokens.Silver,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-                Text(
-                    "${entry.value.size} songs",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = GlassTokens.SilverMuted,
-                )
-            }
-        }
-    }
-}
-
 @Composable
 fun GlassSearchScreen(
     tracks: List<Track>, favorites: Set<String>, currentId: String?,
@@ -657,7 +451,7 @@ fun GlassLibraryScreen(
                         .clickable { plusOpen = true }.padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Rounded.Add, "Add", tint = GlassTokens.Cream, modifier = Modifier.size(20.dp)) }
-                DropdownMenu(plusOpen, { plusOpen = false }) {
+                GlassMenu(plusOpen, { plusOpen = false }) {
                     DropdownMenuItem(text = { Text("New playlist") }, leadingIcon = { Icon(Icons.Rounded.Add, null) }, onClick = { plusOpen = false; name = ""; creating = true })
                     DropdownMenuItem(text = { Text("Import Spotify CSV") }, leadingIcon = { Icon(Icons.Rounded.Download, null) }, onClick = { plusOpen = false; onImportSpotify() })
                     DropdownMenuItem(text = { Text("History") }, leadingIcon = { Icon(Icons.Rounded.MusicNote, null) }, onClick = { plusOpen = false; onOpenHistory() })
@@ -682,7 +476,7 @@ fun GlassLibraryScreen(
                     Text(sort.label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
                     Icon(Icons.Rounded.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                 }
-                DropdownMenu(sortOpen, { sortOpen = false }) {
+                GlassMenu(sortOpen, { sortOpen = false }) {
                     LibrarySortOption.entries.forEach { option ->
                         DropdownMenuItem(text = { Text(option.label) }, onClick = { sortOpen = false; onLibrarySortChange(option.id) })
                     }
@@ -885,7 +679,7 @@ fun GlassLibraryScreen(
             }
         }
     }
-    if (creating) AlertDialog(
+    if (creating) GlassMaterialAlertDialog(
         onDismissRequest = { creating = false },
         title = { Text("New playlist") },
         text = { GlassSearchField(name, { name = it }, "Name") },
@@ -894,7 +688,7 @@ fun GlassLibraryScreen(
     )
     renameTarget?.let { row ->
         var updated by remember(row.key) { mutableStateOf(row.name) }
-        AlertDialog(
+        GlassMaterialAlertDialog(
             onDismissRequest = { renameTarget = null },
             title = { Text("Rename playlist") },
             text = { GlassSearchField(updated, { updated = it }, "Name") },
@@ -908,7 +702,7 @@ fun GlassLibraryScreen(
         )
     }
     deleteTarget?.let { row ->
-        AlertDialog(
+        GlassMaterialAlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("Delete playlist") },
             text = { Text("Delete “${row.name}”? This cannot be undone.") },
@@ -1063,7 +857,7 @@ private fun GlassPlaylistMenu(
     var expanded by remember(row.key) { mutableStateOf(false) }
     Box {
         GlassIconAction(Icons.Rounded.MoreVert, "More actions for ${row.name}", { expanded = true })
-        DropdownMenu(expanded, { expanded = false }) {
+        GlassMenu(expanded, { expanded = false }) {
             DropdownMenuItem(text = { Text("Play") }, leadingIcon = { Icon(Icons.Rounded.QueueMusic, null) }, onClick = { expanded = false; onPlay() })
             if (row.localPlaylistId != null) {
                 DropdownMenuItem(text = { Text("Shuffle") }, leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }, onClick = { expanded = false; onShuffle() })
@@ -1097,11 +891,4 @@ private fun GlassPlaylistMosaic(row: LibraryPlaylistRow, modifier: Modifier = Mo
             }
         }
     }
-}
-
-private fun greetingFor(time: LocalTime): String = when (time.hour) {
-    in 5..11 -> "Good morning"
-    in 12..16 -> "Good afternoon"
-    in 17..20 -> "Good evening"
-    else -> "Good night"
 }

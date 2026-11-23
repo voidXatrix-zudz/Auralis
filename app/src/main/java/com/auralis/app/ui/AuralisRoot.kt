@@ -11,6 +11,9 @@ import com.auralis.app.ui.glass.GlassTopBar
 import com.auralis.app.ui.glass.GlassAlertDialog
 import com.auralis.app.ui.glass.GlassAvatarButton
 import com.auralis.app.ui.glass.LocalDockGlassStyle
+import com.auralis.app.ui.glass.GlassOverlayScrim
+import com.auralis.app.ui.glass.GlassOverlayState
+import com.auralis.app.ui.glass.LocalGlassOverlay
 import com.auralis.app.ui.glass.GlassDragState
 import com.auralis.app.ui.glass.GlassSettings
 import com.auralis.app.ui.glass.LocalGlassDrag
@@ -117,6 +120,8 @@ import com.auralis.app.ui.screens.ExploreMoodScreen
 import com.auralis.app.ui.explore.ExploreMoods
 import com.auralis.app.ui.screens.HistoryScreen
 import com.auralis.app.ui.screens.LibraryScreen
+import com.auralis.app.ui.screens.LibrarySortOption
+import com.auralis.app.ui.screens.buildLibraryPlaylists
 import com.auralis.app.ui.screens.NowPlayingScreen
 import com.auralis.app.ui.screens.PlaylistDetailScreen
 import com.auralis.app.ui.screens.YouTubePlaylistScreen
@@ -275,6 +280,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
     // Shared dock state + the backdrop window every glass surface blurs (glass only, Android 12+).
     val dockScroll = rememberDockScrollState()
     val hazeState = rememberHazeState()
+    // One shared counter for open glass menus; the root draws their dim layer.
+    val glassOverlay = remember { GlassOverlayState() }
     val dockStyle = if (settings.themeStyle == ThemeStyle.GLASSMORPHIC) DockStyle.GLASS else DockStyle.SOLID
 
     // Destination transitions keep the outgoing screen composed until the incoming screen has
@@ -337,6 +344,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onVerifyCode = viewModel::verifyEmailCode,
                     onEditEmail = viewModel::editEmail,
                     onClearError = viewModel::clearAuthError,
+                    onRetryInit = viewModel::retryClerkInit,
                 )
             } else {
                 com.auralis.app.ui.screens.SignInUnavailable(
@@ -407,6 +415,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             onRemoveAllDownloads = viewModel::removeAllDownloads,
             onAutoFixTags = viewModel::autoFixTags,
             onMoveLyricsProvider = viewModel::moveLyricsProvider,
+            onResetLyricsProviders = viewModel::resetLyricsProviders,
             onLyricsSettingsChanged = viewModel::onLyricsSettingsChanged,
             updateChecking = updateState.checking,
             updateStatus = updateState.status,
@@ -449,6 +458,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             LocalGlassSettings provides glassSettings,
             LocalHazeState provides hazeState,
             LocalGlassDrag provides glassDrag,
+            LocalGlassOverlay provides glassOverlay,
             LocalPerformanceProfile provides effectiveProfile,
             LocalPerformanceMode provides performanceMode,
             LocalPerformanceReason provides performanceReason,
@@ -547,29 +557,27 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                 },
                             ),
                     ) {
-                        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                // Home owns its own non-pinned top bar and draws the black canvas
+                                // behind the status bar; every other tab keeps the shared inset.
+                                .then(
+                                    if (nav.top == null && nav.tab == Tab.HOME) Modifier
+                                    else Modifier.statusBarsPadding(),
+                                )
+                                .navigationBarsPadding(),
+                        ) {
                             // Glass Settings owns its own collapsing header + back chevron.
                             val glassSettings = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC &&
                                 nav.top == Destination.Settings
-                            if (!glassSettings) {
-                                val glassYouTubeHome = dockStyle == DockStyle.GLASS &&
-                                    nav.top == null && nav.tab == Tab.HOME && settings.youtubeIntegration
-                                val headerTrailing: (@Composable () -> Unit)? = if (glassYouTubeHome) {
-                                    {
-                                        GlassAvatarButton(
-                                            imageUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl),
-                                            name = auth.account?.displayName?.ifBlank { null } ?: youtubeAuth?.name,
-                                            onClick = { viewModel.push(Destination.Settings) },
-                                        )
-                                    }
-                                } else null
+                            if (!glassSettings && !(nav.top == null && nav.tab == Tab.HOME)) {
                                 TopBar(
                                     // The back affordance follows the requested destination; the
-                                    // old screen is only a short crossfade behind the new one.
+                                    // old screen is only a short crossfade behind the incoming one.
                                     showBack = nav.top != null,
                                     onBack = viewModel::back,
                                     collapseProgress = { dockScroll.progress },
-                                    trailing = headerTrailing,
                                 )
                             }
                             AnimatedContent(
@@ -739,7 +747,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             )
                                         }
                                         null -> when (state.tab) {
-                                            Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = mergedFavorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = likeTrack, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, settingsBadge = updateState.available != null, youtubeEnabled = settings.youtubeIntegration, home = home, youtubeAvatarUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl), youtubeAccountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName, youtubeSignedIn = youtubeAuth?.signedIn == true, onOpenHome = { viewModel.loadHome() }, onRefreshHome = viewModel::refreshYouTubeHome, onSelectHomeCategory = viewModel::selectHomeCategory, onPlayYtTrack = viewModel::playYouTubeTrack, onOpenYtCard = viewModel::openHomeCard, onLikeYtTrack = viewModel::toggleYouTubeLike, onLoadMoreHomeRow = viewModel::loadMoreHomeRow, onCloseHomeCollection = viewModel::closeHomeCollection, onYouTubeSignIn = { youtubeForceSignIn = false; youtubeLoginOpen = true }, onYouTubeSignOut = viewModel::signOutYouTube, onYouTubeSwitchAccount = { viewModel.switchYouTubeAccount(); youtubeForceSignIn = true; youtubeLoginOpen = true }, onOpenExplore = { viewModel.selectTab(Tab.EXPLORE) })
+                                            Tab.HOME -> HomeScreen(sources = sources, tracks = tracks, favorites = mergedFavorites, currentId = playbackTrackId, onAddMusic = addMusic, onScan = scan, onPlay = { viewModel.play(it, tracks) }, onFavorite = likeTrack, playlists = playlists, onAddToPlaylist = viewModel::addToPlaylist, onQueue = viewModel::enqueue, scanning = scanning, onPlayNext = viewModel::playNext, onOpenSettings = { viewModel.push(Destination.Settings) }, youtubeEnabled = settings.youtubeIntegration, personalizedHome = settings.personalizedHome, home = home, youtubeAvatarUrl = resolveAccountImageUrl(auth.account?.imageUrl, youtubeAuth?.avatarUrl), youtubeAccountName = youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName, youtubeSignedIn = youtubeAuth?.signedIn == true, youtubeExpired = youtubeAuth?.expired == true, onOpenHome = { viewModel.loadHome() }, onRefreshHome = viewModel::refreshYouTubeHome, onPlayYtTrack = viewModel::playYouTubeTrack, onOpenYtCard = viewModel::openHomeCard, onLikeYtTrack = viewModel::toggleYouTubeLike, onLoadMoreHomeRow = viewModel::loadMoreHomeRow, onCloseHomeCollection = viewModel::closeHomeCollection, onYouTubeSignIn = { youtubeForceSignIn = false; youtubeLoginOpen = true }, onOpenExplore = { viewModel.selectTab(Tab.EXPLORE) }, libraryPlaylists = remember(playlists, tracks, playlistEntries, playlistYtEntries, youtubePlaylists, spotifyImports, auth.account?.displayName, youtubeAuth?.name, settings.librarySort) { buildLibraryPlaylists(playlists, tracks, playlistEntries, playlistYtEntries, youtubePlaylists, spotifyImports, youtubeAuth?.name?.ifBlank { null } ?: auth.account?.displayName, LibrarySortOption.fromId(settings.librarySort)) }, onOpenPlaylist = { id -> viewModel.push(Destination.PlaylistDetail(id)) }, onOpenYouTubePlaylist = viewModel::openYouTubePlaylist, onOpenLibrary = { viewModel.selectTab(Tab.LIBRARY) })
                                             Tab.EXPLORE -> ExploreScreen(
                                                 onOpenMood = { mood ->
                                                     viewModel.loadExploreMood(mood.id)
@@ -927,6 +935,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     forceSignIn = youtubeForceSignIn,
                 )
             }
+
+            // A menu popup is its own window, so the dim behind it has to be drawn here, above
+            // every screen. It never consumes touches: the popup owns outside-tap dismissal.
+            GlassOverlayScrim()
         }
         }
     }

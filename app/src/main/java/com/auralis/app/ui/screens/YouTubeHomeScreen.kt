@@ -2,66 +2,66 @@ package com.auralis.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.*
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
-import com.auralis.app.data.youtube.HomeRowStyle
+import com.auralis.app.R
+import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.data.youtube.YtCard
-import com.auralis.app.data.youtube.YtItemType
-import com.auralis.app.data.youtube.cardDisplay
-import com.auralis.app.data.youtube.toTrack
-import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
-import com.auralis.app.ui.HomeCategory
-import com.auralis.app.ui.HomeRow
 import com.auralis.app.ui.HomeUiState
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.ArtworkImage
-import com.auralis.app.ui.glass.DialogBackdropBlur
-import com.auralis.app.ui.glass.GlassChip
-import com.auralis.app.ui.glass.glassWindowPanelColor
-import com.auralis.app.ui.theme.LocalThemeStyle
+import com.auralis.app.ui.components.LocalDockBottomInset
+import com.auralis.app.ui.glass.GlassSheet
+import com.auralis.app.ui.home.HomeCardPalette
+import com.auralis.app.ui.home.HomeConnectCard
+import com.auralis.app.ui.home.HomeEmpty
+import com.auralis.app.ui.home.HomeErrorBanner
+import com.auralis.app.ui.home.HomeDimens
+import com.auralis.app.ui.home.HomeRowBlock
+import com.auralis.app.ui.home.HomeSkeleton
+import com.auralis.app.ui.home.HomeTopBar
+import com.auralis.app.ui.home.homeRowPriority
+import com.auralis.app.ui.home.orderHomeRows
+import com.auralis.app.ui.home.rememberHomeStyle
+import com.auralis.app.ui.home.toHomeRowUi
 
 /**
- * AURALIS Home: a fully functional, YouTube-powered music discovery feed.
+ * AURALIS Home for the YouTube-powered feed, shown for both themes.
  *
- * Sections (For You, in order): header · category chips · Quick Picks · Trending in India · Made For
- * You · Global Top Hits · Continue Listening · New Releases · Popular Artists · Daily Mix · Because
- * You Listened · Discover Weekly. Other categories show a curated subset.
- *
- * Every row loads independently through the same keyless InnerTube repository the rest of the app
- * uses ([com.auralis.app.ui.AppViewModel.loadHome]); recommendations come from the user's own
- * AURALIS activity (play history, likes, library, searches), never a private YouTube endpoint.
- *
- * Shown for both themes before either theme branch, so Normal and Glassmorphic render the same feed
- * and only the container treatment differs.
+ * It only collects [HomeUiState], maps each row to a shared `HomeRowUi`, and draws the black
+ * canvas. Every card shape, the top bar and the states live in `ui/home`.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,84 +70,92 @@ fun YouTubeHomeScreen(
     accountName: String?,
     avatarUrl: String?,
     signedIn: Boolean,
+    favorites: Set<String>,
+    currentId: String?,
+    playlists: List<PlaylistEntity>,
+    onAddToPlaylist: (Long, Track) -> Unit,
+    onPlayNext: (Track) -> Unit,
+    /** True when a stored session was rejected, so the Connect card says "Reconnect". */
+    expired: Boolean = false,
     onOpen: () -> Unit,
     onRefresh: () -> Unit,
-    onSelectCategory: (HomeCategory) -> Unit,
     onPlayTrack: (Track) -> Unit,
     onOpenCard: (YtCard) -> Unit,
     onLike: (Track) -> Unit,
     onLoadMore: (String) -> Unit,
     onCloseCollection: () -> Unit,
     onSignIn: () -> Unit,
-    onSignOut: () -> Unit,
-    onSwitchAccount: () -> Unit,
-    onOpenExplore: () -> Unit = {},
+    onOpenExplore: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Auto-load on first render; loadHome() is a no-op when content for this category is cached.
     LaunchedEffect(Unit) { onOpen() }
 
-    // Hide rows that finished with nothing (e.g. "Because You Listened" before any history) but keep
-    // loading placeholders and failed rows so the page never looks broken.
-    val rows = state.rows.values.filter {
-        it.loading || it.error != null || it.tracks.isNotEmpty() || it.cards.isNotEmpty()
+    val style = rememberHomeStyle()
+    val rows = remember(state.rows, onOpenCard) {
+        orderHomeRows(state.rows.values.mapNotNull { it.toHomeRowUi(onOpenCard) })
     }
-    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
+    val error = state.homeError
+    val loading = state.rows.values.any { it.loading }
+    // The Connect card belongs after Recents when that row exists, otherwise at the top.
+    val connectAfter = remember(rows) {
+        val recents = rows.indexOfLast { homeRowPriority(it.title) == 1 }
+        if (recents >= 0) recents else if (rows.isNotEmpty()) 0 else -1
+    }
+    val bottomPadding = rememberHomeBottomPadding(style.glass)
 
     PullToRefreshBox(
         isRefreshing = state.refreshing,
         onRefresh = onRefresh,
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().background(HomeCardPalette.Canvas),
     ) {
         LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = if (glass) 16.dp else 0.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            Modifier.fillMaxSize().background(HomeCardPalette.Canvas),
+            contentPadding = PaddingValues(bottom = bottomPadding),
         ) {
-            if (!glass) {
-                item(key = "header") {
-                    HomeHeader(
-                        signedIn = signedIn,
-                        accountName = accountName,
-                        avatarUrl = avatarUrl,
-                        refreshing = state.refreshing,
-                        onRefresh = onRefresh,
-                        onSignIn = onSignIn,
-                        onSignOut = onSignOut,
-                        onSwitchAccount = onSwitchAccount,
+            item(key = "topbar") {
+                HomeTopBar(
+                    avatarUrl = avatarUrl,
+                    accountName = accountName,
+                    style = style,
+                    onAvatarClick = onOpenSettings,
+                )
+            }
+            if (error != null) {
+                item(key = "error") {
+                    HomeErrorBanner(error, state.refreshing, style, onRetry = onRefresh)
+                }
+            }
+            if (!signedIn && rows.isEmpty()) {
+                item(key = "connect") { HomeConnectCard(expired, style, onConnect = onSignIn) }
+            }
+            rows.forEachIndexed { index, row ->
+                item(key = "row:${row.key}") {
+                    HomeRowBlock(
+                        row = row,
+                        style = style,
+                        favorites = favorites,
+                        currentId = currentId,
+                        playlists = playlists,
+                        onPlay = onPlayTrack,
+                        onFavorite = onLike,
+                        onPlayNext = onPlayNext,
+                        onAddToPlaylist = onAddToPlaylist,
+                        onOpenCard = onOpenCard,
+                        onShowAll = onOpenExplore,
+                        onLoadMore = { onLoadMore(row.key) },
                     )
                 }
-            }
-            item(key = "categories") {
-                CategoryChips(state.category, onSelectCategory)
-            }
-            // A failed recommendations fetch is an error with a retry, not an empty account. Quick
-            // Picks (when they loaded) still render below this line.
-            if (state.homeError != null) {
-                item(key = "home-error") {
-                    HomeErrorBanner(state.homeError, state.refreshing, onRefresh)
+                if (!signedIn && index == connectAfter) {
+                    item(key = "connect") { HomeConnectCard(expired, style, onConnect = onSignIn) }
                 }
             }
-            if (rows.isNotEmpty()) {
-                rows.forEach { row ->
-                    item(key = "row:${row.id}") {
-                        HomeSection(
-                            row = row,
-                            glass = glass,
-                            onPlayTrack = onPlayTrack,
-                            onOpenCard = onOpenCard,
-                            onLike = onLike,
-                            onLoadMore = onLoadMore,
-                            onOpenExplore = onOpenExplore,
-                        )
-                    }
+            if (rows.isEmpty() && error == null) {
+                when {
+                    state.refreshing || loading -> item(key = "skeleton") { HomeSkeleton(style) }
+                    signedIn -> item(key = "empty") { HomeEmpty(style, onRetry = onRefresh) }
                 }
-            } else if (state.refreshing || state.rows.values.any { it.loading }) {
-                item(key = "skeleton") { HomeSkeleton() }
-            } else if (state.homeError != null) {
-                // The banner above already explains the failure and offers Retry.
-            } else {
-                item(key = "empty") { HomeEmpty(onRefresh) }
             }
         }
     }
@@ -168,595 +176,9 @@ fun YouTubeHomeScreen(
 }
 
 @Composable
-private fun HomeErrorBanner(message: String, refreshing: Boolean, onRetry: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            message,
-            Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.error,
-        )
-        TextButton(onClick = onRetry, enabled = !refreshing) { Text("Retry") }
-    }
-}
-
-@Composable
-private fun HomeHeader(
-    signedIn: Boolean,
-    accountName: String?,
-    avatarUrl: String?,
-    refreshing: Boolean,
-    onRefresh: () -> Unit,
-    onSignIn: () -> Unit,
-    onSignOut: () -> Unit,
-    onSwitchAccount: () -> Unit,
-) {
-    var menu by remember { mutableStateOf(false) }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
-                        Color.Transparent,
-                    ),
-                ),
-            ),
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "AURALIS",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    if (signedIn) "Good to see you${accountName?.let { ", $it" } ?: ""}"
-                    else "Discover YouTube music",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = onRefresh, enabled = !refreshing) {
-                Icon(Icons.Rounded.Refresh, "Refresh")
-            }
-            if (signedIn) {
-                Box {
-                    IconButton(onClick = { menu = true }) {
-                        AccountAvatar(accountName, avatarUrl)
-                    }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        Text(
-                            accountName ?: "Signed in",
-                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Switch account") },
-                            onClick = { menu = false; onSwitchAccount() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Sign out") },
-                            onClick = { menu = false; onSignOut() },
-                        )
-                    }
-                }
-            } else {
-                TextButton(onClick = onSignIn) { Text("Sign in") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AccountAvatar(accountName: String?, avatarUrl: String?) {
-    if (!avatarUrl.isNullOrBlank()) {
-        AsyncImage(
-            model = avatarUrl,
-            contentDescription = accountName ?: "Account",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
-    } else {
-        Box(
-            Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.Person, "Account") }
-    }
-}
-
-@Composable
-private fun CategoryChips(selected: HomeCategory, onSelect: (HomeCategory) -> Unit) {
-    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(HomeCategory.entries) { category ->
-            if (glass) {
-                // Category tabs are the only material on the raw backdrop, so they blur it too.
-                GlassChip(category.label, category == selected, { onSelect(category) })
-            } else {
-                FilterChip(
-                    selected = category == selected,
-                    onClick = { onSelect(category) },
-                    label = { Text(category.label) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeSection(
-    row: HomeRow,
-    glass: Boolean,
-    onPlayTrack: (Track) -> Unit,
-    onOpenCard: (YtCard) -> Unit,
-    onLike: (Track) -> Unit,
-    onLoadMore: (String) -> Unit,
-    onOpenExplore: () -> Unit,
-) {
-    Column {
-        SectionHeader(
-            title = row.title,
-            subtitle = row.subtitle,
-            onShowAll = if (row.showAll) onOpenExplore else null,
-        )
-        val empty = row.tracks.isEmpty() && row.cards.isEmpty()
-        when {
-            row.loading && empty -> RowPlaceholder(glass)
-            row.error != null && empty -> RowMessage("Couldn't load this row")
-            empty -> RowMessage("Nothing here yet")
-            else -> LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (row.tracks.isNotEmpty()) {
-                    items(row.tracks, key = { it.id }) { track ->
-                        TrackCard(track, glass, onPlayTrack, onLike)
-                    }
-                } else {
-                    items(row.cards, key = { it.videoId ?: it.browseId ?: it.title }) { card ->
-                        when (row.style) {
-                            HomeRowStyle.CIRCLE_CARDS -> ArtistCard(card, onOpenCard)
-                            HomeRowStyle.WIDE_CARDS -> WideVideoCard(card, glass, onOpenCard)
-                            HomeRowStyle.LARGE_CARDS -> LargePickCard(card, glass, onOpenCard)
-                            HomeRowStyle.SQUARE_TILES -> CollectionCard(card, onOpenCard)
-                            HomeRowStyle.TRACKS -> TrackCard(card.toTrack(), glass, onPlayTrack, onLike)
-                            HomeRowStyle.AUTO -> when {
-                                card.videoId != null -> TrackCard(card.toTrack(), glass, onPlayTrack, onLike)
-                                card.type == YtItemType.ARTIST -> ArtistCard(card, onOpenCard)
-                                else -> CollectionCard(card, onOpenCard)
-                            }
-                        }
-                    }
-                }
-                if (row.hasMore) {
-                    item(key = "more") { LoadMoreCard(onClick = { onLoadMore(row.id) }) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SectionHeader(title: String, subtitle: String?, onShowAll: (() -> Unit)? = null) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(top = 22.dp, bottom = if (subtitle == null) 12.dp else 2.dp),
-            )
-            if (subtitle != null) {
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-            }
-        }
-        if (onShowAll != null) {
-            TextButton(onClick = onShowAll) { Text("Show all") }
-        }
-    }
-}
-
-/** Big discovery card: large rounded artwork, title and artist, tap-to-play, heart to like. */
-@Composable
-private fun TrackCard(
-    track: Track,
-    glass: Boolean,
-    onPlay: (Track) -> Unit,
-    onLike: (Track) -> Unit,
-) {
-    val shape = RoundedCornerShape(18.dp)
-    Column(
-        Modifier
-            .width(156.dp)
-            .clip(shape)
-            .clickable { onPlay(track) },
-    ) {
-        Box(Modifier.fillMaxWidth().height(156.dp)) {
-            ArtworkImage(
-                track = track,
-                shape = shape,
-                modifier = Modifier.fillMaxSize(),
-            )
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = if (glass) 0.55f else 0.75f),
-                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
-            ) {
-                IconButton(onClick = { onLike(track) }, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        Icons.Rounded.FavoriteBorder,
-                        contentDescription = "Like ${track.title}",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
-        }
-        Text(
-            track.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp),
-        )
-        Text(
-            track.artist,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 2.dp, end = 2.dp, bottom = 2.dp),
-        )
-    }
-}
-
-/** Large Top Picks card: artwork, eyebrow ("New from <artist>"), title and release line. */
-@Composable
-private fun LargePickCard(card: YtCard, glass: Boolean, onOpen: (YtCard) -> Unit) {
-    val shape = RoundedCornerShape(22.dp)
-    val display = cardDisplay(card)
-    Column(
-        Modifier
-            .width(232.dp)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .clickable { onOpen(card) }
-            .padding(bottom = 10.dp),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(176.dp)
-                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            if (!card.thumbnailUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = card.thumbnailUrl,
-                    contentDescription = card.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            if (glass) {
-                // Readability over artwork without inventing a colour: the theme's own surface.
-                Box(
-                    Modifier.fillMaxSize().background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, MaterialTheme.colorScheme.surface.copy(alpha = 0.35f)),
-                        ),
-                    ),
-                )
-            }
-            if (card.videoId != null) {
-                PlayBadge(Modifier.align(Alignment.BottomEnd).padding(10.dp))
-            }
-        }
-        if (display.eyebrow.isNotBlank()) {
-            Text(
-                display.eyebrow,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp),
-            )
-        }
-        Text(
-            display.title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = if (display.eyebrow.isBlank()) 10.dp else 2.dp),
-        )
-        if (display.detail.isNotBlank()) {
-            Text(
-                display.detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 2.dp),
-            )
-        }
-    }
-}
-
-/** 16:9 music-video card. Tapping plays the audio stream through the normal YouTube path. */
-@Composable
-private fun WideVideoCard(card: YtCard, glass: Boolean, onOpen: (YtCard) -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
-    Column(
-        Modifier
-            .width(248.dp)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .clickable { onOpen(card) }
-            .padding(bottom = 10.dp),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(139.dp)
-                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            if (!card.thumbnailUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = card.thumbnailUrl,
-                    contentDescription = card.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            PlayBadge(Modifier.align(Alignment.Center))
-        }
-        Text(
-            card.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
-        )
-        Text(
-            card.subtitle.ifBlank { "Music video" },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 2.dp),
-        )
-    }
-}
-
-@Composable
-private fun PlayBadge(modifier: Modifier = Modifier) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = modifier,
-    ) {
-        Icon(
-            Icons.Rounded.PlayArrow,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier.padding(6.dp).size(20.dp),
-        )
-    }
-}
-
-/** Circular artist card; tapping opens the artist's songs in a sheet. */
-@Composable
-private fun ArtistCard(card: YtCard, onOpen: (YtCard) -> Unit) {
-    Column(
-        Modifier
-            .width(124.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .clickable { onOpen(card) }
-            .padding(4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        ArtistAvatar(
-            name = card.title,
-            browseId = card.browseId,
-            imageUrl = card.thumbnailUrl,
-            size = 112.dp,
-        )
-        Text(
-            card.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 8.dp),
-        )
-        Text(
-            card.subtitle.ifBlank { "Artist" },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/** Square card for albums, playlists and moods; tapping opens the collection sheet. */
-@Composable
-private fun CollectionCard(card: YtCard, onOpen: (YtCard) -> Unit) {
-    val shape = RoundedCornerShape(14.dp)
-    Column(
-        Modifier
-            .width(156.dp)
-            .clip(shape)
-            .clickable { onOpen(card) }
-            .padding(2.dp),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(156.dp)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            if (!card.thumbnailUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = card.thumbnailUrl,
-                    contentDescription = card.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
-        Text(
-            card.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp),
-        )
-        Text(
-            card.subtitle.ifBlank { card.type.name.lowercase().replaceFirstChar { it.uppercase() } },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 2.dp, end = 2.dp, bottom = 2.dp),
-        )
-    }
-}
-
-@Composable
-private fun LoadMoreCard(onClick: () -> Unit) {
-    Column(
-        Modifier
-            .width(156.dp)
-            .height(156.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(onClick = onClick),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        Text("More", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun RowMessage(message: String) {
-    Text(
-        message,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-    )
-}
-
-/** Responsive loading placeholder shown while a row (or the whole feed) is fetching. */
-@Composable
-private fun RowPlaceholder(glass: Boolean) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        userScrollEnabled = false,
-    ) {
-        items(4) {
-            Column(Modifier.width(156.dp)) {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(156.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = if (glass) 0.4f else 1f)),
-                )
-                Spacer(Modifier.height(8.dp))
-                PlaceholderBar(0.8f)
-                Spacer(Modifier.height(6.dp))
-                PlaceholderBar(0.5f)
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeSkeleton() {
-    Column {
-        repeat(3) {
-            SectionHeader("Loading", null)
-            RowPlaceholder(glass = false)
-        }
-    }
-}
-
-@Composable
-private fun HomeEmpty(onRetry: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            "Nothing to play yet",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Text(
-            "We couldn't find music for this filter. Check your connection and try again.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(onClick = onRetry) { Text("Try again") }
-    }
-}
-
-@Composable
-private fun PlaceholderBar(fraction: Float) {
-    Box(
-        Modifier
-            .fillMaxWidth(fraction)
-            .height(12.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-    )
+private fun rememberHomeBottomPadding(glass: Boolean): Dp {
+    val inset = LocalDockBottomInset.current
+    return if (glass) HomeDimens.ListBottomPadding + inset else HomeDimens.ListBottomPadding
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -771,14 +193,12 @@ private fun CollectionSheet(
     artistBrowseId: String? = null,
     artistImageUrl: String? = null,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
-    ModalBottomSheet(
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    GlassSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = if (glass) glassWindowPanelColor() else MaterialTheme.colorScheme.surfaceContainerLow,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        if (glass) DialogBackdropBlur()
         if (artistBrowseId != null) {
             Row(
                 Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
@@ -808,7 +228,7 @@ private fun CollectionSheet(
                 contentAlignment = Alignment.Center,
             ) { CircularProgressIndicator() }
             tracks.isEmpty() -> Text(
-                "No songs found.",
+                stringResource(R.string.home_no_songs),
                 Modifier.padding(16.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -843,10 +263,10 @@ private fun CollectionRow(track: Track, onPlay: (Track) -> Unit, onLike: (Track)
             )
         }
         IconButton(onClick = { onLike(track) }) {
-            Icon(Icons.Rounded.FavoriteBorder, contentDescription = "Like ${track.title}")
+            Icon(Icons.Rounded.FavoriteBorder, contentDescription = stringResource(R.string.home_like_song, track.title))
         }
         IconButton(onClick = { onPlay(track) }) {
-            Icon(Icons.Rounded.PlayArrow, contentDescription = "Play ${track.title}")
+            Icon(Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.home_play_song, track.title))
         }
     }
 }
