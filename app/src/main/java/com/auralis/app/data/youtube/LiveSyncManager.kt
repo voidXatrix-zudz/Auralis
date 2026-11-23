@@ -73,6 +73,16 @@ class LiveSyncManager(
     private val _accountPlaylists = MutableStateFlow<List<YtPlaylist>>(emptyList())
     val accountPlaylists: StateFlow<List<YtPlaylist>> = _accountPlaylists.asStateFlow()
 
+    /**
+     * Reused for the background history pull: folds `FEmusic_history` into the Room mirror so a song
+     * played on another device lands before the next foreground. The foreground timer does the same
+     * job while the app is open, so the worker only needs one pass per cycle.
+     */
+    private val historySync = YouTubeHistorySync(
+        dao = database.youtubeDao(),
+        fetch = { youtube.historySongs() },
+    )
+
     @Volatile private var enabled = false
     @Volatile private var foreground = false
     @Volatile private var playbackActive = false
@@ -180,6 +190,7 @@ class LiveSyncManager(
         try {
             fullReconcile()
             reconcilePlaylists()
+            syncHistory()
         } finally {
             enabled = false
         }
@@ -303,6 +314,20 @@ class LiveSyncManager(
         }.onFailure { error ->
             AppLog.w(TAG, "Playlist refresh failed", error)
             onFailure()
+        }
+    }
+
+    /**
+     * One history merge per background cycle. The foreground five-minute timer owns the pull while
+     * the app is open, so this only has to cover a play made elsewhere while it was closed.
+     */
+    private suspend fun syncHistory() {
+        val current = runCatching { settings.settings.first() }.getOrNull() ?: return
+        if (!current.youtubeSyncHistory) return
+        val result = runCatching { historySync.sync() }.getOrNull() ?: return
+        when {
+            result.failed -> AppLog.w(TAG, "History pull failed")
+            result.merged > 0 -> AppLog.i(TAG, "Background history: +${result.merged}")
         }
     }
 

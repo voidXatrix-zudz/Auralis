@@ -42,21 +42,17 @@ after any summary/compaction.
 
 ## NEXT
 
-- **STEP 2** — `InnerTubeClient.reportPlayback` + helpers: return a real result type (not Boolean);
-  success only on 2xx (204 = success); drop the permanent kill switch for time-based backoff; keep
-  `affectsSession = false`; split into start / watchtime / final pings; add the `playbackContext`
-  (signatureTimestamp + html5Preference + referer) the tracking block needs.
-- **STEP 3** — rewrite `YouTubePlaybackReporter` (start ping ~2 s, watchtime at `min(30 s, half)`,
-  final on end/change/pause; ≤3 pings; real listened seconds; new-play via per-play counter) + tests.
-- **STEP 4** — wire to real playback events on an application-level scope (`AppContainer.applicationScope`),
-  one collector only; expose `PlaybackReportingState` to Settings.
-- **STEP 5** — inbound polish: `sync()` returns count + error flag; one `AppLog.w` on fetch failure;
-  5-min foreground timer + once per background cycle; merge rule (surface elsewhere-played songs
-  higher without inflating play counts or deleting); metadata backfill via `songMetadata` (≤10/run).
+- **Progress on `history-sync`** (one commit per step):
+  1. `04a5123` record DO/DON'T/NEXT and findings.
+  2. `5636bce` outbound: real `PlaybackReportResult` + correct tracking pings.
+  3. `a9b9a8c` outbound: three-ping policy + reporter tests.
+  4. `4202a3b` outbound: report from an application-level scope + status state.
+  5. inbound: merge/backfill/background hook (this step).
 - **STEP 6** — status UI: one subtitle line under the existing "Sync my listening to YouTube Music"
   switch + one "History sync" entry in Logs/Diagnostics.
 - **STEP 7** — self-review (yes/no checklist).
 - **STEP 8** — final report.
+
 
 ## FINDINGS
 
@@ -178,3 +174,21 @@ One line per section-2 file, then the verdicts.
 - **I5 — CONFIRMED (accepted).** `mergeHistory` returns only fetched rows and `upsertRecents` leaves
   local-only rows untouched, so a song deleted from YouTube history stays locally. This is the
   intended behaviour; no deletion.
+
+### STEP 5 decisions
+
+- `mergeHistory` keeps a known row's real timestamp and only *lifts forward* the rows the fetched
+  page ranks above a locally newer one (right-to-left pass, `playedAt = below.playedAt + 1`). An
+  "elsewhere" play therefore surfaces without re-stamping the whole page to "now" (no drift across
+  repeat syncs) and without touching any play count.
+- `sync()` returns `HistorySyncResult(merged, failed, backfilled)`; a failed fetch is logged once as
+  `AppLog.w` instead of masquerading as "nothing played".
+- Placeholder rows (title still equal to the video id) are filled from `YouTubeRepository.metadata`
+  (InnerTube `songMetadata`), capped at `METADATA_LIMIT = 10` per pass.
+- Background hook: `LiveSyncManager.runBackgroundSync()` (the ≥15-min WorkManager tier) runs one
+  extra history merge, gated by `youtubeSyncHistory`. It only fires when live sync + integration are
+  on; the foreground 5-minute timer and resume cover the rest.
+- The inbound unit tests stay on the pure merge/backfill helpers (`mergeHistory`, `metadataTargets`,
+  `withMetadata`); the thin `sync()`/DAO wiring is intentionally not faked, matching this file's
+  existing test boundary.
+

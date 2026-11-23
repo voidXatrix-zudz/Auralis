@@ -319,6 +319,19 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      * a locked screen or a swiped-away task; the ViewModel only reads the status here.
      */
     val playbackReporting = container.playbackReporting.state
+    /**
+     * Pulls `FEmusic_history` into the Room mirror (see [com.auralis.app.data.youtube.YouTubeHistorySync]).
+     * One job at a time; the repository's five-minute cache keeps a resume from hitting the network
+     * twice.
+     */
+    private val youtubeHistorySync = com.auralis.app.data.youtube.YouTubeHistorySync(
+        dao = container.database.youtubeDao(),
+        fetch = { container.youtube.historySongs() },
+        fetchMetadata = { container.youtube.metadata(it) },
+    )
+    private var youtubeHistoryJob: Job? = null
+    /** True between `onAppResumed` and `onAppBackgrounded`; the 5-min history loop idles otherwise. */
+    @Volatile private var appInForeground: Boolean = true
     /** The in-flight email-code challenge, kept between "send code" and "verify code". */
     private var pendingEmail: EmailCodeChallenge? = null
     /** Recently played YouTube songs, mapped to [Track] for Continue Listening and recommendations. */
@@ -526,6 +539,24 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             ) { enabled, signedIn -> enabled && signedIn }
                 .distinctUntilChanged()
                 .collect { ready -> if (ready) startYouTubeSync(includeHome = true, force = true) }
+        }
+
+        // FEmusic_history refresh: once when the account becomes usable, then every five minutes.
+        // The repository cache has the same five-minute TTL, so an extra resume only re-reads it.
+        viewModelScope.launch {
+            combine(
+                settings.map { it.youtubeIntegration && it.youtubeSyncHistory },
+                container.youtubeAuth.auth.map { it?.signedIn == true },
+            ) { wanted, signedIn -> wanted && signedIn }
+                .distinctUntilChanged()
+                .collectLatest { ready ->
+                    if (!ready) return@collectLatest
+                    while (true) {
+                        // Only touch the network while the user is actually in the app.
+                        if (appInForeground) syncYouTubeHistory()
+                        delay(HISTORY_SYNC_INTERVAL_MS)
+                    }
+                }
         }
 
         // Live sync runs only while the integration is on, live sync is enabled and the session is
@@ -1194,6 +1225,26 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun refreshYouTubeHome() {
         if (youTubeSignedIn()) syncYouTubeAccount(includeHome = true, force = true)
         else loadHome(_home.value.category, force = true)
+    }
+
+    /**
+     * Imports the account's `FEmusic_history` page into the local mirror so History and "Your most
+     * played" include plays from other devices (and survive a reinstall). Gated by the same settings
+     * as reporting; single-flight because it runs on resume and on a timer. A broken pull is logged
+     * once (never silently mistaken for "nothing new").
+     */
+    fun syncYouTubeHistory() {
+        if (!settings.value.youtubeIntegration || !settings.value.youtubeSyncHistory) return
+        if (!isYouTubeAuthenticated()) return
+        if (youtubeHistoryJob?.isActive == true) return
+        youtubeHistoryJob = viewModelScope.launch {
+            val result = youtubeHistorySync.sync()
+            when {
+                result.failed -> AppLog.w("YouTube", "History: FEmusic_history pull failed")
+                result.merged > 0 -> AppLog.i("YouTube", "History: merged=${result.merged} from FEmusic_history")
+                else -> AppLog.d("YouTube", "History: FEmusic_history returned nothing to merge")
+            }
+        }
     }
 
     /**
@@ -2238,15 +2289,19 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun openUpdatePage() = container.updates.openReleasePage()
     /** Called from MainActivity.onResume to finish an install after the permission screen. */
     fun onAppResumed() {
+        appInForeground = true
         container.updates.onAppForeground()
         // Coming back to the foreground is a good moment to push any queued playlist changes.
         flushYouTubeSync()
         // ...and to poll the account once and resume the fast live-sync lanes.
         container.liveSync.onAppForeground()
+        // Re-read the account's recent history (respects the repository's five-minute cache).
+        syncYouTubeHistory()
     }
 
     /** Called from MainActivity.onStop: the in-process lanes step aside for the background tier. */
     fun onAppBackgrounded() {
+        appInForeground = false
         container.liveSync.onAppBackground()
         // The state collector dies with this ViewModel, so persist the exact position now; the
         // service may keep playing after the task is swiped away.
@@ -3515,6 +3570,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         const val SECTION_TOP_PICKS = "top_picks"
         /** `FEmusic_history` song rows. */
         const val SECTION_RECENTS = "recents"
+        /** `FEmusic_history` is re-read on this cadence while the app is open (matches the cache TTL). */
+        const val HISTORY_SYNC_INTERVAL_MS = 5L * 60L * 1000L
         /** Mood/genre tiles; "Show all" opens Explore. */
         const val SECTION_MOODS = "moods"
         const val SECTION_MADE_FOR_YOU = "made_for_you"
