@@ -20,6 +20,7 @@ import com.auralis.app.ui.glass.LocalGlassDrag
 import com.auralis.app.ui.glass.LocalGlassSettings
 import com.auralis.app.ui.glass.LocalHazeState
 import com.auralis.app.ui.glass.resolveDockGlass
+import com.auralis.app.ui.glass.rememberReduceMotion
 import com.auralis.app.ui.components.AppDock
 import com.auralis.app.ui.components.DockMetrics
 import com.auralis.app.ui.components.DockScrollState
@@ -43,9 +44,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -476,6 +481,14 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 profile
             }
         }
+        // Navigation transition multiplier from the performance mode (and "Remove animations"):
+        // full speed normally, a touch quicker on the Low profile, and a hard cut when the system
+        // animator scale is 0. The destination fade itself is a fixed fade-through shape.
+        val transitionScale = when {
+            rememberReduceMotion() -> 0f
+            effectiveProfile.isLow -> 0.6f
+            else -> 1f
+        }
         // Every glass surface samples this one captured layer. It stays registered even at blur 0
         // so dragging the slider up starts blurring immediately, without remounting the content.
         // No SDK gate: Haze 1.6 uses RenderEffect on Android 12+ and RenderScript on Android 11
@@ -614,17 +627,24 @@ fun AuralisRoot(viewModel: AppViewModel) {
                             AnimatedContent(
                                 targetState = nav,
                                 transitionSpec = {
-                                    // Keep the outgoing destination composed and visible until the
-                                    // incoming one has been composed. The incoming screen reaches
-                                    // full opacity before the outgoing fade ends, so the content
-                                    // pane is never empty and the overlap stays short enough that
-                                    // translucent glass does not visibly ghost the old screen.
-                                    val spec = if (dockStyle == DockStyle.GLASS) {
-                                        fadeIn(tween(150)) togetherWith fadeOut(tween(210))
+                                    // Fade-through: the outgoing screen fades out (and shrinks a
+                                    // hair) first, then the incoming screen fades in. Running the
+                                    // two fades in sequence means the old page is fully gone before
+                                    // the new one paints, so translucent glass never ghosts it and
+                                    // the black canvas carries the hand-off with no white flash.
+                                    if (transitionScale == 0f) {
+                                        EnterTransition.None togetherWith ExitTransition.None
                                     } else {
-                                        fadeIn(tween(140)) togetherWith fadeOut(tween(190))
-                                    }
-                                    spec.using(SizeTransform(clip = false))
+                                        val outMs = (90 * transitionScale).toInt()
+                                        val inMs = (140 * transitionScale).toInt()
+                                        (fadeIn(tween(inMs, delayMillis = outMs)) +
+                                            scaleIn(
+                                                tween(inMs, delayMillis = outMs),
+                                                initialScale = 0.985f,
+                                            )) togetherWith
+                                            (fadeOut(tween(outMs)) +
+                                                scaleOut(tween(outMs), targetScale = 0.985f))
+                                    }.using(SizeTransform(clip = false))
                                 },
                                 contentKey = { it },
                                 // Glass draws edge-to-edge under the dock (lists reserve the inset);

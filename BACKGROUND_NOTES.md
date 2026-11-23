@@ -62,8 +62,9 @@ after any summary/compaction.
 2. **STEP 2 ✓** — black canvas: `GlassTokens.Canvas`, re-based surfaces + ColorScheme + scrims,
    root-only background, transparent pages, black splash / `StartupSurface`; classified every
    Indigo / Obsidian use; both themes compile. Committed. Details in "STEP LOG" below.
-3. **STEP 3** — transitions: fade-through (out ~90 ms, in ~140 ms, tiny scale/slide), scaled by
-   Performance mode; no ghosting / flash; preserve scroll + state. Commit.
+3. **STEP 3 ✓** — transitions: fade-through (out ~90 ms, in ~140 ms, 0.985 scale), scaled by the
+   Performance profile and "Remove animations"; sequential fades so glass can't ghost; scroll/state
+   untouched. Committed. Details in "STEP LOG".
 4. **STEP 4** — one `AuralisLogo` composable on `ic_logo_header`, same position + size everywhere;
    remove `AuralisMark` (the duplicate white three-line mark). Commit.
 5. **STEP 5** — Library header: drop the History chip (both themes); keep Settings > History + the
@@ -81,6 +82,21 @@ after any summary/compaction.
 ---
 
 ## STEP LOG
+
+### STEP 3 — fade-through navigation ✓
+
+- `ui/AuralisRoot.kt`: the screen `AnimatedContent` now runs a true **fade-through** instead of the
+  overlapping crossfade: the outgoing destination fades out + scales to `0.985` over ~90 ms, then
+  the incoming one fades in + scales up from `0.985` over ~140 ms (incoming delayed by the out
+  duration, so the old translucent glass is fully gone before the new page paints — no ghosting,
+  and the black canvas carries the hand-off, so no white flash).
+- `transitionScale` drives it from the shared performance signal: `0` (hard cut) when the system
+  "Remove animations" scale is 0 via `rememberReduceMotion()`, `0.6` on the Low profile, else `1`.
+  Durations scale linearly; the curve/feel is otherwise identical in every profile, per the
+  `PerformanceProfile` contract.
+- Scroll + screen state are untouched: the same `AnimatedContent`/`contentKey` and the same dock
+  scroll state are reused; only the enter/exit spec changed.
+- Verified: `:app:compileDebugKotlin` BUILD SUCCESSFUL.
 
 ### STEP 2 — one black canvas ✓
 
