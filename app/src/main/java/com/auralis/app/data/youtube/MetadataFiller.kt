@@ -79,11 +79,15 @@ class MetadataFiller(
         var elapsedMs = 0L
         var retry = 0
         while (true) {
-            val song = gate.withPermit { attempt { fetch(videoId) } }
-            val artwork = artworkFor(track, song)
-            val filled = track.filledWith(song, artwork)
-            if (filled != track) {
-                track = filled
+            // The fetch and the artwork upgrade share one permit: both are network lookups and both
+            // count toward the concurrency cap, but the permit is never held across a delay.
+            val next = gate.withPermit {
+                val merged = track.filledWith(attempt { fetch(videoId) })
+                val artwork = artworkFor(merged)
+                if (artwork != null) merged.copy(artworkUrl = artwork) else merged
+            }
+            if (next != track) {
+                track = next
                 onFilled(track)
             }
             if (!track.needsMetadataFill) break
@@ -98,14 +102,13 @@ class MetadataFiller(
     }
 
     /**
-     * Real square art when the current URL is missing or still the 4:3 video thumbnail. The song's
-     * own thumbnail is never used for that (it is the same video still), so the existing metadata
-     * providers are asked only once the track already has a searchable title and artist.
+     * Asks the existing square-art resolver once the row has a searchable title, artist and real
+     * artwork is still missing (blank or the 4:3 video still). A cover that already loaded is never
+     * replaced, and a row without a usable title/artist is never searched.
      */
-    private suspend fun artworkFor(track: Track, song: YtSong?): String? {
+    private suspend fun artworkFor(track: Track): String? {
         val current = track.artworkUrl
         if (!current.isNullOrBlank() && !isVideoThumbnailUrl(current)) return null
-        song?.thumbnailUrl?.takeUnless(::isVideoThumbnailUrl)?.let { return it }
         val title = track.title
         if (title.isBlank() || title == track.remoteId || track.artist.isBlank()) return null
         return attempt { fallbackArtwork(track) }
@@ -132,7 +135,7 @@ val Track.needsMetadataFill: Boolean
  * Fills only what is missing. A good title, artist, album, duration or artwork is never replaced,
  * and a blank provider result never erases a value already stored.
  */
-fun Track.filledWith(song: YtSong?, resolvedArtwork: String? = null): Track {
+fun Track.filledWith(song: YtSong?): Track {
     val songTitle = song?.title?.trim().orEmpty()
     val songArtist = song?.artist?.trim().orEmpty()
         .takeUnless { it.equals("Unknown artist", ignoreCase = true) }
@@ -141,12 +144,13 @@ fun Track.filledWith(song: YtSong?, resolvedArtwork: String? = null): Track {
     val missingTitle = title.isBlank() || title == remoteId
     val nextTitle = if (missingTitle && songTitle.isNotEmpty()) songTitle else title
     val nextArtist = artist.ifBlank { songArtist }
+    // A provider that returns a real square cover replaces a blank or 4:3 still; the video's own
+    // thumbnail is not "art" and is left for the square-art resolver instead.
+    val songArtwork = song?.thumbnailUrl?.takeUnless { it.isNullOrBlank() || isVideoThumbnailUrl(it) }
     val currentArtwork = artworkUrl
-    val nextArtwork = when {
-        resolvedArtwork.isNullOrBlank() -> currentArtwork
-        currentArtwork.isNullOrBlank() || isVideoThumbnailUrl(currentArtwork) -> resolvedArtwork
-        else -> currentArtwork
-    }
+    val nextArtwork = songArtwork?.takeIf {
+        currentArtwork.isNullOrBlank() || isVideoThumbnailUrl(currentArtwork)
+    } ?: currentArtwork
     return copy(
         title = nextTitle,
         displayName = if (missingTitle && songTitle.isNotEmpty()) songTitle else displayName,

@@ -85,12 +85,83 @@ after any summary/compaction.
    (30 s deadline), 3 concurrent, cancelled when the row leaves History or the app backgrounds;
    results merge into `_remoteTracks` + `youtube_recents`; History shows a skeleton, then "Unknown
    artist", never the raw video id. Committed. Details in "STEP LOG".
-10. **STEP 10** — self-review yes/no checklist; fix every "no". Commit.
+10. **STEP 10 ✓** — self-review yes/no checklist; two "no" findings fixed (metadata effect no longer
+    restarts other rows' windows, and the square-art resolver is now actually reachable); build +
+    301 tests green. Committed. Details in "STEP LOG".
 11. **STEP 11** — final report (below / in the chat reply).
 
 ---
 
 ## STEP LOG
+
+### STEP 10 — self-review ✓
+
+Two checklist items came back "no" and were fixed before the commit:
+
+- **Metadata effect could restart other rows' windows.** The first version keyed `DisposableEffect`
+  on the pending-id list and released every id on dispose. Because a successful fill changes the
+  History list, one row finishing cancelled and immediately re-requested the remaining rows,
+  resetting their 30 s clocks (so a row could effectively poll past 30 s). `MetadataFillEffect` now
+  keeps the ids it owns in a `remember { mutableStateListOf<String>() }` and diffs membership:
+  only ids that actually leave are released, only ids that actually arrive are requested. Lifecycle
+  start/stop still requests/releases the whole set because that is a genuine visibility change.
+- **The square-art resolver was unreachable.** `songMetadata` always returns a 4:3 video still, and
+  the old `artworkFor` required a title + artist that only existed after the merge, which then ended
+  the retry loop already. `Track.filledWith` now accepts the provider's real square cover when it
+  has one (and never the video still), and `fill` asks `ArtworkResolver` once the merged row has a
+  searchable title/artist and still lacks square art. The resolver call lives inside the same
+  `Semaphore` permit as the fetch. Two tests cover it (resolver used once; existing square cover
+  never replaced), taking the class to 12 tests.
+
+Everything else passed as written:
+
+### SELF-REVIEW CHECKLIST (STEP 10 — all yes)
+
+- [x] **Glass: root black, pages transparent, Home no longer paints its own black.**
+      `AuralisBackdrop` paints `GlassTokens.Canvas` once at the root; `YouTubeHomeScreen` only paints
+      `HomeCardPalette.Canvas` when `!style.glass`.
+- [x] **No indigo background anywhere; `Indigo` only on cream fills.**
+      Audit of every `GlassTokens.Indigo`: nav active icon/label, selected chip text, primary-button
+      icon/text, switch thumb, LIKED tile, login button content, lyrics `onPrimary`, Now Playing play
+      glyph, `onAccent`/`onPrimary`-style ColorScheme slots — all foregrounds on cream. Glob for
+      `background(…Indigo)` / `containerColor…Indigo` returns only login disabled *content* colours.
+- [x] **ColorScheme background/surface/surfaceContainerLowest black; surfaces re-based off Canvas.**
+      `GlassTheme.kt`: `Canvas = 0xFF000000`, `Surface/Surface2/SurfaceHigh = blend(Cream, Canvas,
+      .06/.10/.14)`, `background` + `surfaceContainerLowest = Canvas`, `surface = Surface`.
+- [x] **Scrims black-based; switch OFF track Cream14; splash + StartupSurface black.**
+      Dialog/sheet/menu scrims are `Canvas.copy(alpha = …)`; `uncheckedTrackColor = Cream14`;
+      `sf_background_dark = #FF000000`; `StartupSurface` paints `Canvas`; bars transparent with dark
+      icons forced.
+- [x] **Normal theme byte-for-byte unchanged in colour.**
+      `ui/theme/Color.kt` and `ui/theme/Theme.kt` have no diff across steps 1–10; every other change is
+      behind `isGlass`/`ThemeStyle.GLASSMORPHIC` (the sole intentional Normal change is the required
+      Library History-chip removal).
+- [x] **One logo composable, same position/size; `AuralisMark` gone.**
+      `AuralisLogo` (the `ic_logo_header` painter) is used by Glass/Normal top bars, YouTube Home and
+      both login states; `AuralisMark.kt` and its `HomeCards` call are deleted, no references remain.
+- [x] **Library: no History chip in either theme; Settings + "+" History intact; title one line.**
+      Both headers use `TextAutoSize.StepBased` (18 sp Normal / 16 sp Glass floor); Settings has the
+      History row and both "+" menus keep the History item.
+- [x] **Appearance: Mode/Accent hidden for Glass, kept for Normal; subtitle + search correct.**
+      `if (!isGlass)` wraps both sections; Glass summary is "Theme and player background"; categories
+      key on `isGlass`, filter on `(query, categories)`, so "accent"/"mode" find nothing in Glass.
+- [x] **Mini-player art on every page/theme, ~96 px, dark neutral placeholder, no text bleed.**
+      Root-level dock always renders `ArtworkImage` with the track's own art candidate list,
+      `neutralPlaceholder = true` (opaque black, no glyph) and `requestSizePx = 96`.
+- [x] **Metadata retry: one helper, dedupe, 30 s, 1/3/6/10/10, concurrency 3, cancel, persist, no
+      blank overwrite, "Unknown artist" finally.**
+      `MetadataFiller` is the only retry owner; per-id dedupe; gaps `1/3/6/10/10 s` capping at
+      `DEADLINE_MS = 30_000`; `Semaphore(3)`; `release`/`releaseAll` on row exit and
+      `onAppBackgrounded`; results merge into `_remoteTracks` + `youtube_recents`; `filledWith` only
+      fills blanks and ignores video stills; History shows skeleton → "Unknown title"/"Unknown
+      artist", never the raw id.
+- [x] **Transitions fade-through, performance-scaled, no ghosting; scroll/state preserved.**
+      Out 90 ms then in 140 ms (delayed by the out duration) with 0.985 scale; `transitionScale` is
+      0 for reduce-motion, 0.6 on Low; same `AnimatedContent`/dock scroll state.
+- [x] **Build + unit tests green; only task hunks staged; no WIP committed.**
+      `:app:compileDebugKotlin` BUILD SUCCESSFUL; full suite 301 tests / 0 failures; steps 1–10 touch
+      only the task files (no `build.gradle`, manifest, schema or WIP symbols), and the ~41 unrelated
+      WIP files remain unstaged.
 
 ### STEP 9 — metadata retry ✓
 
@@ -337,22 +408,6 @@ One line per section-2 file, then the verdicts.
   menu already expose History.
 
 ---
-
-## SELF-REVIEW CHECKLIST (STEP 10 — yes/no, must all be yes)
-
-- [ ] Glass: root black, all pages transparent, Home no longer paints its own black.
-- [ ] Glass: no indigo background left anywhere; `Indigo` only on cream fills.
-- [ ] ColorScheme background/surface/surfaceContainerLowest = black; surfaces re-based off Canvas.
-- [ ] Scrims black-based; switch OFF track Cream14; splash + StartupSurface black.
-- [ ] Normal theme byte-for-byte unchanged.
-- [ ] One logo composable, same position/size; `AuralisMark` gone.
-- [ ] Library: no History chip (both themes); Settings + "+" History intact; title one line @1.3.
-- [ ] Appearance: Mode/Accent hidden for Glass, kept for Normal; subtitle + search correct.
-- [ ] Mini-player art on every page/theme, ~96 px, dark neutral placeholder, no text bleed.
-- [ ] Metadata retry: one helper, dedupe, 30 s, 1/3/6/10/10, concurrency 3, cancel, persist, no
-  blank overwrite, "Unknown artist" finally.
-- [ ] Transitions fade-through, performance-scaled, no ghosting; scroll/state preserved.
-- [ ] Build + unit tests green; only task hunks staged; no WIP committed.
 
 ## FINAL REPORT (STEP 11)
 

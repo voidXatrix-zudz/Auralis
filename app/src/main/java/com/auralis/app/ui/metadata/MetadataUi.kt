@@ -8,7 +8,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
@@ -23,9 +25,9 @@ import com.auralis.app.domain.model.Track
 /**
  * Keeps metadata retries tied to the screen that shows them.
  *
- * [onVisible] is called when the targets first appear and again whenever the screen returns to the
- * foreground; [onHidden] cancels those ids when the screen is disposed or the app is backgrounded,
- * so a retry never runs for a song the user can no longer see.
+ * A row joins the retry set when it first appears (and again when the screen returns to the
+ * foreground) and leaves it only when it disappears from the list or the screen is left. Diffing
+ * membership this way means one row finishing never cancels and restarts another row's window.
  */
 @Composable
 fun MetadataFillEffect(
@@ -34,27 +36,48 @@ fun MetadataFillEffect(
     onHidden: (List<String>) -> Unit,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    val ids = remember(targets) { targets.map { it.id } }
+    // Ids this effect owns right now, so a membership change releases only the rows that left.
+    val requested = remember { mutableStateListOf<String>() }
     val latestTargets by rememberUpdatedState(targets)
     val visible by rememberUpdatedState(onVisible)
     val hidden by rememberUpdatedState(onHidden)
 
-    DisposableEffect(lifecycleOwner, ids) {
+    val ids = targets.map { it.id }
+    LaunchedEffect(ids) {
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@LaunchedEffect
+        val removed = requested.filterNot(ids::contains)
+        if (removed.isNotEmpty()) {
+            requested.removeAll(removed)
+            hidden(removed)
+        }
+        val added = latestTargets.filterNot { track -> track.id in requested }
+        if (added.isNotEmpty()) {
+            requested.addAll(added.map { it.id })
+            visible(added)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> latestTargets.takeIf { it.isNotEmpty() }?.let(visible)
-                Lifecycle.Event.ON_STOP -> latestTargets.takeIf { it.isNotEmpty() }
-                    ?.let { hidden(it.map { track -> track.id }) }
+                Lifecycle.Event.ON_START -> {
+                    val current = latestTargets
+                    requested.clear()
+                    requested.addAll(current.map { it.id })
+                    if (current.isNotEmpty()) visible(current)
+                }
+                Lifecycle.Event.ON_STOP -> requested.toList().takeIf { it.isNotEmpty() }?.let { leaving ->
+                    requested.clear()
+                    hidden(leaving)
+                }
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-            latestTargets.takeIf { it.isNotEmpty() }?.let(visible)
-        }
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            latestTargets.takeIf { it.isNotEmpty() }?.let { hidden(it.map { track -> track.id }) }
+            requested.toList().takeIf { it.isNotEmpty() }?.let(hidden)
+            requested.clear()
         }
     }
 }

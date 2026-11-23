@@ -255,6 +255,45 @@ class MetadataFillerTest {
     }
 
     @Test
+    fun `a fetched title lets the square art resolver run once`() = runTest {
+        val square = "https://images.example.com/cover/square.jpg"
+        var resolutions = 0
+        val filled = mutableListOf<Track>()
+        val filler = MetadataFiller(
+            scope = this,
+            fetch = { song() },
+            onFilled = { filled += it },
+            onSettled = {},
+            fallbackArtwork = { resolutions++; square },
+        )
+
+        filler.request(placeholder())
+        advanceUntilIdle()
+
+        assertEquals(1, resolutions)
+        assertEquals(square, filled.last().artworkUrl)
+    }
+
+    @Test
+    fun `an existing square cover is never replaced`() = runTest {
+        val square = "https://images.example.com/cover/square.jpg"
+        var resolutions = 0
+        val filler = MetadataFiller(
+            scope = this,
+            fetch = { song() },
+            onFilled = {},
+            onSettled = {},
+            fallbackArtwork = { resolutions++; "https://images.example.com/other.jpg" },
+        )
+
+        val track = placeholder().copy(artworkUrl = square)
+        filler.request(track)
+        advanceUntilIdle()
+
+        assertEquals(0, resolutions)
+    }
+
+    @Test
     fun `a local track never asks for metadata`() {
         val local = placeholder().copy(isRemote = false, remoteId = null, title = "", artist = "")
 
