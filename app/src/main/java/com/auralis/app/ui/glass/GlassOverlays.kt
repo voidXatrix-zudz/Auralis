@@ -173,7 +173,7 @@ fun GlassSheet(
  * Drop-in glass counterpart of Material3's [AlertDialog] (same slots, same behaviour).
  *
  * Normal delegates to [AlertDialog] with the caller's own properties, so its look is untouched.
- * Glass draws the shared window material: scrim, blurred backdrop on API 31+, indigo tint,
+ * Glass draws the shared window material: scrim, blurred backdrop on API 31+, black tint,
  * cream hairline and the palette text styles.
  */
 @Composable

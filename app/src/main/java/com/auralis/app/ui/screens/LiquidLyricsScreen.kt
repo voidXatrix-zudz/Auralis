@@ -188,7 +188,7 @@ fun LiquidLyricsScreen(
     val accent2 = Color(ArtworkPalette.mix(accent.toArgb(), colors.tertiary.toArgb(), 0.55f))
     val accent3 = Color(ArtworkPalette.mix(accent.toArgb(), colors.secondary.toArgb(), 0.45f))
     val base = when {
-        glass -> GlassTokens.Indigo
+        glass -> GlassTokens.Canvas
         Auralis.extras.isDark -> Color(0xFF06070B)
         else -> colors.background
     }
@@ -248,8 +248,8 @@ fun LiquidLyricsScreen(
             Canvas(Modifier.fillMaxSize()) {
                 val r = min(size.width, size.height)
                 if (glass) {
-                    // Glass keeps the flat indigo field; no off-palette vertical wash.
-                    drawRect(GlassTokens.Indigo)
+                    // Glass keeps the flat black field; no off-palette vertical wash.
+                    drawRect(GlassTokens.Canvas)
                 } else {
                     drawRect(Brush.verticalGradient(listOf(base, Color(0xFF0A0C12), base)))
                 }

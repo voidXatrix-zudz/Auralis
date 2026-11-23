@@ -76,9 +76,9 @@ private val LoginBackdrop = Brush.verticalGradient(
     1f to Color(0xFF020306),
 )
 
-/** Glass paints a flat indigo field; Normal keeps the original AMOLED backdrop. */
+/** Glass paints a flat black field; Normal keeps the original AMOLED backdrop. */
 private fun loginBackdrop(glass: Boolean): Brush =
-    if (glass) Brush.linearGradient(listOf(GlassTokens.Indigo, GlassTokens.Indigo)) else LoginBackdrop
+    if (glass) Brush.linearGradient(listOf(GlassTokens.Canvas, GlassTokens.Canvas)) else LoginBackdrop
 
 @Composable
 fun LoginScreen(

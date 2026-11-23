@@ -94,7 +94,7 @@ private fun StyleCard(style: ThemeStyle, selected: Boolean, onClick: () -> Unit,
             color = scheme.onSurface,
         )
         Text(
-            if (glass) "Frosted glass, cream on indigo" else "Your existing look",
+            if (glass) "Frosted glass, cream on black" else "Your existing look",
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant,
         )

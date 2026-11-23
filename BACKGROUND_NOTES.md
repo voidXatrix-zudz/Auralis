@@ -78,7 +78,9 @@ after any summary/compaction.
 7. **STEP 7 ✓** — mini-player art: always drawn from the track's own art (same fields as the Home
    lists) with a ~96 px decode, opaque pure-black placeholder (no vinyl glyph, no grey fill), and
    nothing painted over it. Committed. Details in "STEP LOG".
-8. **STEP 8** — glass legibility sweep (Cream-on-black contrast, no leftover indigo washes). Commit.
+8. **STEP 8 ✓** — glass legibility sweep: the last indigo scrim/fill is black, login/lyrics/Now
+   Playing fallbacks no longer paint indigo, stale "indigo" wording corrected. Committed. Details in
+   "STEP LOG".
 9. **STEP 9** — `MetadataFiller`: dedupe ids, 30 s deadline, delays 1/3/6/10/10 s, concurrency 3,
    cancel on leave / background, persist success, never blank-overwrite, "Unknown artist" finally.
    Commit.
@@ -88,6 +90,26 @@ after any summary/compaction.
 ---
 
 ## STEP LOG
+
+### STEP 8 — glass legibility sweep ✓
+
+- `ui/glass/LiquidGlass.kt`: the reusable `liquidGlass` modifier's fallback scrim was still
+  `GlassTokens.Indigo` (HEAD); it is now `GlassTokens.Canvas`, so no glass surface can lay an indigo
+  wash over the black canvas or over artwork. Blur path comments corrected.
+- `ui/screens/LoginScreen.kt`: Glass login backdrop is `Canvas`, not `Indigo` (Normal keeps the
+  AMOLED gradient). Login content colours are untouched.
+- `ui/screens/LiquidLyricsScreen.kt`: Glass base field and the full-screen draw are `Canvas`.
+- `ui/screens/LyricsContent.kt`: the dark lyrics scheme's `background`/`surface`/`surfaceVariant` use
+  `GlassTokens.Canvas`/`Surface`/`Surface2` instead of the old `#212842`/`#232B45`/`#2A3350` blues.
+- `ui/screens/NowPlayingPalette.kt`: the no-artwork `ArtPalette.Fallback` is black-based
+  (`dominant`/`darkMuted = Canvas`, `vibrant`/`muted` lerped from black toward Cream).
+- Wording only (no behaviour change): `ThemeStyleSelector.kt`, `DockGlassStyle.kt`,
+  `GlassControls.kt`, `GlassKit.kt`, `GlassNowPlaying.kt`, plus the `GlassOverlays.kt` dialog doc —
+  "cream on black" / "black scrim" instead of "indigo".
+- Audit: every remaining `GlassTokens.Indigo` reference is a foreground on a Cream fill (selected
+  chips/nav icon, primary/button labels, switch thumb, lyrics `onPrimary`) or the Home accent seed
+  the prompt protects. No indigo background/fill remains.
+- Verified: `:app:compileDebugKotlin` BUILD SUCCESSFUL.
 
 ### STEP 7 — mini-player artwork ✓
 

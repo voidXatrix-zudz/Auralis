@@ -66,7 +66,7 @@ enum class GlassKind { Dock, Surface }
  * Central mapping from the three 0..1 controls to concrete alphas/radii.
  *
  * Direction, per the controls' intent:
- *  - higher dock transparency -> lower dock fill alpha (0.55 -> 0.10), colour always indigo;
+ *  - higher dock transparency -> lower dock fill alpha (0.55 -> 0.10), colour always black;
  *  - higher glass clarity      -> lower surface fill alpha (0.40 -> 0.04);
  *  - higher blur strength      -> larger backdrop radius (0dp -> 40dp).
  */
@@ -85,7 +85,7 @@ object GlassMapping {
 
     private const val DOCK_FILL_MAX = 0.55f
     /**
-     * Even at maximum see-through the dock keeps a whisper of indigo so cream labels stay legible
+     * Even at maximum see-through the dock keeps a whisper of black so cream labels stay legible
      * over bright album art. Colour is always [com.auralis.app.ui.theme.GlassTokens.Canvas].
      */
     private const val DOCK_FILL_MIN = 0.10f
@@ -98,11 +98,11 @@ object GlassMapping {
      */
     const val DOCK_BORDER_ALPHA = 0.16f
 
-    /** No backdrop blur available: denser indigo so the dock still reads as smoked glass. */
+    /** No backdrop blur available: denser black so the dock still reads as smoked glass. */
     const val DOCK_NO_BLUR_MIN_FILL = 0.22f
 
     /**
-     * Faint indigo base under every glass fill. Over the flat indigo backdrop it is invisible;
+     * Faint black base under every glass fill. Over the flat black backdrop it is invisible;
      * over album art / scrolling artwork it keeps cream text legible even at maximum see-through.
      */
     const val LEGIBILITY_SCRIM = 0.26f

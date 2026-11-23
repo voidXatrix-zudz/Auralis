@@ -235,7 +235,7 @@ fun GlassNowPlayingScreen(
     BackHandler(enabled = queueOpen) { queueOpen = false }
     BackHandler(enabled = lyricsOpen && !queueOpen && !fullLyricsOpen) { applyLyricsMode(false) }
 
-    // The two-colour palette has no artwork-derived accent: player chrome is cream on indigo.
+    // The two-colour palette has no artwork-derived accent: player chrome is cream on black.
     val playButtonColor = GlassTokens.Cream
 
     Box(modifier.fillMaxSize()) {

@@ -39,7 +39,7 @@ import dev.chrisbanes.haze.hazeEffect
  *
  * - Blur enabled + API 33+: Haze backdrop blur + an AGSL runtime-shader lens pass.
  * - Blur enabled + API 31-32: Haze backdrop blur only.
- * - Blur 0%, Low mode, or API < 31: indigo scrim + translucent cream fill + hairline.
+ * - Blur 0%, Low mode, or API < 31: black scrim + translucent cream fill + hairline.
  *
  * The caller only chooses [GlassKind]; every alpha/radius comes from the central
  * [GlassMapping] via [LocalGlassSettings]. No component passes a hardcoded tint or radius.
@@ -76,7 +76,7 @@ fun Modifier.glassSurface(
 
     if (kind == GlassKind.Dock) {
         // The dock family (nav pill, Search circle, mini-player and its controls) has its own
-        // liquid-glass recipe: real backdrop blur, a faint indigo tint (never a cream/white wash),
+        // liquid-glass recipe: real backdrop blur, a faint black tint (never a cream/white wash),
         // a gradient rim, an inner top highlight and one curved specular sheen.
         return this.dockLiquidGlass(
             hazeState = if (blur) hazeState else null,
@@ -407,7 +407,7 @@ private fun Modifier.liquidGlass(
     // keeps the surface legible even when the platform cannot blur or the slider is at 0.
     val fill = if (platformCanBlur) tint else maxOf(tint, noBlurMinAlpha)
     modifier = modifier
-        .background(GlassTokens.Indigo.copy(alpha = scrim))
+        .background(GlassTokens.Canvas.copy(alpha = scrim))
         .background(fallbackSurface.copy(alpha = fill.coerceIn(0f, 0.94f)))
     if (sheen) modifier = modifier.background(GlassTokens.SurfaceSheen)
     return modifier

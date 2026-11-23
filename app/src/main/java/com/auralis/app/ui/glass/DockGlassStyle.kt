@@ -39,7 +39,7 @@ val LocalDockGlassStyle = staticCompositionLocalOf { DockGlassStyle() }
  * Resolves the concrete render values from the one [GlassSettings] model.
  *
  * Endpoints:
- *  - Dock transparency 0% -> 0.55 indigo alpha (dense), 100% -> 0.10 (see-through).
+ *  - Dock transparency 0% -> 0.55 black alpha (dense), 100% -> 0.10 (see-through).
  *  - Blur 0% -> 0dp, 100% -> 40dp, scaled by the performance profile.
  *  - Glass clarity is intentionally NOT read here; it belongs to non-dock surfaces only.
  */

@@ -43,12 +43,12 @@ data class ArtPalette(
     val lightVibrant: Color,
 ) {
     companion object {
-        /** No artwork, or extraction failed: the app's own Midnight Indigo / Vanilla Cream family. */
+        /** No artwork, or extraction failed: pure black with the Vanilla Cream family. */
         val Fallback: ArtPalette = ArtPalette(
-            dominant = GlassTokens.Indigo,
-            vibrant = lerp(GlassTokens.Indigo, GlassTokens.Cream, 0.42f),
-            muted = lerp(GlassTokens.Indigo, GlassTokens.Cream, 0.22f),
-            darkMuted = Color(0xFF141A2E),
+            dominant = GlassTokens.Canvas,
+            vibrant = lerp(GlassTokens.Canvas, GlassTokens.Cream, 0.42f),
+            muted = lerp(GlassTokens.Canvas, GlassTokens.Cream, 0.22f),
+            darkMuted = GlassTokens.Canvas,
             lightVibrant = GlassTokens.Cream,
         )
     }

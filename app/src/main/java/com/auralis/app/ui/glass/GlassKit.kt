@@ -454,7 +454,7 @@ fun GlassEmptyState(title: String, body: String, modifier: Modifier = Modifier, 
 }
 
 /**
- * Cream waveform seek bar: symmetric rounded bars on the indigo backdrop. Played bars are solid
+ * Cream waveform seek bar: symmetric rounded bars on the black backdrop. Played bars are solid
  * cream, unplayed bars cream at 20%, matching every other progress control.
  */
 @Composable
