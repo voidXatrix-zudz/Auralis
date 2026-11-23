@@ -91,7 +91,13 @@ class InnerTubeClient(
     private val refreshSession: () -> Boolean = { false },
     /** Test seam; null means the real OkHttp client is used. */
     private val transport: InnerTubeTransport? = null,
-) {
+    /**
+     * The player signature timestamp (`sts`) when it can be read, or null. WEB_REMIX only returns a
+     * `player` tracking block to a request that quotes it; the value is session-independent, so the
+     * container sources it from the embedded player engine.
+     */
+    private val signatureTimestamp: suspend () -> Int? = { null },
+) : PlaybackHistoryGateway {
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
@@ -104,10 +110,6 @@ class InnerTubeClient(
     /** One verification/refresh at a time, so concurrent refusals cannot each start a WebView. */
     @Volatile
     private var sessionCheckInProgress = false
-
-    /** Set after the `player` endpoint refuses history reporting; stops a retry on every song. */
-    @Volatile
-    private var playbackReportingDisabled = false
 
     /**
      * A visitor id minted by an anonymous response (`responseContext.visitorData`), used only when
@@ -748,44 +750,81 @@ class InnerTubeClient(
     // ---- Playback history reporting (best-effort, never throws, never expires a session) ----
 
     /**
-     * Tells YouTube a signed-in song really played, so it lands in the account history. The
-     * tracking URLs come from the InnerTube `player` response and require a client-generated `cpn`.
+     * Opens one play: one signed `player` request for the `playbackTracking` block, then the
+     * playback-start ping that creates the account-history entry.
      *
-     * This call must never touch the session: WEB_REMIX answers `player` with 400/401/403 for
-     * perfectly valid accounts, and treating that as an expiry logged the user out on every play.
-     * A refusal is logged once per app run and history reporting then stays off until restart.
+     * The `playbackContext` (plus the player `signatureTimestamp` when it is available) is what makes
+     * WEB_REMIX return the tracking block at all; without it the endpoint answers HTTP 200 but omits
+     * `playbackTracking`, which is reported as [PlaybackReportResult.NoTrackingUrl] rather than as a
+     * fake success. This call must never touch the session — a refusal here says nothing about the
+     * cookie — so no `affectsSession` path is involved.
+     *
+     * On success, [PlaybackReportResult.Ok.tracking] carries the endpoints and nonce to reuse for the
+     * watch-time pings.
      */
-    suspend fun reportPlayback(videoId: String, watchedSeconds: Long): Boolean = withContext(Dispatchers.IO) {
-        if (auth() == null || playbackReportingDisabled) return@withContext false
+    override suspend fun openPlayback(videoId: String): PlaybackReportResult = withContext(Dispatchers.IO) {
+        if (auth() == null) return@withContext PlaybackReportResult.NoSession
         try {
+            val sts = runCatching { signatureTimestamp() }.getOrNull()
             val payload = buildJsonObject {
                 put("context", clientContext())
                 put("videoId", videoId)
                 put("contentCheckOk", true)
                 put("racyCheckOk", true)
+                putJsonObject("playbackContext") {
+                    putJsonObject("contentPlaybackContext") {
+                        put("html5Preference", "HTML5_PREF_WANTS")
+                        put("referer", "$ORIGIN/watch?v=$videoId")
+                        sts?.let { put("signatureTimestamp", it) }
+                    }
+                }
             }.toString()
             val tracking = postJson(PLAYER_URL, payload)["playbackTracking"]?.asObject()
-                ?: return@withContext false
+                ?: return@withContext PlaybackReportResult.NoTrackingUrl
             val playbackUrl = tracking["videostatsPlaybackUrl"]?.asObject()?.get("baseUrl")?.asString()
             val watchtimeUrl = tracking["videostatsWatchtimeUrl"]?.asObject()?.get("baseUrl")?.asString()
-            val cpn = randomCpn()
-            val seconds = watchedSeconds.coerceAtLeast(HISTORY_MIN_SECONDS)
-            playbackUrl?.let { getBlank(trackingUrl(it, cpn, null)) }
-            watchtimeUrl?.let { getBlank(trackingUrl(it, cpn, seconds)) }
-            !playbackUrl.isNullOrBlank() || !watchtimeUrl.isNullOrBlank()
-        } catch (error: Exception) {
-            val code = codeOf(error)
-            if (code == 400 || code == 401 || code == 403) {
-                // One line for the whole run: the player endpoint is not usable with this client.
-                if (!playbackReportingDisabled) {
-                    playbackReportingDisabled = true
-                    AppLog.w(TAG, "player tracking skipped (HTTP $code); history reporting off for this run")
-                }
-            } else {
-                AppLog.d(TAG, "player tracking skipped (HTTP $code)")
+            if (playbackUrl.isNullOrBlank() && watchtimeUrl.isNullOrBlank()) {
+                return@withContext PlaybackReportResult.NoTrackingUrl
             }
-            false
+            val cpn = randomCpn()
+            // The playback-start ping is what creates the history entry; a refusal is a real failure.
+            playbackUrl?.let { url ->
+                val code = getStats(trackingUrl(url, cpn, cmtSeconds = null, final = false))
+                if (!isAccepted(code)) return@withContext PlaybackReportResult.Refused(code)
+            }
+            PlaybackReportResult.Ok(PlaybackTracking(cpn = cpn, playbackUrl = playbackUrl, watchtimeUrl = watchtimeUrl))
+        } catch (error: Exception) {
+            refused(error, "open")
         }
+    }
+
+    /**
+     * Sends one watch-time ping for an already-open play. [listenedSeconds] is real listened time
+     * (never the playhead), and [final] closes the play out with `final=1`/`state=paused`.
+     */
+    override suspend fun reportWatchtime(
+        tracking: PlaybackTracking,
+        listenedSeconds: Long,
+        final: Boolean,
+    ): PlaybackReportResult = withContext(Dispatchers.IO) {
+        val url = tracking.watchtimeUrl ?: return@withContext PlaybackReportResult.NoTrackingUrl
+        val seconds = listenedSeconds.coerceAtLeast(HISTORY_MIN_SECONDS)
+        try {
+            val code = getStats(trackingUrl(url, tracking.cpn, cmtSeconds = seconds, final = final))
+            if (isAccepted(code)) PlaybackReportResult.Ok() else PlaybackReportResult.Refused(code)
+        } catch (error: Exception) {
+            refused(error, if (final) "final" else "watchtime")
+        }
+    }
+
+    /** 2xx only; 204 (no content) is a normal, successful stats reply. */
+    private fun isAccepted(code: Int): Boolean = code in 200..299
+
+    /** One short, code-only line per refused report; never carries a tracking URL or a secret. */
+    private fun refused(error: Exception, call: String): PlaybackReportResult {
+        val code = codeOf(error)
+        AppLog.d(TAG, "history $call skipped (HTTP $code)")
+        return PlaybackReportResult.Refused(code)
     }
 
     /**
@@ -817,26 +856,38 @@ class InnerTubeClient(
         }.getOrNull()
     }
 
-    private fun trackingUrl(base: String, cpn: String, cmtSeconds: Long?): String {
+    /**
+     * The exact `/videostats` GET shape a WEB_REMIX client sends: the client identity, a fresh
+     * [cpn], and, for the watch-time URL, the listened window (`cmt`/`st`/`et`/`state`) plus
+     * `final=1` on the closing ping. Dropping `c`/`cver` or the window is why a hit can be accepted
+     * but not recorded as listening history.
+     */
+    private fun trackingUrl(base: String, cpn: String, cmtSeconds: Long?, final: Boolean): String {
         val separator = if (base.contains('?')) '&' else '?'
-        val withCpn = "$base${separator}cpn=$cpn&ver=2&fmt=1"
-        return if (cmtSeconds != null) "$withCpn&cmt=$cmtSeconds" else withCpn
+        val withCpn = buildString {
+            append(base).append(separator)
+            append("cpn=").append(cpn)
+            append("&ver=2&fmt=1&c=WEB_REMIX&cver=").append(clientVersion())
+            append("&cplayer=UNIPLAYER&hl=").append(deviceLanguage())
+        }
+        if (cmtSeconds == null) return withCpn
+        val state = if (final) "paused" else "playing"
+        return "$withCpn&cmt=$cmtSeconds&st=0&et=$cmtSeconds&state=$state" + if (final) "&final=1" else ""
     }
 
-    private fun getBlank(url: String) {
-        runCatching {
-            val builder = Request.Builder()
-                .url(url)
-                .header("User-Agent", userAgent(anonymous = false))
-                .header("X-Origin", ORIGIN)
-                .header("Origin", ORIGIN)
-                .header("Referer", "$ORIGIN/")
-            (auth()?.visitorData?.takeIf { it.isNotBlank() } ?: liveVisitorData)
-                ?.let { builder.header("X-Goog-Visitor-Id", it) }
-            sign(builder, auth()?.takeIf { it.signedIn })
-            http.newCall(builder.build()).execute().use { it.body?.close() }
-        }
-    }
+    /** GETs one stats URL and returns the HTTP status, or 0 when the request never landed. */
+    private fun getStats(url: String): Int = runCatching {
+        val builder = Request.Builder()
+            .url(url)
+            .header("User-Agent", userAgent(anonymous = false))
+            .header("X-Origin", ORIGIN)
+            .header("Origin", ORIGIN)
+            .header("Referer", "$ORIGIN/")
+        (auth()?.visitorData?.takeIf { it.isNotBlank() } ?: liveVisitorData)
+            ?.let { builder.header("X-Goog-Visitor-Id", it) }
+        sign(builder, auth()?.takeIf { it.signedIn })
+        http.newCall(builder.build()).execute().use { it.code }
+    }.getOrDefault(0)
 
     private fun randomCpn(): String {
         val alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"

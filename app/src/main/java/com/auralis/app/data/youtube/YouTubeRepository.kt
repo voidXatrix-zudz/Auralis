@@ -43,6 +43,12 @@ class YouTubeRepository(
     private val youtubeJs: YouTubeJsProvider? = null,
     /** Whether the active network is metered; drives the per-network provider preference. */
     private val metered: () -> Boolean = { false },
+    /**
+     * The current player signature timestamp (`sts`), when it can be read. The history-reporting
+     * `player` request needs it to be issued a tracking block; the container sources it from the
+     * embedded player engine, and a null result simply omits it.
+     */
+    private val signatureTimestamp: suspend () -> Int? = { null },
     /** Test seam; production leaves this null and InnerTube uses OkHttp. */
     transport: InnerTubeTransport? = null,
 ) {
@@ -78,7 +84,11 @@ class YouTubeRepository(
         },
         refreshSession = { refreshAfterRefusal() },
         transport = transport,
+        signatureTimestamp = signatureTimestamp,
     )
+
+    /** Outbound history reporting; [innerTube] owns the request shape and the no-expiry rule. */
+    val playbackHistory: PlaybackHistoryGateway = innerTube
 
     /**
      * Self-heal for a session flagged expired: account_menu, then silent refresh, then a 30-minute
@@ -760,10 +770,6 @@ class YouTubeRepository(
         if (ok) browseCache.remove("VL$playlistId")
         return ok
     }
-
-    /** Best-effort account history ping; never throws and never blocks playback. */
-    suspend fun reportPlayback(videoId: String, watchedSeconds: Long): Boolean =
-        innerTube.reportPlayback(videoId, watchedSeconds)
 
     private companion object {
         const val TAG = "YouTube"

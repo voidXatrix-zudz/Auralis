@@ -63,6 +63,9 @@ class YouTubeJsEngine(
     /** Set once the engine has permanently failed to start; stops every later attempt. */
     @Volatile private var failed = false
 
+    /** The player `sts` once read; it only changes when YouTube ships a new player, so cache it. */
+    @Volatile private var cachedSignatureTimestamp: Int? = null
+
     /** Human-readable state for the Logs screen diagnostics. */
     @Volatile var status: String = "not started"
         private set
@@ -142,6 +145,29 @@ class YouTubeJsEngine(
                 }
             }
         }.getOrNull()?.takeIf { it != "null" && it.isNotBlank() }
+    }
+
+    /**
+     * The YouTube player signature timestamp (`sts`), or null when it could not be read.
+     *
+     * The history-reporting `player` request only receives a tracking block when it quotes this
+     * value, so this is what makes reporting possible at all. Best-effort and cached for the run:
+     * a null result is not cached, so a cold engine can answer it on a later play.
+     */
+    suspend fun signatureTimestamp(timeoutMs: Long = STS_TIMEOUT_MS): Int? {
+        cachedSignatureTimestamp?.let { return it }
+        val script = "await __auralis.signatureTimestamp()"
+        return runCatching {
+            withTimeoutOrNull(timeoutMs) {
+                val qjs = ensureReady() ?: return@withTimeoutOrNull null
+                evalLock.withLock {
+                    withContext(jsDispatcher) {
+                        qjs.evaluate<String>(script, filename = "sts.js")
+                    }
+                }
+            }
+        }.getOrNull()?.takeIf { it != "null" && it.isNotBlank() }?.toIntOrNull()
+            ?.also { cachedSignatureTimestamp = it }
     }
 
     private suspend fun ensureReady(): QuickJs? {
@@ -295,5 +321,8 @@ class YouTubeJsEngine(
         const val TAG = "YouTube"
         val JSON_MEDIA = "application/json".toMediaType()
         val RENAME = Regex("^(\\S+)\\s+as\\s+(\\S+)$")
+
+        /** Generous enough for a cold engine to fetch the player script, bounded so it never hangs. */
+        const val STS_TIMEOUT_MS = 8_000L
     }
 }

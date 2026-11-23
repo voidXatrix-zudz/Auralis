@@ -165,6 +165,22 @@
       });
     },
 
+    /**
+     * The current YouTube player signature timestamp (`sts`), or 'null'.
+     *
+     * WEB_REMIX only issues a `player` tracking block when the request quotes the running player's
+     * timestamp, so the reporting path needs this value even though playback itself does not. It is
+     * read from the same player the audio resolver already loads and is independent of the session:
+     * the timestamp comes from the player script, which is identical for guests and signed-in users.
+     */
+    signatureTimestamp: function () {
+      return getInnertube().then(function (yt) {
+        var player = yt.session && yt.session.player;
+        var sts = player && player.signature_timestamp;
+        return sts ? String(sts) : 'null';
+      });
+    },
+
     search: function (query) {
       var yt;
       return getInnertube().then(function (instance) {
