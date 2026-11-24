@@ -34,7 +34,8 @@ refraction) **and** fix the launch glitches L1–L6. Kotlin + AGSL only. No new 
 - STEP 1 ✅ read + findings + verify W1–W5.
 - STEP 2 ✅ mapping + unit tests (11 tests green).
 - STEP 3 ✅ `dockGlassMaterial` + STEP 4 apply to dock/pill/circles (delegated).
-- STEP 5 preview + labels. STEP 6 launch glitches L1–L6. STEP 7 self-review. STEP 8 final report.
+- STEP 5 ✅ live preview + numeric labels (uses the production material).
+- STEP 6 launch glitches L1–L6. STEP 7 self-review. STEP 8 final report.
 
 ## PROGRESS / DECISIONS
 - **STEP 2 (done)** — `GlassMapping`: `MAX_BLUR_DP = 80f`; `blurDp(strength) = round0.5(80*s^1.15)`;
@@ -56,6 +57,14 @@ refraction) **and** fix the launch glitches L1–L6. Kotlin + AGSL only. No new 
   `uSaturation` and `uBrightness` (+0.03). `dockLiquidGlass` deleted; AppDock's `dockSurface` /
   `dockControlCircle` are now thin delegates, so the tab pill, circles and mini-player pill all share
   the one material. Reused the cached `RuntimeShader` (no per-frame allocation).
+- **STEP 5 (done)** — live Appearance preview in `SettingsSubPages.kt`. `AppearanceSettingsPage` builds
+  `liveGlass = GlassSettings.fromPercent(...)` + `previewDock = resolveDockGlass(...)` from the page's
+  own `settings`, so the sliders, the readout and the preview all read one snapped copy. Preview card =
+  vivid backdrop (`hazeSource`) + the production `dockGlassMaterial` tab pill + a production
+  `dockGlassMaterial` circle (no second backdrop sample) + a production `glassSurface(Surface)` chip so
+  "Glass clarity" visibly moves its fill/hairline. Numeric labels: clarity %, dock %, `blur % · N dp`,
+  and a "Preview · dock / blur / clarity" line. `limitedReason` from `resolveDockGlass` is shown under
+  the preview (only Android <12 / Low / battery saver). No new libraries.
 
 
 ## FINDINGS

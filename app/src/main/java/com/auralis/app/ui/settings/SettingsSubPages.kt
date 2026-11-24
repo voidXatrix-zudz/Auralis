@@ -1,5 +1,6 @@
 package com.auralis.app.ui.settings
 
+import android.os.Build
 import android.os.Environment
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,10 +12,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
@@ -53,6 +56,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -83,12 +88,25 @@ import com.auralis.app.logging.refreshAgeText
 import com.auralis.app.ui.debugCrashTrigger
 import com.auralis.app.ui.components.PlayerBackgroundSelector
 import com.auralis.app.ui.components.ThemeStyleSelector
+import com.auralis.app.ui.components.DockStyle
+import com.auralis.app.ui.glass.DockGlassStyle
+import com.auralis.app.ui.glass.GlassKind
+import com.auralis.app.ui.glass.GlassMapping
+import com.auralis.app.ui.glass.GlassSettings
+import com.auralis.app.ui.glass.LocalDockGlassStyle
+import com.auralis.app.ui.glass.LocalGlassSettings
+import com.auralis.app.ui.glass.dockGlassMaterial
+import com.auralis.app.ui.glass.glassSurface
+import com.auralis.app.ui.glass.resolveDockGlass
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
 import com.auralis.app.ui.theme.Accents
+import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.auralisSliderColors
 import com.auralis.app.ui.theme.auralisSwitchColors
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
@@ -557,6 +575,25 @@ private fun YouTubeMusicSettingsPage(settings: AppSettings, actions: SettingsAct
 @Composable
 private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
     val isGlass = glass()
+    val profile = LocalPerformanceProfile.current
+    val performanceReason = LocalPerformanceReason.current
+    // The three controls as one model, rebuilt from the persisted 0..100 ints on every tick. The
+    // sliders, the numeric readout and the preview all read this copy, so a drag can never leave
+    // the preview one frame behind the value it is displaying.
+    val liveGlass = remember(
+        settings.dockGlassTransparency,
+        settings.glassClarity,
+        settings.dockGlassBlur,
+    ) {
+        GlassSettings.fromPercent(
+            settings.dockGlassTransparency,
+            settings.glassClarity,
+            settings.dockGlassBlur,
+        )
+    }
+    val previewDock = remember(settings, liveGlass, profile, performanceReason) {
+        resolveDockGlass(settings, liveGlass, profile, performanceReason)
+    }
     SettingsPage("Appearance", onBack) {
         item { SettingsSectionLabel("Theme style") }
         item { SettingsGroupCard { Box(Modifier.padding(12.dp)) { ThemeStyleSelector(selected = settings.themeStyle, onSelect = { s -> actions.onUpdate { it.copy(themeStyle = s) } }) } } }
@@ -595,16 +632,163 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
             item { SettingsSectionLabel("Glass") }
             item {
                 SettingsGroupCard {
-                    SliderSetting("Glass clarity", "${settings.glassClarity}%", settings.glassClarity / 100f, 0f..1f, 0) { v -> actions.onUpdate { it.copy(glassClarity = (v * 100).roundToInt()) } }
+                    SliderSetting(
+                        "Glass clarity",
+                        "${(liveGlass.glassClarity * 100).roundToInt()}%",
+                        liveGlass.glassClarity,
+                        0f..1f,
+                        0,
+                    ) { v -> actions.onUpdate { it.copy(glassClarity = (v * 100).roundToInt()) } }
                     SettingsDivider()
-                    SliderSetting("Dock transparency", "${settings.dockGlassTransparency}%", settings.dockGlassTransparency / 100f, 0f..1f, 0) { v -> actions.onUpdate { it.copy(dockGlassTransparency = (v * 100).roundToInt()) } }
+                    SliderSetting(
+                        "Dock transparency",
+                        "${(liveGlass.dockTransparency * 100).roundToInt()}%",
+                        liveGlass.dockTransparency,
+                        0f..1f,
+                        0,
+                    ) { v -> actions.onUpdate { it.copy(dockGlassTransparency = (v * 100).roundToInt()) } }
                     SettingsDivider()
-                    SettingsSwitchRow(Icons.Rounded.AutoAwesome, "Live blur", "Blur the content behind the glass (Android 12+)", settings.dockGlassBlur > 0) { on -> actions.onUpdate { it.copy(dockGlassBlur = if (on) 60 else 0) } }
+                    SettingsSwitchRow(
+                        Icons.Rounded.AutoAwesome,
+                        "Live blur",
+                        if (Build.VERSION.SDK_INT >= 31) "Blur the content behind the glass" else "Live blur needs Android 12 or newer",
+                        liveGlass.blurStrength > 0f,
+                    ) { on ->
+                        // Turning blur on restores a usable mid radius instead of jumping to 0 dp.
+                        actions.onUpdate { it.copy(dockGlassBlur = if (on) GlassMapping.DEFAULT_BLUR_PERCENT else 0) }
+                    }
                     SettingsDivider()
-                    SliderSetting("Blur strength", "${settings.dockGlassBlur}%", settings.dockGlassBlur / 100f, 0f..1f, 0) { v -> actions.onUpdate { it.copy(dockGlassBlur = (v * 100).roundToInt()) } }
+                    SliderSetting(
+                        "Blur strength",
+                        "${(liveGlass.blurStrength * 100).roundToInt()}% · ${previewDock.blurDp.roundToInt()} dp",
+                        liveGlass.blurStrength,
+                        0f..1f,
+                        0,
+                    ) { v -> actions.onUpdate { it.copy(dockGlassBlur = (v * 100).roundToInt()) } }
                     SettingsDivider()
                     SettingsSwitchRow(Icons.Rounded.AutoAwesome, "Glass outlines", "1dp specular hairline around glass surfaces", settings.glassOutlines) { on -> actions.onUpdate { it.copy(glassOutlines = on) } }
                 }
+            }
+            // Live preview: the exact same material as the real dock and mini player, rendered over
+            // a vivid backdrop so each slider visibly changes it. Reads only the values above.
+            item {
+                SettingsGroupCard {
+                    AppearanceGlassPreview(
+                        glass = liveGlass,
+                        dock = previewDock,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                    )
+                    SettingsHelperText(
+                        "Preview · dock ${(liveGlass.dockTransparency * 100).roundToInt()}% · " +
+                            "blur ${previewDock.blurDp.roundToInt()} dp · " +
+                            "clarity ${(liveGlass.glassClarity * 100).roundToInt()}%",
+                    )
+                    previewDock.limitedReason?.let { SettingsHelperText(it) }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The Appearance preview. It is not a mock: the bar and the circle both run the production
+ * [dockGlassMaterial], and the small tile runs the production [glassSurface] surface path, so
+ * "Dock transparency", "Blur strength", "Glass clarity" and "Glass outlines" all move something
+ * real. The colourful backdrop exists purely so blur, colour bleed, saturation and the rim are
+ * visible against the black preview frame.
+ */
+@Composable
+private fun AppearanceGlassPreview(
+    glass: GlassSettings,
+    dock: DockGlassStyle,
+    modifier: Modifier = Modifier,
+) {
+    val haze = remember { HazeState() }
+    Box(
+        modifier
+            .height(152.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(GlassTokens.Canvas),
+    ) {
+        Box(
+            Modifier
+                .matchParentSize()
+                .hazeSource(haze)
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF2F4BFF), Color(0xFF7A1FFF), Color(0xFFFF7A18)),
+                    ),
+                ),
+        ) {
+            Box(
+                Modifier
+                    .offset(x = 34.dp, y = 26.dp)
+                    .size(78.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF12D6C4)),
+            )
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = (-28).dp, y = (-40).dp)
+                    .size(60.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFFFD166)),
+            )
+        }
+        CompositionLocalProvider(
+            LocalGlassSettings provides glass,
+            LocalDockGlassStyle provides dock,
+        ) {
+            // Non-dock surface path: Glass clarity drives this fill and hairline.
+            Row(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 14.dp, top = 14.dp)
+                    .height(32.dp)
+                    .glassSurface(GlassKind.Surface, CircleShape, hazeState = haze)
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Glass clarity", style = MaterialTheme.typography.labelSmall, color = GlassTokens.Cream)
+            }
+            // Dock tab pill: the production material, the same one the real dock uses.
+            Row(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 12.dp, end = 12.dp, bottom = 14.dp)
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .dockGlassMaterial(DockStyle.GLASS, CircleShape, hazeState = haze, cornerRadius = 25.dp)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Icon(Icons.Rounded.MusicNote, null, tint = GlassTokens.Cream, modifier = Modifier.size(18.dp))
+                Text("Dock", style = MaterialTheme.typography.labelMedium, color = GlassTokens.Cream)
+                Spacer(Modifier.weight(1f))
+                Icon(Icons.Rounded.Favorite, null, tint = GlassTokens.Cream, modifier = Modifier.size(16.dp))
+                Icon(Icons.Rounded.AutoAwesome, null, tint = GlassTokens.Cream, modifier = Modifier.size(16.dp))
+            }
+            // Dock circle: no second backdrop sample, exactly like the real controls.
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 26.dp, bottom = 74.dp)
+                    .size(34.dp)
+                    .dockGlassMaterial(
+                        DockStyle.GLASS,
+                        CircleShape,
+                        hazeState = haze,
+                        cornerRadius = 17.dp,
+                        refraction = false,
+                        blurBackdrop = false,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.MusicNote, null, tint = GlassTokens.Cream, modifier = Modifier.size(15.dp))
             }
         }
     }
