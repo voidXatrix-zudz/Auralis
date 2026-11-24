@@ -32,8 +32,31 @@ refraction) **and** fix the launch glitches L1–L6. Kotlin + AGSL only. No new 
 
 ## NEXT
 - STEP 1 ✅ read + findings + verify W1–W5.
-- STEP 2 mapping + unit tests. STEP 3 `dockGlassMaterial`. STEP 4 apply to dock/pill/circles.
+- STEP 2 ✅ mapping + unit tests (11 tests green).
+- STEP 3 ✅ `dockGlassMaterial` + STEP 4 apply to dock/pill/circles (delegated).
 - STEP 5 preview + labels. STEP 6 launch glitches L1–L6. STEP 7 self-review. STEP 8 final report.
+
+## PROGRESS / DECISIONS
+- **STEP 2 (done)** — `GlassMapping`: `MAX_BLUR_DP = 80f`; `blurDp(strength) = round0.5(80*s^1.15)`;
+  `dockTintAlpha` piecewise {0.90,0.66,0.42,0.20,0.05}; `dockTintColor()` = Canvas+3% Cream;
+  `dockFrostAlpha = 0.02+0.06*(1-s)`; `dockTextScrimAlpha = 0.16*(1-blurFraction)`;
+  `dockSaturation = 1+0.30*blurFraction`; `DOCK_BRIGHTNESS = 0.03`; `DOCK_NO_BLUR_TINT_FLOOR = 0.50`;
+  `hazeInputScale(r) = clamp(1/(1+r/28), 0.25, 1)`. `resolveDockGlass` drops the
+  "Reduced by Performance Mode" message, allows dock refraction in High **and** Medium, and keeps
+  "limited" only for Android <12 / Low / battery saver.
+  - *Compat note*: two symbols are deliberately kept one step longer because their only remaining
+    callers live in unrelated WIP: the 2-arg `blurDp(strength, scale)` overload (ignores `scale`,
+    so the radius is still tier-independent) and `DOCK_NO_BLUR_MIN_FILL`. They are removed when the
+    WIP call sites are retired. This keeps the WIP tree compiling without committing it.
+- **STEP 3+4 (done)** — `Modifier.dockGlassMaterial(style, shape, …)` in `LiquidGlass.kt` is now the
+  ONE dock material (SOLID + GLASS). GLASS: Haze blur at the tier-independent radius, `HazeInputScale`
+  = `hazeInputScale(radius) * (Medium ? 0.8 : 1)`, warm tint + frost + adaptive scrim, `dockRim()`
+  (Cream 55%→12%) gated by `outlines`, always-on `dockInnerSheen()` (Cream 8%→0 at 40% height), and
+  an AGSL lens with `uEdge` (16dp), `uRefract`/`uChroma` (0.35/0.012 scaled 0.6×→1.0× by blur),
+  `uSaturation` and `uBrightness` (+0.03). `dockLiquidGlass` deleted; AppDock's `dockSurface` /
+  `dockControlCircle` are now thin delegates, so the tab pill, circles and mini-player pill all share
+  the one material. Reused the cached `RuntimeShader` (no per-frame allocation).
+
 
 ## FINDINGS
 - **GlassControls.kt** — `GlassMapping` is the one 0..1→alpha/radius table. Currently

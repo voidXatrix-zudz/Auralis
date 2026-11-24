@@ -5,6 +5,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.ui.performance.PerformanceProfile
+import com.auralis.app.ui.performance.VisualPerformanceTier
 
 /**
  * The performance/optics flags every glass surface renders with, plus the dock's resolved fill and
@@ -70,7 +71,8 @@ fun resolveDockGlass(
         tintAlpha = tint,
         blurDp = effectiveBlur,
         blurEnabled = blurEnabled,
-        refractionEnabled = blurEnabled && profile.refractionEnabled,
+        refractionEnabled = blurEnabled &&
+            (profile.tier == VisualPerformanceTier.HIGH || profile.tier == VisualPerformanceTier.MEDIUM),
         outlines = settings.glassOutlines,
         shadowScale = profile.shadowScale,
         downsample = profile.blurDownsample,

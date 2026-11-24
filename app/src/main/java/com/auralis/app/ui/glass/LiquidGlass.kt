@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -75,21 +76,15 @@ fun Modifier.glassSurface(
     }
 
     if (kind == GlassKind.Dock) {
-        // The dock family (nav pill, Search circle, mini-player and its controls) has its own
-        // liquid-glass recipe: real backdrop blur, a faint black tint (never a cream/white wash),
-        // a gradient rim, an inner top highlight and one curved specular sheen.
-        return this.dockLiquidGlass(
-            hazeState = if (blur) hazeState else null,
+        // The dock family (nav pill, circles, mini-player and its controls) has exactly ONE
+        // material; see [dockGlassMaterial].
+        return this.dockGlassMaterial(
+            style = com.auralis.app.ui.components.DockStyle.GLASS,
             shape = shape,
+            hazeState = if (blur) hazeState else null,
             cornerRadius = cornerRadius,
-            tintAlpha = fill,
-            blurDp = blurDp,
-            saturation = optics.saturation,
-            borderAlpha = borderAlpha,
-            refraction = refraction && perf.refractionEnabled && profile.refractionEnabled,
-            blurEnabled = blur && profile.blurEnabled,
-            downsample = perf.downsample,
-            sheen = perf.shadowScale > 0.5f,
+            refraction = refraction,
+            blurBackdrop = blur,
         )
     }
 
@@ -112,86 +107,153 @@ fun Modifier.glassSurface(
 }
 
 /**
- * Liquid glass for the dock family only: nav pill, Search circle, mini-player pill and the small
- * controls that sit on them.
+ * The ONE dock material, used by the dock tab pill, the dock circles, the mini-player pill and the
+ * Appearance preview, so all four stay byte-identical.
  *
- * The recipe is deliberately thin so it stays smooth at 120 Hz:
- *  1. real Haze backdrop blur (one capture sample per surface, no second blur layer),
- *  2. a faint black tint — never cream/white — so artwork colours glow through,
- *  3. a thin gradient rim, bright on opposite corners,
- *  4. a soft inner top highlight plus one curved specular sheen,
- *  5. the caller's soft shadow (drawn outside this modifier).
+ * - SOLID: opaque palette surface with the dock's soft shadow. No blur, no rim.
+ * - GLASS: real Haze backdrop blur (heavy), a warm near-black tint, a thin warm frost, an adaptive
+ *   text/icon scrim that fades out as blur rises, a 1dp cream rim bright on opposite corners, a
+ *   soft inner top sheen, and an AGSL lens pass (refraction + chromatic edge + saturation + a small
+ *   brightness lift) on Android 13+ in High/Medium.
  *
- * Icons, labels and artwork are children and therefore always stay crisp: only what is *behind*
- * the surface is ever blurred.
+ * Every alpha/radius comes from [GlassMapping] via [LocalGlassSettings] / [LocalDockGlassStyle];
+ * the caller only chooses the [style], the [shape] and (for SOLID) the fill. Icons, labels and
+ * artwork are children and therefore always stay crisp: only what is *behind* is ever blurred.
  */
 @Composable
-private fun Modifier.dockLiquidGlass(
-    hazeState: HazeState?,
+fun Modifier.dockGlassMaterial(
+    style: com.auralis.app.ui.components.DockStyle,
     shape: Shape,
-    cornerRadius: Dp,
-    tintAlpha: Float,
-    blurDp: Float,
-    saturation: Float,
-    borderAlpha: Float,
-    refraction: Boolean,
-    blurEnabled: Boolean,
-    downsample: Float,
-    sheen: Boolean,
+    hazeState: HazeState? = LocalHazeState.current,
+    solidFill: Color? = null,
+    cornerRadius: Dp = GlassTokens.RadiusXl,
+    refraction: Boolean = true,
+    /** False for controls nested inside an already-blurred pill (no second backdrop sample). */
+    blurBackdrop: Boolean = true,
 ): Modifier {
-    // Haze 1.6 blurs with RenderEffect on Android 12+ and with RenderScript on Android 11 and
-    // below — but only when blur is explicitly enabled, otherwise it paints a flat scrim (which is
-    // exactly the grey wash this material replaces). [platformCanBlur] therefore follows the
-    // user/profile decision, not the SDK level.
-    val platformCanBlur = blurEnabled && blurDp > 0.5f
-    val canBlur = platformCanBlur && hazeState != null
-    val canRefract = refraction && canBlur && Build.VERSION.SDK_INT >= 33
+    if (style == com.auralis.app.ui.components.DockStyle.SOLID) {
+        val fill = solidFill ?: androidx.compose.material3.MaterialTheme.colorScheme.surface
+        return this
+            .shadow(
+                elevation = 12.dp,
+                shape = shape,
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.35f),
+                spotColor = Color.Black.copy(alpha = 0.55f),
+            )
+            .clip(shape)
+            .background(fill)
+    }
 
-    // Haze contributes ONLY the blurred backdrop. Tints are empty and noise is zero because both
-    // read as a grey film over the artwork; the black fill below is the only fill.
-    val hazeStyle = remember(blurDp) {
+    val profile = LocalPerformanceProfile.current
+    val dock = LocalDockGlassStyle.current
+    val settings = LocalGlassSettings.current
+    val transparency = settings.dockTransparency.coerceIn(0f, 1f)
+
+    val blurWanted = blurBackdrop && profile.blurEnabled && dock.blurDp > 0.5f
+    val canBlur = blurWanted && hazeState != null
+    val blurFraction = (dock.blurDp / GlassMapping.MAX_BLUR_DP).coerceIn(0f, 1f)
+
+    // The tier never changes the radius; it only changes Haze cost (Medium is 0.8x the input
+    // scale) or turns blur off entirely (Low).
+    val tier = profile.tier
+    val costFactor = if (tier == com.auralis.app.ui.performance.VisualPerformanceTier.MEDIUM) 0.8f else 1f
+    val hazeScale = (GlassMapping.hazeInputScale(dock.blurDp) * costFactor).coerceIn(0.25f, 1f)
+
+    // Refraction is allowed on these small dock surfaces in High AND Medium; off in Low and off for
+    // large panels (the Surface path still gates on the profile's refractionEnabled).
+    val canRefract = refraction && canBlur && dock.refractionEnabled &&
+        tier != com.auralis.app.ui.performance.VisualPerformanceTier.LOW &&
+        Build.VERSION.SDK_INT >= 33
+
+    val edgePx = with(LocalDensity.current) { 16.dp.toPx() }
+    val radiusPx = with(LocalDensity.current) { cornerRadius.toPx() }
+    // Refraction is 0.6x at 0% blur and 1.0x at full blur, so the edge never reads as warped glass.
+    val refrScale = 0.6f + 0.4f * blurFraction
+    val saturation = GlassMapping.dockSaturation(blurFraction)
+
+    // Haze contributes ONLY the blurred backdrop; noise stays zero so nothing greys the artwork.
+    val hazeStyle = remember(dock.blurDp) {
         HazeStyle(
             backgroundColor = Color.Transparent,
             tints = emptyList(),
-            blurRadius = blurDp.dp,
+            blurRadius = dock.blurDp.dp,
             noiseFactor = 0f,
-            fallbackTint = HazeTint(GlassTokens.Canvas.copy(alpha = 0.18f)),
+            fallbackTint = HazeTint(
+                GlassMapping.dockTintColor().copy(alpha = GlassMapping.DOCK_NO_BLUR_TINT_FLOOR),
+            ),
         )
     }
 
-    val density = LocalDensity.current
-    val radiusPx = with(density) { cornerRadius.toPx() }
-    val refractPx = with(density) { 6.dp.toPx() }
-    val chromaPx = with(density) { 1.1.dp.toPx() }
-
     var modifier = this
-    if (borderAlpha > 0f) {
-        modifier = modifier.border(1.dp, glassRim(borderAlpha), shape)
-    }
+        .shadow(
+            elevation = 10.dp * dock.shadowScale,
+            shape = shape,
+            clip = false,
+            ambientColor = Color.Black.copy(alpha = 0.20f),
+            spotColor = Color.Black.copy(alpha = 0.28f),
+        )
+        .clip(shape)
+
     if (canRefract && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        modifier = modifier.lensRefraction(radiusPx, refractPx, chromaPx, saturation)
+        modifier = modifier.lensRefraction(
+            radiusPx = radiusPx,
+            edgePx = edgePx,
+            refract = 0.35f * refrScale,
+            chroma = 0.012f * refrScale,
+            saturation = saturation,
+            brightness = GlassMapping.DOCK_BRIGHTNESS,
+        )
     }
     modifier = if (canBlur) {
         modifier.hazeEffect(hazeState, hazeStyle) {
             // Explicit: Haze defaults blur off below Android 12 and would draw a scrim instead.
             this.blurEnabled = true
-            inputScale = HazeInputScale.Fixed(downsample.coerceIn(0.25f, 1f))
+            inputScale = HazeInputScale.Fixed(hazeScale)
         }
     } else {
         modifier
     }
 
-    // Faint black fill. Colour is constant; Dock transparency only moves the alpha. Without a
-    // usable backdrop blur the floor keeps cream text legible instead of washing the surface out.
-    val fill = if (canBlur) {
-        tintAlpha.coerceIn(0f, 0.60f)
+    // Warm near-black tint over the blurred backdrop. The 0.50 floor is kept ONLY when blur cannot
+    // run (Android <12 / Low / nested control), never to fight a working blur.
+    val tintAlpha = if (canBlur) {
+        GlassMapping.dockTintAlpha(transparency)
     } else {
-        maxOf(tintAlpha, GlassMapping.DOCK_NO_BLUR_MIN_FILL).coerceIn(0f, 0.60f)
+        maxOf(GlassMapping.dockTintAlpha(transparency), GlassMapping.DOCK_NO_BLUR_TINT_FLOOR)
     }
-    modifier = modifier.background(GlassTokens.Canvas.copy(alpha = fill))
+    modifier = modifier.background(GlassMapping.dockTintColor().copy(alpha = tintAlpha.coerceIn(0f, 0.92f)))
 
-    if (sheen) modifier = modifier.glassInnerSheen()
-    return modifier
+    // Thin warm frost (denser dock -> stronger) plus the adaptive text/icon scrim.
+    val frostAlpha = GlassMapping.dockFrostAlpha(transparency)
+    if (frostAlpha > 0f) modifier = modifier.background(GlassTokens.Cream.copy(alpha = frostAlpha))
+    val scrim = GlassMapping.dockTextScrimAlpha(if (canBlur) blurFraction else 0f)
+    if (scrim > 0f) modifier = modifier.background(GlassTokens.Canvas.copy(alpha = scrim))
+
+    // Rim is gated by "Glass outlines"; the inner sheen stays either way.
+    if (dock.outlines) modifier = modifier.border(1.dp, dockRim(), shape)
+    return modifier.dockInnerSheen()
+}
+
+/**
+ * Dock rim: a 1dp cream sweep, 55% at the top-left fading to 12% at the bottom-right. The dip in
+ * the middle is what makes a flat translucent shape read as a glass edge.
+ */
+private fun dockRim(): Brush = Brush.linearGradient(
+    0.00f to GlassTokens.Cream.copy(alpha = 0.55f),
+    0.50f to GlassTokens.Cream.copy(alpha = 0.10f),
+    1.00f to GlassTokens.Cream.copy(alpha = 0.12f),
+)
+
+/** Soft inner top sheen: cream 8% at the top fading to nothing by 40% of the height. */
+private fun Modifier.dockInnerSheen(): Modifier = this.drawWithCache {
+    val sheen = Brush.verticalGradient(
+        0f to GlassTokens.Cream.copy(alpha = 0.08f),
+        1f to Color.Transparent,
+        startY = 0f,
+        endY = (size.height * 0.40f).coerceAtLeast(1f),
+    )
+    onDrawBehind { drawRect(sheen) }
 }
 
 /**
@@ -383,6 +445,7 @@ private fun Modifier.liquidGlass(
     val canRefract = refraction && canBlur && Build.VERSION.SDK_INT >= 33
     val density = LocalDensity.current
     val radiusPx = with(density) { cornerRadius.toPx() }
+    val edgePx = with(density) { 16.dp.toPx() }
     val refractPx = with(density) { 5.dp.toPx() }
     val chromaPx = with(density) { 1.6.dp.toPx() }
 
@@ -393,7 +456,14 @@ private fun Modifier.liquidGlass(
         modifier = modifier.border(1.dp, fallbackSurface.copy(alpha = borderAlpha.coerceIn(0f, 0.4f)), shape)
     }
     if (canRefract && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        modifier = modifier.lensRefraction(radiusPx, refractPx, chromaPx, saturation)
+        modifier = modifier.lensRefraction(
+            radiusPx = radiusPx,
+            edgePx = edgePx,
+            refract = refractPx / edgePx,
+            chroma = chromaPx / edgePx,
+            saturation = saturation,
+            brightness = 0f,
+        )
     }
     modifier = if (canBlur) {
         modifier.hazeEffect(hazeState, hazeStyle) {
@@ -421,18 +491,22 @@ private fun Modifier.liquidGlass(
 @Composable
 private fun Modifier.lensRefraction(
     radiusPx: Float,
-    refractPx: Float,
-    chromaPx: Float,
+    edgePx: Float,
+    refract: Float,
+    chroma: Float,
     saturation: Float,
+    brightness: Float,
 ): Modifier {
     val shader = remember { LensShader.create() } ?: return this
     val effect = remember(shader) { LensShader.effect(shader) } ?: return this
     return this.graphicsLayer {
         shader.setFloatUniform("uSize", size.width, size.height)
         shader.setFloatUniform("uRadius", radiusPx)
-        shader.setFloatUniform("uRefract", refractPx)
-        shader.setFloatUniform("uChroma", chromaPx)
+        shader.setFloatUniform("uEdge", edgePx)
+        shader.setFloatUniform("uRefract", refract)
+        shader.setFloatUniform("uChroma", chroma)
         shader.setFloatUniform("uSaturation", saturation)
+        shader.setFloatUniform("uBrightness", brightness)
         renderEffect = effect
     }
 }
@@ -456,9 +530,11 @@ private const val AGSL_LENS = """
 uniform shader content;
 uniform float2 uSize;
 uniform float uRadius;
+uniform float uEdge;
 uniform float uRefract;
 uniform float uChroma;
 uniform float uSaturation;
+uniform float uBrightness;
 
 float sdRoundRect(float2 p, float2 b, float r) {
     float2 q = abs(p) - b + float2(r);
@@ -472,8 +548,8 @@ half4 main(float2 fragCoord) {
     float r = min(uRadius, min(halfSize.x, halfSize.y));
     float d = sdRoundRect(p, halfSize, r);
 
-    // 0 at the rim, 1 once we are ~16px inside.
-    float edge = clamp(-d / 16.0, 0.0, 1.0);
+    // 0 at the rim, 1 once we are ~16dp inside.
+    float edge = clamp(-d / max(uEdge, 1.0), 0.0, 1.0);
     float bend = 1.0 - edge;
     bend = bend * bend;
 
@@ -484,10 +560,12 @@ half4 main(float2 fragCoord) {
              - sdRoundRect(p - float2(0.0, eps), halfSize, r);
     float2 n = normalize(float2(dx, dy) + float2(0.0001));
 
-    float2 inward = -n * uRefract * bend;
-    float2 radial = normalize(p + float2(0.0001)) * (-uRefract * 0.30 * bend);
+    // uRefract / uChroma are fractions of the 16dp edge band, so the lens scales with the band.
+    float displace = uRefract * uEdge * bend;
+    float2 inward = -n * displace;
+    float2 radial = normalize(p + float2(0.0001)) * (-displace * 0.30);
     float2 uv = fragCoord + inward + radial;
-    float2 ca = -n * uChroma * bend;
+    float2 ca = -n * (uChroma * uEdge * bend);
 
     half4 base = content.eval(uv);
     half rc = content.eval(uv + ca).r;
@@ -501,6 +579,7 @@ half4 main(float2 fragCoord) {
     float spec = pow(max(dot(n, lightDir), 0.0), 3.0) * bend;
     col.rgb = col.rgb + half3(half(spec * 0.30));
     col.rgb = col.rgb * half(1.0 - 0.05 * bend);
+    col.rgb = col.rgb + half3(half(uBrightness));
 
     return col;
 }

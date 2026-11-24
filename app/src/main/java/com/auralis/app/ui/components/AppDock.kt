@@ -74,17 +74,13 @@ import com.auralis.app.BuildConfig
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.metadata.displayTitle
 import com.auralis.app.ui.glass.DockGlassStyle
-import com.auralis.app.ui.glass.GlassKind
 import com.auralis.app.ui.glass.LocalDockGlassStyle
+import com.auralis.app.ui.glass.dockGlassMaterial
 import com.auralis.app.ui.glass.glassBubble
-import com.auralis.app.ui.glass.glassSurface as applyGlassSurface
 import com.auralis.app.ui.glass.rememberReduceMotion
 import com.auralis.app.ui.nav.Tab
 import com.auralis.app.ui.theme.GlassTokens
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -927,9 +923,8 @@ private fun DockNextButton(
 }
 
 /**
- * Dock surface:
- * - GLASS: liquid glass (Haze backdrop blur + AGSL lens refraction on 33+, tint + hairline below).
- * - SOLID: opaque surface from the Normal palette, same silhouette and shadow, no blur.
+ * Dock surface adapter: the tab pill and the mini-player pill both want the full dock material.
+ * All the logic lives in [dockGlassMaterial]; this only fixes the SOLID fill and the defaults.
  */
 @Composable
 private fun Modifier.dockSurface(
@@ -940,42 +935,18 @@ private fun Modifier.dockSurface(
     solidFill: Color? = null,
     cornerRadius: Dp = 32.dp,
     refraction: Boolean = true,
-): Modifier {
-    val surface = MaterialTheme.colorScheme.surface
-    if (style == DockStyle.SOLID) {
-        val fill = solidFill ?: surface
-        return this
-            .shadow(
-                elevation = 12.dp,
-                shape = shape,
-                clip = false,
-                ambientColor = Color.Black.copy(alpha = 0.35f),
-                spotColor = Color.Black.copy(alpha = 0.55f),
-            )
-            .clip(shape)
-            .background(fill)
-    }
-
-    return this
-        .shadow(
-            elevation = 10.dp * glass.shadowScale,
-            shape = shape,
-            clip = false,
-            ambientColor = Color.Black.copy(alpha = 0.20f),
-            spotColor = Color.Black.copy(alpha = 0.28f),
-        )
-        .clip(shape)
-        .applyGlassSurface(
-            kind = GlassKind.Dock,
-            shape = shape,
-            hazeState = hazeState,
-            refraction = refraction && glass.refractionEnabled,
-            cornerRadius = cornerRadius,
-        )
-}
+): Modifier = dockGlassMaterial(
+    style = style,
+    shape = shape,
+    hazeState = hazeState,
+    solidFill = solidFill,
+    cornerRadius = cornerRadius,
+    refraction = refraction && glass.refractionEnabled,
+)
 
 /** Small circular dock control. Dock transparency drives its fill; never Glass clarity. */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 private fun Modifier.dockControlCircle(
     style: DockStyle,
     hazeState: HazeState?,
@@ -986,38 +957,15 @@ private fun Modifier.dockControlCircle(
      * the backdrop a second time for a 28dp bubble would be pure overdraw.
      */
     blurBackdrop: Boolean = true,
-): Modifier {
-    if (style == DockStyle.SOLID) {
-        return this
-            .shadow(
-                elevation = 6.dp,
-                shape = CircleShape,
-                clip = false,
-                ambientColor = Color.Black.copy(alpha = 0.30f),
-                spotColor = Color.Black.copy(alpha = 0.40f),
-            )
-            .clip(CircleShape)
-            .background(solidFill)
-    }
-
-    return this
-        .shadow(
-            elevation = 5.dp * glass.shadowScale,
-            shape = CircleShape,
-            clip = false,
-            ambientColor = Color.Black.copy(alpha = 0.18f),
-            spotColor = Color.Black.copy(alpha = 0.24f),
-        )
-        .clip(CircleShape)
-        .applyGlassSurface(
-            kind = GlassKind.Dock,
-            shape = CircleShape,
-            hazeState = hazeState,
-            refraction = false,
-            cornerRadius = 40.dp,
-            blur = blurBackdrop,
-        )
-}
+): Modifier = dockGlassMaterial(
+    style = style,
+    shape = CircleShape,
+    hazeState = hazeState,
+    solidFill = solidFill,
+    cornerRadius = 40.dp,
+    refraction = false,
+    blurBackdrop = blurBackdrop,
+)
 
 // ---------------------------------------------------------------------------------------------
 // Glassmorphic (Mornye-style) dock. Normal theme keeps the shared legacy layout above untouched.
