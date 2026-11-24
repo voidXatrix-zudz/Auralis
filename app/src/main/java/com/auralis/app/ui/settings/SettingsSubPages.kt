@@ -581,12 +581,12 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
     // sliders, the numeric readout and the preview all read this copy, so a drag can never leave
     // the preview one frame behind the value it is displaying.
     val liveGlass = remember(
-        settings.dockGlassTransparency,
+        settings.dockGlassOpacity,
         settings.glassClarity,
         settings.dockGlassBlur,
     ) {
         GlassSettings.fromPercent(
-            settings.dockGlassTransparency,
+            settings.dockGlassOpacity,
             settings.glassClarity,
             settings.dockGlassBlur,
         )
@@ -641,12 +641,12 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                     ) { v -> actions.onUpdate { it.copy(glassClarity = (v * 100).roundToInt()) } }
                     SettingsDivider()
                     SliderSetting(
-                        "Dock transparency",
-                        "${(liveGlass.dockTransparency * 100).roundToInt()}%",
-                        liveGlass.dockTransparency,
+                        "Dock opacity",
+                        "${(liveGlass.dockOpacity * 100).roundToInt()}%",
+                        liveGlass.dockOpacity,
                         0f..1f,
                         0,
-                    ) { v -> actions.onUpdate { it.copy(dockGlassTransparency = (v * 100).roundToInt()) } }
+                    ) { v -> actions.onUpdate { it.copy(dockGlassOpacity = (v * 100).roundToInt()) } }
                     SettingsDivider()
                     SettingsSwitchRow(
                         Icons.Rounded.AutoAwesome,
@@ -681,7 +681,7 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                             .padding(12.dp),
                     )
                     SettingsHelperText(
-                        "Preview · dock ${(liveGlass.dockTransparency * 100).roundToInt()}% · " +
+                        "Preview · opacity ${(liveGlass.dockOpacity * 100).roundToInt()}% · " +
                             "blur ${previewDock.blurDp.roundToInt()} dp · " +
                             "clarity ${(liveGlass.glassClarity * 100).roundToInt()}%",
                     )
@@ -695,7 +695,7 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
 /**
  * The Appearance preview. It is not a mock: the bar and the circle both run the production
  * [dockGlassMaterial], and the small tile runs the production [glassSurface] surface path, so
- * "Dock transparency", "Blur strength", "Glass clarity" and "Glass outlines" all move something
+ * "Dock opacity", "Blur strength", "Glass clarity" and "Glass outlines" all move something
  * real. The colourful backdrop exists purely so blur, colour bleed, saturation and the rim are
  * visible against the black preview frame.
  */

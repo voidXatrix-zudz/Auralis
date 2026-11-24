@@ -16,6 +16,7 @@ import com.auralis.app.data.db.FavoriteDao
 import com.auralis.app.data.db.LyricsDao
 import com.auralis.app.data.db.PlayEventDao
 import com.auralis.app.data.settings.SettingsRepository
+import com.auralis.app.data.settings.dockTransparencyToOpacity
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.PerformanceMode
 import com.auralis.app.domain.model.PlayerBackground
@@ -138,7 +139,7 @@ class BackupRepository(
                     doubleTapSeekSeconds = imported.doubleTapSeekSeconds, crossfadeSeconds = imported.crossfadeSeconds,
                     resumeOnOutputReconnect = imported.resumeOnOutputReconnect, carKeepScreenOn = imported.carKeepScreenOn,
                     themeStyle = imported.themeStyle,
-                    dockGlassTransparency = imported.dockGlassTransparency, dockGlassBlur = imported.dockGlassBlur,
+                    dockGlassOpacity = imported.dockGlassOpacity, dockGlassBlur = imported.dockGlassBlur,
                     autoScanEnabled = imported.autoScanEnabled,
                     includeSubfolders = imported.includeSubfolders,
                     playerBackground = imported.playerBackground,
@@ -284,7 +285,7 @@ class BackupRepository(
         put("resumeOnOutputReconnect", settings.resumeOnOutputReconnect)
         put("carKeepScreenOn", settings.carKeepScreenOn)
         put("themeStyle", settings.themeStyle.name)
-        put("dockGlassTransparency", settings.dockGlassTransparency)
+        put("dockGlassOpacity", settings.dockGlassOpacity)
         put("dockGlassBlur", settings.dockGlassBlur)
         put("autoScanEnabled", settings.autoScanEnabled)
         put("includeSubfolders", settings.includeSubfolders)
@@ -330,7 +331,14 @@ class BackupRepository(
             themeStyle = json.optString("themeStyle").let { name ->
                 ThemeStyle.entries.firstOrNull { it.name == name } ?: defaults.themeStyle
             },
-            dockGlassTransparency = json.optInt("dockGlassTransparency", defaults.dockGlassTransparency).coerceIn(0, 100),
+            dockGlassOpacity = if (json.has("dockGlassOpacity")) {
+                json.optInt("dockGlassOpacity", defaults.dockGlassOpacity).coerceIn(0, 100)
+            } else if (json.has("dockGlassTransparency")) {
+                // Old backups stored transparency; invert it to the new opacity direction.
+                dockTransparencyToOpacity(json.optInt("dockGlassTransparency", 100 - defaults.dockGlassOpacity))
+            } else {
+                defaults.dockGlassOpacity
+            },
             dockGlassBlur = json.optInt("dockGlassBlur", defaults.dockGlassBlur).coerceIn(0, 100),
             autoScanEnabled = json.optBoolean("autoScanEnabled", defaults.autoScanEnabled),
             includeSubfolders = json.optBoolean("includeSubfolders", defaults.includeSubfolders),

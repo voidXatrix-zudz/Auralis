@@ -40,9 +40,9 @@ data class AppSettings(
     val resumeOnOutputReconnect: Boolean = false,
     val carKeepScreenOn: Boolean = true,
     val themeStyle: ThemeStyle = ThemeStyle.NORMAL,
-    /** Glass dock tuning (Glassmorphism only): dock transparency 0-100%, default 45%. */
-    val dockGlassTransparency: Int = 45,
-    /** Glass blur strength 0-100% mapping to 0-40dp radius, default 55%. */
+    /** Glass dock tuning (Glassmorphism only): dock opacity 0-100%, default 50%. */
+    val dockGlassOpacity: Int = 50,
+    /** Glass blur strength 0-100% mapping to 0-80dp radius, default 55%. */
     val dockGlassBlur: Int = 55,
     /** Glassmorphism "Glass clarity": 0 = frosted/opaque, 100 = clear. Default 50. */
     val glassClarity: Int = 50,

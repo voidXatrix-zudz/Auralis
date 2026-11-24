@@ -329,12 +329,12 @@ fun AuralisRoot(viewModel: AppViewModel) {
     // slider is dragged the Appearance screen writes a transient GlassDragState so the whole app
     // updates live, and only the drag end is persisted.
     val persistedGlass = remember(
-        settings.dockGlassTransparency,
+        settings.dockGlassOpacity,
         settings.glassClarity,
         settings.dockGlassBlur,
     ) {
         GlassSettings.fromPercent(
-            settings.dockGlassTransparency,
+            settings.dockGlassOpacity,
             settings.glassClarity,
             settings.dockGlassBlur,
         )
@@ -356,7 +356,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
         GlassOptics(
             clarity = clarity,
             outlines = dockGlass.outlines,
-            tintAlpha = dockGlass.tintAlpha,
+            fillAlpha = dockGlass.fillAlpha,
             blurDp = dockGlass.blurDp,
             saturation = 1.12f + 0.25f * clarity,
         )

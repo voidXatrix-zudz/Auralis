@@ -15,7 +15,7 @@ import kotlin.math.roundToInt
  * The THREE Appearance glass controls, resolved to 0..1 once at the app root.
  *
  * This is the single source of truth for every glass surface:
- *  - [dockTransparency] only feeds [GlassKind.Dock] (mini player, nav pill, search circle).
+ *  - [dockOpacity] only feeds [GlassKind.Dock] (mini player, nav pill, search circle).
  *  - [glassClarity] only feeds [GlassKind.Surface] (cards, rows, chips, dialogs, Now Playing).
  *  - [blurStrength] feeds every surface, dock included.
  *
@@ -24,18 +24,19 @@ import kotlin.math.roundToInt
  */
 @Immutable
 data class GlassSettings(
-    val dockTransparency: Float = GlassMapping.DEFAULT_DOCK_TRANSPARENCY,
+    /** Dock opacity: 0 = fully see-through, 1 = fully opaque solid. */
+    val dockOpacity: Float = GlassMapping.DEFAULT_DOCK_OPACITY,
     val glassClarity: Float = GlassMapping.DEFAULT_GLASS_CLARITY,
     val blurStrength: Float = GlassMapping.DEFAULT_BLUR_STRENGTH,
 ) {
     companion object {
         /** Builds the model from the persisted 0..100 int preferences. */
         fun fromPercent(
-            dockTransparencyPercent: Int,
+            dockOpacityPercent: Int,
             glassClarityPercent: Int,
             blurPercent: Int,
         ) = GlassSettings(
-            dockTransparency = GlassMapping.percent(dockTransparencyPercent),
+            dockOpacity = GlassMapping.percent(dockOpacityPercent),
             glassClarity = GlassMapping.percent(glassClarityPercent),
             blurStrength = GlassMapping.percent(blurPercent),
         )
@@ -69,54 +70,41 @@ enum class GlassKind { Dock, Surface }
  * Central mapping from the three 0..1 controls to concrete alphas/radii.
  *
  * Direction, per the controls' intent:
- *  - higher dock transparency -> lower dock tint alpha (0.90 -> 0.05), colour = warm black;
- *  - higher glass clarity      -> lower surface fill alpha (0.40 -> 0.04);
- *  - higher blur strength      -> larger backdrop radius (0dp -> 80dp), never tier-scaled.
+ *  - higher dock opacity   -> denser dock fill (0 = clear, 1 = opaque solid);
+ *  - higher glass clarity  -> lower surface fill alpha (0.40 -> 0.04);
+ *  - higher blur strength  -> larger backdrop radius (0dp -> 80dp), never tier-scaled.
  */
 object GlassMapping {
     // Defaults shown by the Reset action (and used for fresh installs).
-    const val DEFAULT_DOCK_TRANSPARENCY = 0.45f
+    const val DEFAULT_DOCK_OPACITY = 0.50f
     const val DEFAULT_GLASS_CLARITY = 0.50f
     const val DEFAULT_BLUR_STRENGTH = 0.55f
 
-    const val DEFAULT_DOCK_TRANSPARENCY_PERCENT = 45
+    const val DEFAULT_DOCK_OPACITY_PERCENT = 50
     const val DEFAULT_GLASS_CLARITY_PERCENT = 50
     const val DEFAULT_BLUR_PERCENT = 55
 
     /** Full-scale backdrop radius: 0% -> 0dp, 100% -> 80dp. Never scaled by the performance tier. */
     const val MAX_BLUR_DP = 80f
 
-    /** Dock tint stops (Dock transparency 0..1) -> tint alpha over the blurred backdrop. */
-    private val DOCK_TINT_STOPS = floatArrayOf(0f, 0.25f, 0.50f, 0.75f, 1f)
-    private val DOCK_TINT_ALPHAS = floatArrayOf(0.90f, 0.66f, 0.42f, 0.20f, 0.05f)
-
     private const val SURFACE_FILL_MAX = 0.40f
     private const val SURFACE_FILL_MIN = 0.04f
 
     /**
-     * Fixed dock rim alpha. Dock transparency must move only the fill, so the glass edge does not
-     * fade in and out with the slider.
+     * Fixed dock rim alpha. Dock opacity must move only the fill, so the glass edge does not fade
+     * in and out with the slider.
      */
     const val DOCK_BORDER_ALPHA = 0.16f
 
     /**
      * Faint black base under every [GlassKind.Surface] fill. Over the flat black backdrop it is
      * invisible; over album art / scrolling artwork it keeps cream text legible. The dock family no
-     * longer uses this: it uses the adaptive [dockTextScrimAlpha] instead.
+     * longer uses this: its tint comes from [dockFill].
      */
     const val LEGIBILITY_SCRIM = 0.26f
 
     /** API < 31 or blur disabled: denser fill so the surface still reads as intentional glass. */
     const val NO_BLUR_MIN_FILL = 0.20f
-
-    /**
-     * Legacy dock floor. Superseded by [DOCK_NO_BLUR_TINT_FLOOR]; retained only while the old
-     * window/popup dock path still reads it, removed when that path is retired.
-     */
-    const val DOCK_NO_BLUR_MIN_FILL = 0.22f
-
-    /** Warm lift added to [GlassTokens.Canvas] for the dock tint colour. */
-    private const val DOCK_TINT_WARM = 0.03f
 
     /** Blur radius at which the Haze input-scale cost factor bottoms out. */
     private const val HAZE_COST_REFERENCE_DP = 28f
@@ -144,45 +132,35 @@ object GlassMapping {
     fun percentToInt(value: Float): Int = (value.coerceIn(0f, 1f) * 100).roundToInt()
 
     /**
-     * Dock transparency -> warm-black tint alpha over the blurred backdrop.
-     * Piecewise table (0% 0.90, 25% 0.66, 50% 0.42, 75% 0.20, 100% 0.05) so the slider reads as a
-     * large, obvious change: dense smoked glass -> almost fully see-through.
+     * The fully-opaque dock colour: pure-black canvas lifted ~6% toward cream so 100% opacity reads
+     * as a solid smoked pane, never a dead pure black.
      */
-    fun dockTintAlpha(transparency: Float): Float {
-        val t = transparency.coerceIn(0f, 1f)
-        for (i in 0 until DOCK_TINT_STOPS.lastIndex) {
-            val a = DOCK_TINT_STOPS[i]
-            val b = DOCK_TINT_STOPS[i + 1]
-            if (t <= b) {
-                val f = ((t - a) / (b - a)).coerceIn(0f, 1f)
-                return DOCK_TINT_ALPHAS[i] + (DOCK_TINT_ALPHAS[i + 1] - DOCK_TINT_ALPHAS[i]) * f
-            }
+    val DOCK_SOLID: Color = lerpColor(GlassTokens.Canvas, GlassTokens.Cream, 0.06f)
+
+    /**
+     * Dock opacity -> the dock's one fill colour+alpha. One function, one surface, one direction:
+     *  - 0.0 .. 0.5 (see-through half): colour stays frost cream, alpha rises 0.00 -> 0.10;
+     *  - 0.5 .. 1.0 (translucent -> solid): smoothstep blend frost -> [DOCK_SOLID], alpha 0.10 -> 1.00.
+     *
+     * Contract the unit tests hold to: `dockFill(0f)` is fully transparent, `dockFill(1f)` is
+     * exactly alpha 1.0 in [DOCK_SOLID], alpha never decreases, and no 1% step moves alpha by more
+     * than 0.04.
+     */
+    fun dockFill(o: Float): Color {
+        val opacity = o.coerceIn(0f, 1f)
+        if (opacity <= 0f) return GlassTokens.Cream.copy(alpha = 0f)
+        if (opacity <= 0.5f) {
+            val alpha = lerp(0f, 0.10f, opacity / 0.5f)
+            return GlassTokens.Cream.copy(alpha = alpha)
         }
-        return DOCK_TINT_ALPHAS.last()
+        // Exact endpoint so 100% is bit-identical to DOCK_SOLID (alpha exactly 1.0).
+        if (opacity >= 1f) return DOCK_SOLID
+        val f = smoothstep((opacity - 0.5f) / 0.5f)
+        return lerpColor(GlassTokens.Cream, DOCK_SOLID, f).copy(alpha = lerp(0.10f, 1f, f))
     }
-
-    /**
-     * The dock tint colour: pure black lifted a few percent toward warm cream so the smoked glass
-     * reads warm instead of dead grey. Alpha is supplied separately by [dockTintAlpha].
-     */
-    fun dockTintColor(): Color = lerpColor(GlassTokens.Canvas, GlassTokens.Cream, DOCK_TINT_WARM)
-
-    /** Thin warm frost over the blurred backdrop: strongest when the dock is densest. */
-    fun dockFrostAlpha(transparency: Float): Float =
-        (0.02f + 0.06f * (1f - transparency.coerceIn(0f, 1f))).coerceIn(0f, 0.08f)
-
-    /**
-     * Adaptive text/icon-only scrim. Replaces the old fixed minimum fill: it fades from 0.16 at 0%
-     * blur to 0 at full blur, so it never exceeds 0.16 and never fights the backdrop once blur is
-     * doing the legibility work. [blurFraction] = effective blur / [MAX_BLUR_DP].
-     */
-    fun dockTextScrimAlpha(blurFraction: Float): Float = 0.16f * (1f - blurFraction.coerceIn(0f, 1f))
 
     /** Backdrop saturation boost, 1.0 at 0% blur -> 1.30 at full blur. */
     fun dockSaturation(blurFraction: Float): Float = 1.0f + 0.30f * blurFraction.coerceIn(0f, 1f)
-
-    /** The tint floor kept ONLY when blur cannot run (Android <12 / Low mode). */
-    const val DOCK_NO_BLUR_TINT_FLOOR = 0.50f
 
     /** Brightness lift applied by the lens pass over the blurred backdrop. */
     const val DOCK_BRIGHTNESS = 0.03f
@@ -199,7 +177,7 @@ object GlassMapping {
         lerp(SURFACE_FILL_MAX, SURFACE_FILL_MIN, clarity).coerceIn(SURFACE_FILL_MIN, SURFACE_FILL_MAX)
 
     fun fillAlpha(kind: GlassKind, settings: GlassSettings): Float = when (kind) {
-        GlassKind.Dock -> dockTintAlpha(settings.dockTransparency)
+        GlassKind.Dock -> dockFill(settings.dockOpacity).alpha
         GlassKind.Surface -> surfaceFillAlpha(settings.glassClarity)
     }
 
@@ -237,5 +215,11 @@ object GlassMapping {
     private fun lerp(start: Float, end: Float, fraction: Float): Float {
         val t = fraction.coerceIn(0f, 1f)
         return start + (end - start) * t
+    }
+
+    /** Classic Hermite smoothstep on an already-normalised 0..1 input. */
+    private fun smoothstep(t: Float): Float {
+        val x = t.coerceIn(0f, 1f)
+        return x * x * (3f - 2f * x)
     }
 }

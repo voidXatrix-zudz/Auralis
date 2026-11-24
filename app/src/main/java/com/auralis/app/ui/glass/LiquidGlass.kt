@@ -40,7 +40,9 @@ import dev.chrisbanes.haze.hazeEffect
  *
  * - Blur enabled + API 33+: Haze backdrop blur + an AGSL runtime-shader lens pass.
  * - Blur enabled + API 31-32: Haze backdrop blur only.
- * - Blur 0%, Low mode, or API < 31: black scrim + translucent cream fill + hairline.
+ * - Blur 0%, Low mode, or API < 31: the mapped fill + hairline. The dock draws only
+ *   [GlassMapping.dockFill] (fully clear at 0% opacity); other surfaces add a faint legibility
+ *   scrim under the cream fill.
  *
  * The caller only chooses [GlassKind]; every alpha/radius comes from the central
  * [GlassMapping] via [LocalGlassSettings]. No component passes a hardcoded tint or radius.
@@ -60,7 +62,7 @@ fun Modifier.glassSurface(
     val optics = LocalGlassOptics.current
 
     val fill = GlassMapping.fillAlpha(kind, settings)
-    // Dock transparency must move ONLY the dock fill's alpha, so the dock rim is a fixed optical
+    // Dock opacity must move ONLY the dock fill's alpha, so the dock rim is a fixed optical
     // value; Glass clarity keeps driving the hairline of every other surface.
     val borderAlpha = if (!perf.outlines) {
         0f
@@ -92,7 +94,7 @@ fun Modifier.glassSurface(
         hazeState = if (blur) hazeState else null,
         shape = shape,
         cornerRadius = cornerRadius,
-        tintAlpha = fill,
+        fillAlpha = fill,
         blurDp = blurDp,
         saturation = optics.saturation,
         borderAlpha = borderAlpha,
@@ -111,10 +113,10 @@ fun Modifier.glassSurface(
  * Appearance preview, so all four stay byte-identical.
  *
  * - SOLID: opaque palette surface with the dock's soft shadow. No blur, no rim.
- * - GLASS: real Haze backdrop blur (heavy), a warm near-black tint, a thin warm frost, an adaptive
- *   text/icon scrim that fades out as blur rises, a 1dp cream rim bright on opposite corners, a
- *   soft inner top sheen, and an AGSL lens pass (refraction + chromatic edge + saturation + a small
- *   brightness lift) on Android 13+ in High/Medium.
+ * - GLASS: real Haze backdrop blur (heavy), the single "Dock opacity" fill
+ *   ([GlassMapping.dockFill]), a 1dp cream rim bright on opposite corners, a soft inner top sheen,
+ *   and an AGSL lens pass (refraction + chromatic edge + saturation + a small brightness lift) on
+ *   Android 13+ in High/Medium.
  *
  * Every alpha/radius comes from [GlassMapping] via [LocalGlassSettings] / [LocalDockGlassStyle];
  * the caller only chooses the [style], the [shape] and (for SOLID) the fill. Icons, labels and
@@ -148,9 +150,14 @@ fun Modifier.dockGlassMaterial(
     val profile = LocalPerformanceProfile.current
     val dock = LocalDockGlassStyle.current
     val settings = LocalGlassSettings.current
-    val transparency = settings.dockTransparency.coerceIn(0f, 1f)
+    val opacity = settings.dockOpacity.coerceIn(0f, 1f)
 
-    val blurWanted = blurBackdrop && profile.blurEnabled && dock.blurDp > 0.5f
+    // ONE fill for the whole dock family. At/above 98% it is effectively solid, so a Haze sample and
+    // the AGSL lens pass would cost frames for pixels nobody can see: skip both.
+    val fill = GlassMapping.dockFill(opacity)
+    val opaque = fill.alpha >= 0.98f
+
+    val blurWanted = blurBackdrop && !opaque && profile.blurEnabled && dock.blurDp > 0.5f
     val canBlur = blurWanted && hazeState != null
     val blurFraction = (dock.blurDp / GlassMapping.MAX_BLUR_DP).coerceIn(0f, 1f)
 
@@ -179,9 +186,7 @@ fun Modifier.dockGlassMaterial(
             tints = emptyList(),
             blurRadius = dock.blurDp.dp,
             noiseFactor = 0f,
-            fallbackTint = HazeTint(
-                GlassMapping.dockTintColor().copy(alpha = GlassMapping.DOCK_NO_BLUR_TINT_FLOOR),
-            ),
+            fallbackTint = HazeTint(Color.Transparent),
         )
     }
 
@@ -215,20 +220,15 @@ fun Modifier.dockGlassMaterial(
         modifier
     }
 
-    // Warm near-black tint over the blurred backdrop. The 0.50 floor is kept ONLY when blur cannot
-    // run (Android <12 / Low / nested control), never to fight a working blur.
-    val tintAlpha = if (canBlur) {
-        GlassMapping.dockTintAlpha(transparency)
+    // Nested controls (blurBackdrop = false) sit inside an already-blurred pill: they must NOT draw
+    // the dock fill again, only a faint cream bubble + the rim so they read as raised glass.
+    modifier = if (blurBackdrop) {
+        // The ONE dock fill, over the blurred backdrop. No black scrim, no tint floor: opacity 0
+        // stays genuinely clear (blur + rim only) even when the platform cannot blur.
+        modifier.background(fill)
     } else {
-        maxOf(GlassMapping.dockTintAlpha(transparency), GlassMapping.DOCK_NO_BLUR_TINT_FLOOR)
+        modifier.background(GlassTokens.Cream.copy(alpha = 0.10f))
     }
-    modifier = modifier.background(GlassMapping.dockTintColor().copy(alpha = tintAlpha.coerceIn(0f, 0.92f)))
-
-    // Thin warm frost (denser dock -> stronger) plus the adaptive text/icon scrim.
-    val frostAlpha = GlassMapping.dockFrostAlpha(transparency)
-    if (frostAlpha > 0f) modifier = modifier.background(GlassTokens.Cream.copy(alpha = frostAlpha))
-    val scrim = GlassMapping.dockTextScrimAlpha(if (canBlur) blurFraction else 0f)
-    if (scrim > 0f) modifier = modifier.background(GlassTokens.Canvas.copy(alpha = scrim))
 
     // Rim is gated by "Glass outlines"; the inner sheen stays either way.
     if (dock.outlines) modifier = modifier.border(1.dp, dockRim(), shape)
@@ -324,7 +324,7 @@ fun Modifier.glassTint(
     val settings = LocalGlassSettings.current
     val perf = LocalDockGlassStyle.current
     val axis = when (kind) {
-        GlassKind.Dock -> settings.dockTransparency
+        GlassKind.Dock -> settings.dockOpacity
         GlassKind.Surface -> settings.glassClarity
     }
     val fill = maxOf(GlassMapping.fillAlpha(kind, settings), GlassMapping.NESTED_MIN_FILL)
@@ -411,7 +411,7 @@ private fun Modifier.liquidGlass(
     hazeState: HazeState?,
     shape: Shape,
     cornerRadius: Dp,
-    tintAlpha: Float,
+    fillAlpha: Float,
     blurDp: Float,
     saturation: Float,
     borderAlpha: Float,
@@ -423,7 +423,7 @@ private fun Modifier.liquidGlass(
     noBlurMinAlpha: Float,
     fallbackSurface: Color,
 ): Modifier {
-    val tint = tintAlpha.coerceIn(0f, 0.92f)
+    val tint = fillAlpha.coerceIn(0f, 0.92f)
     val scrim = scrimAlpha.coerceIn(0f, 0.90f)
     val hazeStyle = remember(blurDp, fallbackSurface, noBlurMinAlpha) {
         HazeStyle(

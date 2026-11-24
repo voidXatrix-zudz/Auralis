@@ -331,7 +331,7 @@ fun AppDock(
         if (BuildConfig.DEBUG) {
             Log.d(
                 "AuralisDock",
-                "tint=${glass.tintAlpha} blur=${glass.blurDp}dp enabled=${glass.blurEnabled} " +
+                "fill=${glass.fillAlpha} opacity=${glass.opacity} blur=${glass.blurDp}dp enabled=${glass.blurEnabled} " +
                     "refraction=${glass.refractionEnabled} downsample=${glass.downsample} " +
                     "reason=${glass.limitedReason}",
             )
@@ -944,7 +944,7 @@ private fun Modifier.dockSurface(
     refraction = refraction && glass.refractionEnabled,
 )
 
-/** Small circular dock control. Dock transparency drives its fill; never Glass clarity. */
+/** Small circular dock control. Dock opacity drives its fill; never Glass clarity. */
 @Composable
 @Suppress("UNUSED_PARAMETER")
 private fun Modifier.dockControlCircle(

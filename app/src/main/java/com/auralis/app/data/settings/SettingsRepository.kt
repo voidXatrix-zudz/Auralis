@@ -41,6 +41,13 @@ internal fun mergeProviderOrder(stored: List<String>): List<String> {
     return kept + known.filter { it !in kept }
 }
 
+/**
+ * One-time migration for the renamed "Dock opacity" control. The old "Dock transparency" direction is
+ * inverted (transparency 30% == opacity 70%) and the result is clamped to the 0..100 range.
+ */
+internal fun dockTransparencyToOpacity(transparencyPercent: Int): Int =
+    (100 - transparencyPercent).coerceIn(0, 100)
+
 private object Keys {
     val theme = stringPreferencesKey("theme")
     val accent = stringPreferencesKey("accent")
@@ -73,7 +80,9 @@ private object Keys {
     val resumeOnReconnect = booleanPreferencesKey("resume_on_output_reconnect")
     val carKeepScreenOn = booleanPreferencesKey("car_keep_screen_on")
     val themeStyle = stringPreferencesKey("theme_style")
-    val dockGlassTransparency = intPreferencesKey("dock_glass_transparency")
+    val dockGlassOpacity = intPreferencesKey("dock_glass_opacity")
+    /** Legacy pre-rename key ("Dock transparency"). Read once for migration, then removed on write. */
+    val dockGlassTransparencyLegacy = intPreferencesKey("dock_glass_transparency")
     val dockGlassBlur = intPreferencesKey("dock_glass_blur")
     val glassClarity = intPreferencesKey("glass_clarity")
     val glassOutlines = booleanPreferencesKey("glass_outlines")
@@ -252,7 +261,11 @@ class SettingsRepository(private val context: Context) {
             resumeOnOutputReconnect = this[Keys.resumeOnReconnect] ?: d.resumeOnOutputReconnect,
             carKeepScreenOn = this[Keys.carKeepScreenOn] ?: d.carKeepScreenOn,
             themeStyle = enumOr(this[Keys.themeStyle], d.themeStyle),
-            dockGlassTransparency = (this[Keys.dockGlassTransparency] ?: d.dockGlassTransparency).coerceIn(0, 100),
+            dockGlassOpacity = (
+                this[Keys.dockGlassOpacity]
+                    ?: this[Keys.dockGlassTransparencyLegacy]?.let { dockTransparencyToOpacity(it) }
+                    ?: d.dockGlassOpacity
+                ).coerceIn(0, 100),
             dockGlassBlur = (this[Keys.dockGlassBlur] ?: d.dockGlassBlur).coerceIn(0, 100),
             glassClarity = (this[Keys.glassClarity] ?: d.glassClarity).coerceIn(0, 100),
             glassOutlines = this[Keys.glassOutlines] ?: d.glassOutlines,
@@ -320,7 +333,8 @@ class SettingsRepository(private val context: Context) {
         this[Keys.resumeOnReconnect] = s.resumeOnOutputReconnect
         this[Keys.carKeepScreenOn] = s.carKeepScreenOn
         this[Keys.themeStyle] = s.themeStyle.name
-        this[Keys.dockGlassTransparency] = s.dockGlassTransparency
+        this[Keys.dockGlassOpacity] = s.dockGlassOpacity
+        this.remove(Keys.dockGlassTransparencyLegacy)
         this[Keys.dockGlassBlur] = s.dockGlassBlur
         this[Keys.glassClarity] = s.glassClarity
         this[Keys.glassOutlines] = s.glassOutlines

@@ -12,14 +12,16 @@ import com.auralis.app.ui.performance.VisualPerformanceTier
  * blur for the Appearance preview.
  *
  * The three user controls live in [GlassSettings]; this object only translates them for the
- * performance profile (blur allowed?, downsample, refraction, outlines). It deliberately contains
- * NO surface fill value: surfaces read [GlassMapping.fillAlpha] with their own [GlassKind], so the
- * dock and the cards can never leak into each other.
+ * performance profile (blur allowed?, downsample, refraction, outlines) and carries the dock's
+ * resolved fill/blur for the Appearance preview. Non-dock surfaces read [GlassMapping.fillAlpha]
+ * with their own [GlassKind], so the dock and the cards can never leak into each other.
  */
 @Immutable
 data class DockGlassStyle(
-    /** Dock-only tint alpha derived from "Dock transparency". Never used by other surfaces. */
-    val tintAlpha: Float = GlassMapping.dockTintAlpha(GlassMapping.DEFAULT_DOCK_TRANSPARENCY),
+    /** Dock-only resolved fill alpha. Never used by other surfaces. */
+    val fillAlpha: Float = GlassMapping.dockFill(GlassMapping.DEFAULT_DOCK_OPACITY).alpha,
+    /** The 0..1 "Dock opacity" control (0 = clear, 1 = opaque solid). Never used by other surfaces. */
+    val opacity: Float = GlassMapping.DEFAULT_DOCK_OPACITY,
     /** Effective backdrop blur radius in dp after the performance cap (all surfaces). */
     val blurDp: Float = GlassMapping.blurDp(GlassMapping.DEFAULT_BLUR_STRENGTH),
     /** True when live backdrop blur can run (allowed by the profile and the radius is non-zero). */
@@ -40,7 +42,7 @@ val LocalDockGlassStyle = staticCompositionLocalOf { DockGlassStyle() }
  * Resolves the concrete render values from the one [GlassSettings] model.
  *
  * Endpoints:
- *  - Dock transparency 0% -> 0.90 warm-black alpha (dense), 100% -> 0.05 (see-through).
+ *  - Dock opacity 0% -> fully transparent fill (blur + rim only), 100% -> opaque solid.
  *  - Blur 0% -> 0dp, 100% -> 80dp; the tier only changes Haze input scale, never the radius.
  *  - Glass clarity is intentionally NOT read here; it belongs to non-dock surfaces only.
  */
@@ -51,10 +53,10 @@ fun resolveDockGlass(
     systemReason: String? = null,
     sdkInt: Int = Build.VERSION.SDK_INT,
 ): DockGlassStyle {
-    val transparency = glass.dockTransparency.coerceIn(0f, 1f)
+    val opacity = glass.dockOpacity.coerceIn(0f, 1f)
     val blurStrength = glass.blurStrength.coerceIn(0f, 1f)
 
-    val tint = GlassMapping.dockTintAlpha(transparency)
+    val fillAlpha = GlassMapping.dockFill(opacity).alpha
     val effectiveBlur = GlassMapping.blurDp(blurStrength)
     val apiSupportsBlur = sdkInt >= 31
     val blurEnabled = apiSupportsBlur && profile.blurEnabled && effectiveBlur > 0.5f
@@ -68,7 +70,8 @@ fun resolveDockGlass(
     }
 
     return DockGlassStyle(
-        tintAlpha = tint,
+        fillAlpha = fillAlpha,
+        opacity = opacity,
         blurDp = effectiveBlur,
         blurEnabled = blurEnabled,
         refractionEnabled = blurEnabled &&

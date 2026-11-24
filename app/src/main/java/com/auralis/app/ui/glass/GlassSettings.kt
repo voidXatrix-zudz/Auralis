@@ -387,7 +387,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
     val performanceReason = LocalPerformanceReason.current
     val drag = LocalGlassDrag.current
     val persisted = GlassSettings.fromPercent(
-        settings.dockGlassTransparency,
+        settings.dockGlassOpacity,
         settings.glassClarity,
         settings.dockGlassBlur,
     )
@@ -402,14 +402,14 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         val next = drag.value ?: persisted
         onUpdate {
             it.copy(
-                dockGlassTransparency = GlassMapping.percentToInt(next.dockTransparency),
+                dockGlassOpacity = GlassMapping.percentToInt(next.dockOpacity),
                 glassClarity = GlassMapping.percentToInt(next.glassClarity),
                 dockGlassBlur = GlassMapping.percentToInt(next.blurStrength),
             )
         }
     }
     val clarityPercent = (live.glassClarity * 100).roundToInt()
-    val dockPercent = (live.dockTransparency * 100).roundToInt()
+    val dockPercent = (live.dockOpacity * 100).roundToInt()
 
     SegmentedRow(
         icon = Icons.Rounded.Palette,
@@ -477,9 +477,9 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         Row(verticalAlignment = Alignment.CenterVertically) {
             TintedIcon(Icons.Rounded.Palette)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text("Dock transparency", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                Text("Dock opacity", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                 Text(
-                    "Dock transparency: dock only",
+                    "Dock opacity: dock only",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -487,15 +487,15 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
             Text("$dockPercent%", style = MaterialTheme.typography.labelMedium, color = GlassTokens.SilverMuted)
         }
         Slider(
-            value = live.dockTransparency,
-            onValueChange = { value -> preview { it.copy(dockTransparency = snapped(value)) } },
+            value = live.dockOpacity,
+            onValueChange = { value -> preview { it.copy(dockOpacity = snapped(value)) } },
             onValueChangeFinished = { commit() },
             colors = violetSliderColors(),
             modifier = Modifier.padding(top = 4.dp),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Solid", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Clear", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Solid", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     Divider()
@@ -537,7 +537,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
     }
     Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
         DockGlassPreview(
-            tintAlpha = dockGlass.tintAlpha,
+            fillAlpha = dockGlass.fillAlpha,
             blurDp = dockGlass.blurDp,
             outlines = dockGlass.outlines,
             modifier = Modifier.fillMaxWidth(),
@@ -553,7 +553,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
                     drag.value = null
                     onUpdate {
                         it.copy(
-                            dockGlassTransparency = GlassMapping.DEFAULT_DOCK_TRANSPARENCY_PERCENT,
+                            dockGlassOpacity = GlassMapping.DEFAULT_DOCK_OPACITY_PERCENT,
                             glassClarity = GlassMapping.DEFAULT_GLASS_CLARITY_PERCENT,
                             dockGlassBlur = GlassMapping.DEFAULT_BLUR_PERCENT,
                         )
@@ -572,7 +572,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         )
         Spacer(Modifier.weight(1f))
         Text(
-            "${GlassMapping.DEFAULT_DOCK_TRANSPARENCY_PERCENT}% · ${GlassMapping.DEFAULT_GLASS_CLARITY_PERCENT}% · ${GlassMapping.DEFAULT_BLUR_PERCENT}%",
+            "${GlassMapping.DEFAULT_DOCK_OPACITY_PERCENT}% · ${GlassMapping.DEFAULT_GLASS_CLARITY_PERCENT}% · ${GlassMapping.DEFAULT_BLUR_PERCENT}%",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1055,7 +1055,7 @@ private fun violetSliderColors() = SliderDefaults.colors(
 )
 
 @Composable
-private fun DockGlassPreview(tintAlpha: Float, blurDp: Float, outlines: Boolean, modifier: Modifier = Modifier) {
+private fun DockGlassPreview(fillAlpha: Float, blurDp: Float, outlines: Boolean, modifier: Modifier = Modifier) {
     Box(
         modifier
             .height(112.dp)

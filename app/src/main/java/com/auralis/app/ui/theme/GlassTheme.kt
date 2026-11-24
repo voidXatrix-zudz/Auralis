@@ -117,8 +117,8 @@ data class GlassOptics(
     /** 0 = tinted/smoked, 1 = clear/crystal. */
     val clarity: Float = 0.4f,
     val outlines: Boolean = true,
-    /** Smoked tint alpha applied over the blurred backdrop. */
-    val tintAlpha: Float = 0.42f,
+    /** The dock fill alpha resolved from "Dock opacity". */
+    val fillAlpha: Float = 0.10f,
     val blurDp: Float = 30f,
     /** Backdrop saturation boost applied by the lens shader on API 33+. */
     val saturation: Float = 1.22f,
