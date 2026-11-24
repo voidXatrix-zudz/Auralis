@@ -61,9 +61,46 @@ verify by static review. One commit per step.
     flat colour too.
   - The readout ("Preview · opacity NN% · blur NN dp · clarity NN%") moved into the pinned header
     and reads the same live drag-aware values as the sliders.
+- STEP 5 (this commit): self-review. Static only (no Gradle/adb); each item is a grep/read result.
+
+## SELF-REVIEW (STEP 5)
+- Old-name sweep: `dockTransparency` / `dockGlassTransparency` / `dock_glass_transparency` /
+  "Dock transparency" appear ONLY in the one-time migration (`dockTransparencyToOpacity`,
+  `Keys.dockGlassTransparencyLegacy`), the old-backup import branch, and the migration test. No
+  other reader/writer. (The stray `AuralisRoot.kt.bak_before_dockfix` is untracked/not compiled.)
+- Removed dock tint/frost/scrim symbols (`DOCK_NO_BLUR_TINT_FLOOR`, `DOCK_NO_BLUR_MIN_FILL`,
+  `dockTint*`/`dockFrost*`/`dockScrim*`/`dockFloor*`): 0 matches in `app/src/main`.
+- `dockGlassMaterial`: the dock fill is exactly `GlassMapping.dockFill(opacity)`; no black scrim,
+  no tint floor. `fill.alpha >= 0.98` skips both Haze and the lens; `blurBackdrop = false` draws
+  only a 10% cream bubble + rim. `canvas`/`Cream`/`Indigo` tokens unchanged.
+- Dock opacity endpoints: 0% -> `dockFill(0f)` alpha 0.00 (see-through: blur + rim only);
+  50% -> frost cream alpha 0.10; 100% -> `DOCK_SOLID` alpha exactly 1.00. Alpha is non-decreasing
+  and every 1% step moves alpha by <= 0.04 (asserted in `GlassMappingTest`).
+- Blur strength: 0% -> `blurDp(0f)` = 0dp (stripes stay sharp); 100% -> `blurDp(1f)` = 80dp
+  (`MAX_BLUR_DP`), tier never scales the radius. The pinned preview's 12dp stripes + 14sp line make
+  this visible on flat colour.
+- Glass clarity moves only the non-dock `GlassKind.Surface` fill (`surfaceFillAlpha`); Glass
+  outlines gates the dock rim + surface hairline; Live blur toggles `dockGlassBlur` and restores
+  `DEFAULT_BLUR_PERCENT` when re-enabled. None of them move the dock fill.
+- Normal theme unaffected: the dock/glass code is behind `style == DockStyle.GLASS`/`isGlass`
+  (`dockGlassMaterial` returns the original solid path for `DockStyle.SOLID`), and the Appearance
+  pinned preview is only passed when `isGlass` is true.
+- Migration: `dockTransparencyToOpacity(30) == 70` and `dockTransparencyToOpacity(100) == 0`
+  (test `old transparency migrates to the inverted opacity`); old backups import through the same
+  helper; new backups export the new `dockGlassOpacity` key.
+- Scope: only the Glassmorphic theme path was changed. Files touched across the five steps are
+  listed below; the unrelated WIP tree (incl. `SettingsHub.kt`'s dialog/lyrics hunks) was left
+  uncommitted.
 
 ## NEXT
-- STEP 5: self-review checklist in this file.
+- (none) Task complete: STEP 1-5 committed. Follow-up WIP stash restore happens after the report.
+
+## FILES (five steps)
+- `data/settings/SettingsRepository.kt`, `data/backup/BackupRepository.kt`,
+  `domain/model/AppSettings.kt`, `ui/theme/GlassTheme.kt`, `ui/glass/GlassControls.kt`,
+  `ui/glass/DockGlassStyle.kt`, `ui/glass/LiquidGlass.kt`, `ui/glass/GlassSettings.kt`,
+  `ui/components/AppDock.kt`, `ui/AuralisRoot.kt`, `ui/settings/SettingsHub.kt`,
+  `ui/settings/SettingsSubPages.kt`, `test/.../GlassMappingTest.kt`, `AGENT_NOTES.md`.
 
 ---
 
