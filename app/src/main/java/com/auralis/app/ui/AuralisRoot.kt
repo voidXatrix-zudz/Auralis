@@ -987,7 +987,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
 
             if (youtubeLoginOpen) {
                 com.auralis.app.ui.screens.YouTubeLoginDialog(
-                    onSession = viewModel::saveYouTubeSession,
+                    onSession = { session ->
+                        viewModel.beginYouTubeSignIn()
+                        viewModel.saveYouTubeSession(session)
+                    },
                     onDismiss = {
                         youtubeLoginOpen = false
                         youtubeForceSignIn = false
@@ -1108,14 +1111,17 @@ private fun Modifier.dockBottomSpace(scroll: DockScrollState, hasTrack: Boolean)
 }
 
 /**
- * Neutral first frame while the single settings read is in flight. It deliberately matches the
- * black window/splash background instead of Material's Normal surface, so no theme is previewed
- * before the saved one is known and there is no cold-start flash.
+ * First drawn frame while the single settings read is in flight. It deliberately matches the black
+ * window/splash background instead of Material's Normal surface, so no theme is previewed before the
+ * saved one is known. The static wordmark (no animation) means the cold start reads as "AURALIS is
+ * opening", never as an empty black frame.
  */
 @Composable
 private fun StartupSurface() {
     SystemBarsAppearance(darkTheme = true)
-    Box(Modifier.fillMaxSize().background(GlassTokens.Canvas))
+    Box(Modifier.fillMaxSize().background(GlassTokens.Canvas), contentAlignment = Alignment.Center) {
+        AuralisLogo(modifier = Modifier.height(64.dp))
+    }
 }
 
 /** Keeps status/navigation bar icons readable against the in-app theme, not the system theme. */

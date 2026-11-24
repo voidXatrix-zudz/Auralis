@@ -176,12 +176,19 @@ data class HomeRow(
 )
 
 /**
+ * Explicit lifecycle of the Home feed. Without it "no rows yet" is indistinguishable from "loaded
+ * and genuinely empty", which is what made cold start flash the "Nothing to play yet" error.
+ */
+enum class HomeLoadState { NotStarted, Loading, Loaded, Failed }
+
+/**
  * The entire Home feed. [rows] keeps insertion order so the UI renders the sections in the intended
  * order without sorting. [collection*] drives the artist/collection sheet opened from a card tap.
  */
 data class HomeUiState(
     val category: HomeCategory = HomeCategory.FOR_YOU,
     val rows: Map<String, HomeRow> = emptyMap(),
+    val loadState: HomeLoadState = HomeLoadState.NotStarted,
     val refreshing: Boolean = false,
     /** Non-null when the signed-in recommendations could not be loaded; the page offers a retry. */
     val homeError: String? = null,
@@ -335,6 +342,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     @Volatile private var appInForeground: Boolean = true
     /** The in-flight email-code challenge, kept between "send code" and "verify code". */
     private var pendingEmail: EmailCodeChallenge? = null
+    /**
+     * Uptime of the last explicit YouTube sign-in tap, or 0 when none is pending. Only the login
+     * dialog sets it, so a restored/silent session can never produce a "Signed in" message.
+     */
+    @Volatile private var youtubeSignInStartedAt = 0L
     /** Recently played YouTube songs, mapped to [Track] for Continue Listening and recommendations. */
     val youtubeRecents: StateFlow<List<Track>> = container.database.youtubeDao().observeRecents(20)
         .map { rows -> rows.map { it.toDomain() } }
@@ -1290,6 +1302,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         _home.update { previous ->
             previous.copy(
                 category = category,
+                loadState = HomeLoadState.Loading,
                 refreshing = true,
                 homeError = null,
                 rows = specs.associate { spec ->
@@ -1304,7 +1317,13 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         homeJob = viewModelScope.launch {
             val jobs = specs.map { spec -> launch { runHomeRow(spec, generation) } }
             jobs.joinAll()
-            _home.update { if (generation == homeLoadGeneration) it.copy(refreshing = false) else it }
+            _home.update {
+                if (generation == homeLoadGeneration) {
+                    it.copy(refreshing = false, loadState = HomeLoadState.Loaded)
+                } else {
+                    it
+                }
+            }
         }
     }
 
@@ -1325,6 +1344,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         _home.update { previous ->
             previous.copy(
                 category = HomeCategory.FOR_YOU,
+                loadState = HomeLoadState.Loading,
                 refreshing = true,
                 homeError = null,
                 rows = if (unchanged) previous.rows else emptyMap(),
@@ -1419,6 +1439,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     // back into Loading placeholders.
                     rows = if (failed && hadContent) previous.rows else rows,
                     refreshing = false,
+                    loadState = if (failed) HomeLoadState.Failed else HomeLoadState.Loaded,
                     homeError = if (failed) "Couldn't load your recommendations" else null,
                 )
             }
@@ -2017,11 +2038,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Called by the login dialog when the user taps Confirm, i.e. an explicit YouTube sign-in. */
+    fun beginYouTubeSignIn() {
+        youtubeSignInStartedAt = SystemClock.elapsedRealtime()
+    }
+
     /**
      * Called by the login WebView only after the user taps Confirm. Cookie/visitor/page values come
      * from the page; the app never logs them.
      */
     fun saveYouTubeSession(session: YouTubeCapturedSession) {
+        // A cold-start restore never reaches this function, but guard the message the same way as
+        // the Clerk one: only an explicit sign-in in this session confirms out loud.
+        val activeSignIn = youtubeSignInStartedAt != 0L
+        youtubeSignInStartedAt = 0L
         val delegated = session.delegatedSessionId.trim()
         container.youtubeAuth.save(
             YouTubeAuth(
@@ -2054,7 +2084,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         container.youtube.invalidateHome()
         // Ordered, not parallel: account menu verifies the new cookie before anything else runs.
         syncYouTubeAccount(includeHome = true)
-        _messages.trySend("Signed in to YouTube Music")
+        if (activeSignIn) _messages.trySend("Signed in to YouTube Music")
         // Any playlist edits made while signed out/failed are now retryable.
         flushYouTubeSync()
     }

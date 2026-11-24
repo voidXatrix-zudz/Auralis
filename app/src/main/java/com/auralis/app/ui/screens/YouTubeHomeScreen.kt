@@ -39,6 +39,7 @@ import com.auralis.app.R
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.data.youtube.YtCard
 import com.auralis.app.domain.model.Track
+import com.auralis.app.ui.HomeLoadState
 import com.auralis.app.ui.HomeUiState
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.ArtworkImage
@@ -154,9 +155,16 @@ fun YouTubeHomeScreen(
                 }
             }
             if (rows.isEmpty() && error == null) {
+                // An explicit load state: "not fetched yet" and "fetching" show the skeleton, so a
+                // cold start never flashes the empty/error screen before the first request runs.
+                // The empty state is only honest once a fetch has actually finished.
                 when {
-                    state.refreshing || loading -> item(key = "skeleton") { HomeSkeleton(style) }
-                    signedIn -> item(key = "empty") { HomeEmpty(style, onRetry = onRefresh) }
+                    state.refreshing || loading ||
+                        state.loadState == HomeLoadState.NotStarted ||
+                        state.loadState == HomeLoadState.Loading ->
+                        item(key = "skeleton") { HomeSkeleton(style) }
+                    signedIn && state.loadState == HomeLoadState.Loaded ->
+                        item(key = "empty") { HomeEmpty(style, onRetry = onRefresh) }
                 }
             }
         }

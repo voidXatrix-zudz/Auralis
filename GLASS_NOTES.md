@@ -35,7 +35,9 @@ refraction) **and** fix the launch glitches L1–L6. Kotlin + AGSL only. No new 
 - STEP 2 ✅ mapping + unit tests (11 tests green).
 - STEP 3 ✅ `dockGlassMaterial` + STEP 4 apply to dock/pill/circles (delegated).
 - STEP 5 ✅ live preview + numeric labels (uses the production material).
-- STEP 6 launch glitches L1–L6. STEP 7 self-review. STEP 8 final report.
+- STEP 6 ✅ launch glitches L1–L6 (explicit Home load state, gated sign-in toasts, art
+  placeholder/crossfade, Top Picks reveal, static logo first frame; L6 verified).
+- STEP 7 self-review. STEP 8 final report.
 
 ## PROGRESS / DECISIONS
 - **STEP 2 (done)** — `GlassMapping`: `MAX_BLUR_DP = 80f`; `blurDp(strength) = round0.5(80*s^1.15)`;
@@ -65,7 +67,32 @@ refraction) **and** fix the launch glitches L1–L6. Kotlin + AGSL only. No new 
   "Glass clarity" visibly moves its fill/hairline. Numeric labels: clarity %, dock %, `blur % · N dp`,
   and a "Preview · dock / blur / clarity" line. `limitedReason` from `resolveDockGlass` is shown under
   the preview (only Android <12 / Low / battery saver). No new libraries.
-
+- **STEP 6 (done)** — launch glitches L1–L6, applied on the working tree and committed task-only.
+  - **L1 explicit Home load state.** New `HomeLoadState { NotStarted, Loading, Loaded, Failed }` +
+    `HomeUiState.loadState` (default `NotStarted`). `loadHome` sets `Loading` at fetch start and
+    `Loaded` when the row jobs join; `loadSignedInHome` sets `Loading` then `Failed`/`Loaded` by
+    outcome. `YouTubeHomeScreen` now draws the skeleton for `NotStarted`/`Loading` (a cold start can
+    no longer flash "Nothing to play yet") and the empty state only when `Loaded`. The `Loading`
+    write inside `loadLocalHome` lives in unrelated WIP (the whole function is WIP), so it rides
+    with that tree, not this commit.
+  - **L2 sign-in confirmation only for an active sign-in.** New `youtubeSignInStartedAt` +
+    `beginYouTubeSignIn()`; `saveYouTubeSession` only emits "Signed in to YouTube Music" when the
+    login dialog actually started a sign-in this session (silent restores stay quiet). `AuralisRoot`
+    calls `beginYouTubeSignIn()` from the dialog's `onSession`. The matching Clerk "Signed in" gate
+    is implemented in the working tree but its host block (the Clerk timeout/OAuth rework) is WIP, so
+    it is intentionally *not* in this commit.
+  - **L3 mini-player art.** `ArtworkImage` keeps the previous bitmap painted under the incoming one,
+    fades the new art in over 150 ms (profile permitting, otherwise instant), turns Coil's own
+    crossfade off, uses a neutral dark tile (`0xFF151518`, not pure black) for the flat mini slot,
+    and adds an `onArtworkSettled` callback. The restored checkpoint's art is already requested
+    immediately via the existing track-derived candidate fallback, so the pill never flashes empty.
+  - **L4 Top Picks card.** Text/scrim reveal is alpha-animated (150 ms) and stays hidden until the
+    art has painted (or no art exists), so a title no longer sits over an empty dark card at launch.
+  - **L5 first frame.** `StartupSurface` (the frame drawn while the single settings read is in
+    flight) now shows the static AURALIS wordmark on the black splash background — no extra blank
+    Compose frame and no new splash animation. First *real* Home frame still uses the L1 skeleton.
+  - **L6 verified**: no new launch toast/banner/animation was added; the only launch additions are
+    the static logo (L5) and the silence of restored-session toasts (L2).
 
 ## FINDINGS
 - **GlassControls.kt** — `GlassMapping` is the one 0..1→alpha/radius table. Currently

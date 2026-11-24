@@ -1,5 +1,7 @@
 package com.auralis.app.ui.home
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,8 +24,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -53,6 +60,15 @@ fun TopPickCard(
     val shape = RoundedCornerShape(HomeDimens.TopPickRadius)
     val (interaction, scale) = rememberPressScale()
     val base = HomeCardPalette.colorFor(pick.accentSeed)
+    // Review text only once there is art (or none exists at all): a title over an empty dark card
+    // was the launch glitch. The reveal fades the caption + title in with the artwork.
+    val hasArt = pick.track != null || !pick.imageUrl.isNullOrBlank()
+    var artSettled by remember(pick.track?.id, pick.imageUrl) { mutableStateOf(!hasArt) }
+    val reveal by animateFloatAsState(
+        targetValue = if (artSettled) 1f else 0f,
+        animationSpec = tween(durationMillis = 150),
+        label = "topPickReveal",
+    )
     Box(
         modifier
             .width(HomeDimens.TopPickWidth)
@@ -68,25 +84,36 @@ fun TopPickCard(
                 artUri = pick.imageUrl,
                 shape = RectangleShape,
                 modifier = Modifier.fillMaxSize(),
+                onArtworkSettled = { artSettled = true },
             )
             !pick.imageUrl.isNullOrBlank() -> AsyncImage(
                 model = pick.imageUrl,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                onSuccess = { artSettled = true },
+                onError = { artSettled = true },
                 modifier = Modifier.fillMaxSize().background(HomeCardPalette.Placeholder),
             )
             else -> MoodArtwork(seed = pick.accentSeed, base = base, modifier = Modifier.fillMaxSize())
         }
         Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0f to Color.Transparent,
-                    0.55f to Color.Transparent,
-                    1f to HomeCardPalette.Scrim,
+            Modifier
+                .fillMaxSize()
+                .alpha(reveal)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.55f to Color.Transparent,
+                        1f to HomeCardPalette.Scrim,
+                    ),
                 ),
-            ),
         )
-        Column(Modifier.align(Alignment.BottomStart).padding(HomeDimens.CardInnerPad)) {
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .alpha(reveal)
+                .padding(HomeDimens.CardInnerPad),
+        ) {
             if (pick.caption.isNotBlank()) {
                 Text(
                     pick.caption,

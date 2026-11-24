@@ -1,6 +1,8 @@
 package com.auralis.app.ui.components
 
 import android.net.Uri
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -14,9 +16,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -39,6 +43,9 @@ import java.io.File
 
 private val ArtworkKeyPattern = Regex("[a-zA-Z0-9_-]{1,80}")
 
+/** Neutral dark tile behind art that has not arrived yet (never pure black, never a grey wash). */
+private val NeutralArtworkTile = Color(0xFF151518)
+
 /** Local sidecar art (downloaded songs) is used directly; anything else is treated as a remote URL. */
 private fun localOrRemoteArt(value: String): Any = when {
     value.startsWith("file://") -> Uri.parse(value)
@@ -48,6 +55,10 @@ private fun localOrRemoteArt(value: String): Any = when {
 
 /**
  * Always paints a themed placeholder first; corrupt or missing cache files simply leave it visible.
+ *
+ * The previous artwork stays painted underneath the incoming one and the new image fades in over
+ * ~150 ms (profile permitting). That is what stops a restored mini-player, or a queue change, from
+ * flashing an empty tile while Coil decodes the next bitmap.
  *
  * The decode size is clamped to the on-screen size (and to the active profile's pixel ceiling), so a
  * full-screen backdrop does not decode a 4000px image at 44dp, and Low mode keeps bitmaps small.
@@ -62,9 +73,12 @@ fun ArtworkImage(
     neutralPlaceholder: Boolean = false,
     /** Fixed decode size for small slots; null lets the on-screen size decide. */
     requestSizePx: Int? = null,
+    /** Fired once when art has painted (or when every candidate failed), for skeleton hand-off. */
+    onArtworkSettled: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val profile = LocalPerformanceProfile.current
+    val settledCallback by rememberUpdatedState(onArtworkSettled)
 
     // Ordered candidates: real art (largest square) → its smaller square variant → the video
     // thumbnail as an absolute last resort. Coil's Crop keeps everything square.
@@ -99,9 +113,20 @@ fun ArtworkImage(
     var attempt by remember(candidates) { mutableStateOf(0) }
     val effectiveImage = candidates.getOrNull(attempt)
 
+    // The last request that actually painted, and whether the incoming one has painted yet. The old
+    // bitmap is drawn underneath until the new one is ready, so no recomposition flashes the tile.
+    var lastPainted by remember { mutableStateOf<Pair<Any?, ImageRequest>?>(null) }
+    var painted by remember(effectiveImage) { mutableStateOf(false) }
+    val fadeMs = if (profile.artworkCrossfade) 150 else 0
+    val fade by animateFloatAsState(
+        targetValue = if (painted || fadeMs == 0) 1f else 0f,
+        animationSpec = tween(durationMillis = fadeMs),
+        label = "artworkFade",
+    )
+
     BoxWithConstraints(
         modifier.clip(shape).background(
-            if (neutralPlaceholder) Color.Black else MaterialTheme.colorScheme.surfaceContainerHigh,
+            if (neutralPlaceholder) NeutralArtworkTile else MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
         contentAlignment = Alignment.Center,
     ) {
@@ -114,13 +139,14 @@ fun ArtworkImage(
         }
         val targetPx = (requestSizePx ?: displayPx.toInt()).coerceIn(1, profile.artworkMaxPx)
         // Build the request once per image + size: a fresh ImageRequest on every recomposition can
-        // restart Coil's load.
-        val request = remember(context, effectiveImage, targetPx, profile.artworkCrossfade) {
+        // restart Coil's load. The fade is ours (alpha over the previous bitmap), so Coil's own
+        // crossfade is off to avoid a double fade.
+        val request = remember(context, effectiveImage, targetPx) {
             effectiveImage?.let { data ->
                 ImageRequest.Builder(context)
                     .data(data)
                     .size(targetPx)
-                    .crossfade(profile.artworkCrossfade)
+                    .crossfade(false)
                     .memoryCachePolicy(CachePolicy.ENABLED)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .listener(
@@ -133,6 +159,8 @@ fun ArtworkImage(
                             )
                             if (attempt < candidates.lastIndex) {
                                 attempt++
+                            } else {
+                                settledCallback()
                             }
                         }
                     )
@@ -150,6 +178,17 @@ fun ArtworkImage(
                 modifier = Modifier.fillMaxSize(0.42f),
             )
         }
+        // The previous bitmap, still visible while the incoming one loads.
+        lastPainted?.let { (data, previous) ->
+            if (data != effectiveImage) {
+                AsyncImage(
+                    model = previous,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
         if (request != null) {
             AsyncImage(
                 model = request,
@@ -157,7 +196,14 @@ fun ArtworkImage(
                 placeholder = if (neutralPlaceholder) null else albumPainter,
                 error = if (neutralPlaceholder) null else albumPainter,
                 fallback = if (neutralPlaceholder) null else albumPainter,
-                modifier = Modifier.fillMaxSize(),
+                onSuccess = {
+                    painted = true
+                    lastPainted = effectiveImage to request
+                    settledCallback()
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (fadeMs == 0) 1f else fade),
                 contentScale = ContentScale.Crop,
             )
         }
