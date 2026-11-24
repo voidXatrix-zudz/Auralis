@@ -505,7 +505,6 @@ private fun DockNavPill(
                 glass = glass,
                 shape = pillShape,
                 cornerRadius = 32.dp,
-                refraction = true,
             )
             .padding(5.dp),
     ) {
@@ -934,7 +933,7 @@ private fun Modifier.dockSurface(
     shape: Shape,
     solidFill: Color? = null,
     cornerRadius: Dp = 32.dp,
-    refraction: Boolean = true,
+    refraction: Boolean = false,
 ): Modifier = dockGlassMaterial(
     style = style,
     shape = shape,
@@ -1066,6 +1065,7 @@ private fun GlassDock(
                 onClick = onExpand,
                 glass = surfaceGlass,
                 hazeState = hazeState,
+                blurBackdrop = circleIn > 0.01f,
             )
             DockMiniPill(
                 style = DockStyle.GLASS,
@@ -1146,7 +1146,6 @@ private fun GlassNavPill(
                 glass = glass,
                 shape = pillShape,
                 cornerRadius = 32.dp,
-                refraction = true,
             )
             .padding(DockDimens.LensInset),
     ) {
@@ -1254,6 +1253,8 @@ private fun GlassCircleButton(
     onClick: () -> Unit,
     glass: DockGlassStyle,
     hazeState: HazeState?,
+    /** False while the circle is invisible/fading: no point sampling the backdrop for 0 alpha. */
+    blurBackdrop: Boolean = true,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val press = pressScale(interaction)
@@ -1271,6 +1272,7 @@ private fun GlassCircleButton(
                 hazeState = hazeState,
                 glass = glass,
                 solidFill = MaterialTheme.colorScheme.surface,
+                blurBackdrop = blurBackdrop,
             )
             .then(
                 if (interactive) {

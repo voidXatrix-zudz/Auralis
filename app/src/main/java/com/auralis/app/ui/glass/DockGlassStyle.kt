@@ -28,6 +28,10 @@ data class DockGlassStyle(
     val blurEnabled: Boolean = true,
     /** AGSL lens pass; only on large surfaces and only in High. */
     val refractionEnabled: Boolean = true,
+    /** DEBUG-only "Dock lens (experimental)": run the AGSL lens on the dock, off by default. */
+    val lensExperimental: Boolean = false,
+    /** DEBUG-only "Haze input scale: Default": stop pinning Haze's input scale. */
+    val hazeDefaultScale: Boolean = false,
     val outlines: Boolean = true,
     val shadowScale: Float = 1f,
     /** Haze backdrop downsample (1.0 = full resolution). */
@@ -76,6 +80,8 @@ fun resolveDockGlass(
         blurEnabled = blurEnabled,
         refractionEnabled = blurEnabled &&
             (profile.tier == VisualPerformanceTier.HIGH || profile.tier == VisualPerformanceTier.MEDIUM),
+        lensExperimental = com.auralis.app.BuildConfig.DEBUG && settings.dockLensExperimental,
+        hazeDefaultScale = com.auralis.app.BuildConfig.DEBUG && settings.dockHazeDefaultScale,
         outlines = settings.glassOutlines,
         shadowScale = profile.shadowScale,
         downsample = profile.blurDownsample,

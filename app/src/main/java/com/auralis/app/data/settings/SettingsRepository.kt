@@ -86,6 +86,9 @@ private object Keys {
     val dockGlassBlur = intPreferencesKey("dock_glass_blur")
     val glassClarity = intPreferencesKey("glass_clarity")
     val glassOutlines = booleanPreferencesKey("glass_outlines")
+    /** DEBUG-only experiment flags (see AppSettings). Persisted so a toggle survives restarts. */
+    val dockLensExperimental = booleanPreferencesKey("dock_lens_experimental")
+    val dockHazeDefaultScale = booleanPreferencesKey("dock_haze_default_scale")
     val autoScan = booleanPreferencesKey("auto_scan_enabled")
     val includeSubfolders = booleanPreferencesKey("include_subfolders")
     val playerBackground = stringPreferencesKey("player_background")
@@ -269,6 +272,8 @@ class SettingsRepository(private val context: Context) {
             dockGlassBlur = (this[Keys.dockGlassBlur] ?: d.dockGlassBlur).coerceIn(0, 100),
             glassClarity = (this[Keys.glassClarity] ?: d.glassClarity).coerceIn(0, 100),
             glassOutlines = this[Keys.glassOutlines] ?: d.glassOutlines,
+            dockLensExperimental = this[Keys.dockLensExperimental] ?: d.dockLensExperimental,
+            dockHazeDefaultScale = this[Keys.dockHazeDefaultScale] ?: d.dockHazeDefaultScale,
             autoScanEnabled = this[Keys.autoScan] ?: d.autoScanEnabled,
             includeSubfolders = this[Keys.includeSubfolders] ?: d.includeSubfolders,
             playerBackground = enumOr(this[Keys.playerBackground], d.playerBackground),
@@ -338,6 +343,8 @@ class SettingsRepository(private val context: Context) {
         this[Keys.dockGlassBlur] = s.dockGlassBlur
         this[Keys.glassClarity] = s.glassClarity
         this[Keys.glassOutlines] = s.glassOutlines
+        this[Keys.dockLensExperimental] = s.dockLensExperimental
+        this[Keys.dockHazeDefaultScale] = s.dockHazeDefaultScale
         this[Keys.autoScan] = s.autoScanEnabled
         this[Keys.includeSubfolders] = s.includeSubfolders
         this[Keys.playerBackground] = s.playerBackground.name

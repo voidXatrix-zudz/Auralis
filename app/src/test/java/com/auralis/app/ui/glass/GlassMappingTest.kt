@@ -104,9 +104,10 @@ class GlassMappingTest {
     fun `dock saturation stays in range across the blur slider`() {
         var i = 0
         while (i <= 100) {
-            assertTrue(GlassMapping.dockSaturation(i / 100f) in 1.0f..1.30f + 0.0001f)
+            assertTrue(GlassMapping.dockSaturation(i / 100f) in 1.0f..1.60f + 0.0001f)
             i++
         }
+        assertEquals(1.60f, GlassMapping.dockSaturation(1f), 0.0001f)
     }
 
     // --- Persisted migration: transparency % -> opacity % ----------------------------------

@@ -72,6 +72,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.auralis.app.BuildConfig
 import com.auralis.app.data.lyrics.LyricsProviderCatalog
 import com.auralis.app.data.metadata.MetadataProviderCatalog
 import com.auralis.app.data.youtube.LiveSyncState
@@ -101,6 +102,7 @@ import com.auralis.app.ui.glass.resolveDockGlass
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
+import com.auralis.app.ui.performance.VisualPerformanceTier
 import com.auralis.app.ui.theme.Accents
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.auralisSliderColors
@@ -688,9 +690,113 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                     previewDock.limitedReason?.let { SettingsHelperText(it) }
                 }
             }
+            if (BuildConfig.DEBUG) {
+                item {
+                    GlassDebugPanel(
+                        settings = settings,
+                        actions = actions,
+                        dock = previewDock,
+                        glassHazeAllowed = isGlass && profile.blurEnabled,
+                    )
+                }
+            }
         }
     }
 }
+
+/**
+ * DEBUG-only diagnostics for the dock glass path. The four lines answer "why is there no blur?"
+ * without a logcat. The caller's `BuildConfig.DEBUG` check removes the whole card in release builds.
+ */
+@Composable
+private fun GlassDebugPanel(
+    settings: AppSettings,
+    actions: SettingsActions,
+    dock: DockGlassStyle,
+    glassHazeAllowed: Boolean,
+) {
+    val profile = LocalPerformanceProfile.current
+    var open by remember { mutableStateOf(false) }
+    val costFactor = if (profile.tier == VisualPerformanceTier.MEDIUM) 0.8f else 1f
+    val inputScale = if (dock.hazeDefaultScale) {
+        null
+    } else {
+        (GlassMapping.hazeInputScale(dock.blurDp) * costFactor).coerceIn(0.25f, 1f)
+    }
+    SettingsGroupCard {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { open = !open }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Rounded.BugReport, null, modifier = Modifier.size(18.dp))
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text("Glass diagnostics", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Debug build only",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                if (open) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                if (open) "Collapse" else "Expand",
+            )
+        }
+        if (open) {
+            SettingsDivider()
+            Column(
+                Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                DebugLine(
+                    "SDK ${Build.VERSION.SDK_INT} · tier ${profile.tier.name.lowercase()} · " +
+                        "profile blur ${onOff(profile.blurEnabled)}",
+                )
+                DebugLine(
+                    "glassHazeAllowed ${onOff(glassHazeAllowed)} · " +
+                        "dock blur ${"%.0f".format(dock.blurDp)} dp",
+                )
+                DebugLine(
+                    "haze input scale ${inputScale?.let { "%.2f".format(it) } ?: "default"} · " +
+                        "lens ${onOff(dock.lensExperimental)}",
+                )
+                DebugLine(
+                    "fill ${"%.2f".format(dock.fillAlpha)} · " +
+                        "opacity ${(dock.opacity * 100).roundToInt()}%",
+                )
+            }
+            SettingsDivider()
+            SettingsSwitchRow(
+                Icons.Rounded.AutoAwesome,
+                "Dock lens (experimental)",
+                "Run the AGSL lens on the dock; forces an offscreen layer first",
+                settings.dockLensExperimental,
+            ) { on -> actions.onUpdate { it.copy(dockLensExperimental = on) } }
+            SettingsDivider()
+            SettingsSwitchRow(
+                Icons.Rounded.Speed,
+                "Haze input scale: Default",
+                "Let Haze choose its own input scale instead of the fixed cost scale",
+                settings.dockHazeDefaultScale,
+            ) { on -> actions.onUpdate { it.copy(dockHazeDefaultScale = on) } }
+        }
+    }
+}
+
+@Composable
+private fun DebugLine(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        fontFamily = FontFamily.Monospace,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+private fun onOff(value: Boolean): String = if (value) "ON" else "OFF"
 
 /**
  * The Appearance preview. It is not a mock: the bar and the circle both run the production

@@ -159,11 +159,15 @@ object GlassMapping {
         return lerpColor(GlassTokens.Cream, DOCK_SOLID, f).copy(alpha = lerp(0.10f, 1f, f))
     }
 
-    /** Backdrop saturation boost, 1.0 at 0% blur -> 1.30 at full blur. */
-    fun dockSaturation(blurFraction: Float): Float = 1.0f + 0.30f * blurFraction.coerceIn(0f, 1f)
+    /**
+     * Backdrop saturation boost, 1.0 at 0% blur -> 1.60 at full blur. Only the (experimental) AGSL
+     * lens applies it; the default dock path has no saturation pass because Haze 1.6.7 exposes no
+     * colour filter of its own.
+     */
+    fun dockSaturation(blurFraction: Float): Float = 1.0f + 0.60f * blurFraction.coerceIn(0f, 1f)
 
-    /** Brightness lift applied by the lens pass over the blurred backdrop. */
-    const val DOCK_BRIGHTNESS = 0.03f
+    /** Additive brightness lift applied to the blurred layer (Haze tint, no AGSL required). */
+    const val DOCK_BRIGHTNESS = 0.04f
 
     /**
      * Haze cost factor: a larger blur radius is sampled at a lower input scale, 1/(1+radius/28),

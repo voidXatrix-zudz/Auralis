@@ -29,10 +29,22 @@ verify by static review. One commit per step.
     (30 -> 70, 100 -> 0); backup exports the new key and still imports old backups inverted.
   - `DockGlassStyle.fillAlpha` + `opacity`, `GlassOptics.fillAlpha`, slider "Dock opacity".
   - Unit tests: `dockFill` endpoints/monotonic/no-0.04-step + migration cases.
+- STEP 2 (this commit): dock no longer runs the AGSL lens by default.
+  - `dockGlassMaterial`/`dockSurface` default `refraction = false`; the lens only runs when the
+    DEBUG `dockLensExperimental` flag is on, and that path sets `CompositingStrategy.Offscreen`
+    on its `graphicsLayer` before the shader.
+  - Haze block sets `blurEnabled`, an explicit `blurRadius` from `dock.blurDp`, and
+    `HazeInputScale.Fixed(...)`; the DEBUG "Haze input scale: Default" switch uses `Auto`.
+  - Brightness lift is a 4% additive white Haze tint (no AGSL); `dockSaturation` is now
+    `1.0 + 0.6 * blur` and only the experimental lens uses it.
+  - Elevation shadow is skipped while the fill is translucent (< 0.6 alpha) so it cannot darken
+    the pane from underneath.
+  - Hidden active-tab circle passes `blurBackdrop = circleIn > 0.01f` (no wasted blur pass).
+  - Collapsible DEBUG "Glass diagnostics" card at the bottom of Appearance with four lines
+    (SDK/tier/profile blur, haze allowed + dp, input scale + lens, fill + opacity) and the two
+    DEBUG switches.
 
 ## NEXT
-- STEP 1: rename + re-map opacity (`dockFill`), migration, tests.
-- STEP 2: fix missing blur in `dockGlassMaterial` + debug toggles/panel.
 - STEP 3: smooth sliders (drag state, no whole-tree recomposition).
 - STEP 4: visible, pinned preview.
 - STEP 5: self-review checklist in this file.

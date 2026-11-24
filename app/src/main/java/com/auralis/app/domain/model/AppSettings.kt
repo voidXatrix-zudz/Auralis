@@ -48,6 +48,16 @@ data class AppSettings(
     val glassClarity: Int = 50,
     /** Draw the 1dp specular hairline on glass surfaces. */
     val glassOutlines: Boolean = true,
+    /**
+     * DEBUG-only experiment: run the AGSL lens (refraction) pass on the dock. Off by default; the
+     * shipped dock path has no refraction. Shown only in debug builds.
+     */
+    val dockLensExperimental: Boolean = false,
+    /**
+     * DEBUG-only experiment: let Haze choose its own input scale instead of the dock's fixed cost
+     * scale. Shown only in debug builds.
+     */
+    val dockHazeDefaultScale: Boolean = false,
     /** Watch MediaStore/folders for new, changed and removed songs and update the library automatically. */
     val autoScanEnabled: Boolean = true,
     /** Include songs from subfolders of each chosen music folder. */

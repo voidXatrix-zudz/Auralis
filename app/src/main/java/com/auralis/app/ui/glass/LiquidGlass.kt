@@ -15,8 +15,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.compositeOver
@@ -114,9 +116,9 @@ fun Modifier.glassSurface(
  *
  * - SOLID: opaque palette surface with the dock's soft shadow. No blur, no rim.
  * - GLASS: real Haze backdrop blur (heavy), the single "Dock opacity" fill
- *   ([GlassMapping.dockFill]), a 1dp cream rim bright on opposite corners, a soft inner top sheen,
- *   and an AGSL lens pass (refraction + chromatic edge + saturation + a small brightness lift) on
- *   Android 13+ in High/Medium.
+ *   ([GlassMapping.dockFill]), a 1dp cream rim bright on opposite corners, and a soft inner top
+ *   sheen. No refraction by default; the AGSL lens is a DEBUG-only experiment
+ *   ([com.auralis.app.domain.model.AppSettings.dockLensExperimental]).
  *
  * Every alpha/radius comes from [GlassMapping] via [LocalGlassSettings] / [LocalDockGlassStyle];
  * the caller only chooses the [style], the [shape] and (for SOLID) the fill. Icons, labels and
@@ -129,7 +131,8 @@ fun Modifier.dockGlassMaterial(
     hazeState: HazeState? = LocalHazeState.current,
     solidFill: Color? = null,
     cornerRadius: Dp = GlassTokens.RadiusXl,
-    refraction: Boolean = true,
+    /** Off by default: the shipped dock has no AGSL lens. See [DockGlassStyle.lensExperimental]. */
+    refraction: Boolean = false,
     /** False for controls nested inside an already-blurred pill (no second backdrop sample). */
     blurBackdrop: Boolean = true,
 ): Modifier {
@@ -167,9 +170,9 @@ fun Modifier.dockGlassMaterial(
     val costFactor = if (tier == com.auralis.app.ui.performance.VisualPerformanceTier.MEDIUM) 0.8f else 1f
     val hazeScale = (GlassMapping.hazeInputScale(dock.blurDp) * costFactor).coerceIn(0.25f, 1f)
 
-    // Refraction is allowed on these small dock surfaces in High AND Medium; off in Low and off for
-    // large panels (the Surface path still gates on the profile's refractionEnabled).
-    val canRefract = refraction && canBlur && dock.refractionEnabled &&
+    // The shipped dock has NO refraction. The AGSL lens only runs when the DEBUG experiment is on;
+    // when it is, the layer is forced offscreen first so the shader cannot sample its own output.
+    val canRefract = (refraction || dock.lensExperimental) && canBlur && dock.refractionEnabled &&
         tier != com.auralis.app.ui.performance.VisualPerformanceTier.LOW &&
         Build.VERSION.SDK_INT >= 33
 
@@ -179,26 +182,31 @@ fun Modifier.dockGlassMaterial(
     val refrScale = 0.6f + 0.4f * blurFraction
     val saturation = GlassMapping.dockSaturation(blurFraction)
 
-    // Haze contributes ONLY the blurred backdrop; noise stays zero so nothing greys the artwork.
+    // Haze contributes ONLY the blurred backdrop. Noise stays zero (so nothing greys the artwork);
+    // the 4% additive white tint is the brightness lift, done without an AGSL pass.
     val hazeStyle = remember(dock.blurDp) {
         HazeStyle(
             backgroundColor = Color.Transparent,
-            tints = emptyList(),
+            tints = listOf(HazeTint(Color.White.copy(alpha = GlassMapping.DOCK_BRIGHTNESS), BlendMode.Plus)),
             blurRadius = dock.blurDp.dp,
             noiseFactor = 0f,
             fallbackTint = HazeTint(Color.Transparent),
         )
     }
 
+    // A translucent pane must not show the black elevation shadow through itself: through the
+    // fill it reads as dirt, not depth. Keep the shadow only once the fill is dense enough.
     var modifier = this
-        .shadow(
+    if (fill.alpha >= 0.6f) {
+        modifier = modifier.shadow(
             elevation = 10.dp * dock.shadowScale,
             shape = shape,
             clip = false,
             ambientColor = Color.Black.copy(alpha = 0.20f),
             spotColor = Color.Black.copy(alpha = 0.28f),
         )
-        .clip(shape)
+    }
+    modifier = modifier.clip(shape)
 
     if (canRefract && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         modifier = modifier.lensRefraction(
@@ -207,14 +215,22 @@ fun Modifier.dockGlassMaterial(
             refract = 0.35f * refrScale,
             chroma = 0.012f * refrScale,
             saturation = saturation,
-            brightness = GlassMapping.DOCK_BRIGHTNESS,
+            brightness = 0f,
+            // The fill is the brightness lift (Haze tint); the lens must not double it.
+            offscreenLayer = dock.lensExperimental,
         )
     }
     modifier = if (canBlur) {
         modifier.hazeEffect(hazeState, hazeStyle) {
             // Explicit: Haze defaults blur off below Android 12 and would draw a scrim instead.
             this.blurEnabled = true
-            inputScale = HazeInputScale.Fixed(hazeScale)
+            // Radius comes from the dock style (0..80dp), never from Haze's own default.
+            this.blurRadius = dock.blurDp.dp
+            inputScale = if (dock.hazeDefaultScale) {
+                HazeInputScale.Auto
+            } else {
+                HazeInputScale.Fixed(hazeScale)
+            }
         }
     } else {
         modifier
@@ -496,10 +512,14 @@ private fun Modifier.lensRefraction(
     chroma: Float,
     saturation: Float,
     brightness: Float,
+    offscreenLayer: Boolean = false,
 ): Modifier {
     val shader = remember { LensShader.create() } ?: return this
     val effect = remember(shader) { LensShader.effect(shader) } ?: return this
     return this.graphicsLayer {
+        // The experimental dock lens must capture its subtree before the shader runs, otherwise the
+        // shader can read back the layer it is drawing into (which is what broke the dock blur).
+        if (offscreenLayer) compositingStrategy = CompositingStrategy.Offscreen
         shader.setFloatUniform("uSize", size.width, size.height)
         shader.setFloatUniform("uRadius", radiusPx)
         shader.setFloatUniform("uEdge", edgePx)
