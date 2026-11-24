@@ -36,6 +36,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
+import kotlin.math.roundToInt
 
 /**
  * The one glass material used by the dock, mini-player, cards and dialogs.
@@ -184,11 +185,16 @@ fun Modifier.dockGlassMaterial(
 
     // Haze contributes ONLY the blurred backdrop. Noise stays zero (so nothing greys the artwork);
     // the 4% additive white tint is the brightness lift, done without an AGSL pass.
-    val hazeStyle = remember(dock.blurDp) {
+    //
+    // The style is remembered on a 0.5dp-snapped radius: GlassMapping already snaps, and rounding
+    // again keeps the style value stable if a caller ever passes raw dp, so slider noise cannot
+    // rebuild the Haze child (and re-render its whole subtree) for a change nobody can see.
+    val hazeBlurDp = (dock.blurDp * 2f).roundToInt() / 2f
+    val hazeStyle = remember(hazeBlurDp) {
         HazeStyle(
             backgroundColor = Color.Transparent,
             tints = listOf(HazeTint(Color.White.copy(alpha = GlassMapping.DOCK_BRIGHTNESS), BlendMode.Plus)),
-            blurRadius = dock.blurDp.dp,
+            blurRadius = hazeBlurDp.dp,
             noiseFactor = 0f,
             fallbackTint = HazeTint(Color.Transparent),
         )
@@ -225,7 +231,7 @@ fun Modifier.dockGlassMaterial(
             // Explicit: Haze defaults blur off below Android 12 and would draw a scrim instead.
             this.blurEnabled = true
             // Radius comes from the dock style (0..80dp), never from Haze's own default.
-            this.blurRadius = dock.blurDp.dp
+            this.blurRadius = hazeBlurDp.dp
             inputScale = if (dock.hazeDefaultScale) {
                 HazeInputScale.Auto
             } else {

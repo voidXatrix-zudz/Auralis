@@ -1,6 +1,7 @@
 package com.auralis.app.ui.glass
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -44,7 +45,7 @@ data class GlassSettings(
 }
 
 /** The persisted, committed controls. Provided at the root. */
-val LocalGlassSettings = staticCompositionLocalOf { GlassSettings() }
+val LocalGlassSettings = compositionLocalOf { GlassSettings() }
 
 /**
  * Transient copy used while a slider is being dragged. The Appearance screen writes here on every

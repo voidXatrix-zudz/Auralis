@@ -2,7 +2,7 @@ package com.auralis.app.ui.glass
 
 import android.os.Build
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.compositionLocalOf
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.ui.performance.PerformanceProfile
 import com.auralis.app.ui.performance.VisualPerformanceTier
@@ -40,7 +40,7 @@ data class DockGlassStyle(
     val limitedReason: String? = null,
 )
 
-val LocalDockGlassStyle = staticCompositionLocalOf { DockGlassStyle() }
+val LocalDockGlassStyle = compositionLocalOf { DockGlassStyle() }
 
 /**
  * Resolves the concrete render values from the one [GlassSettings] model.

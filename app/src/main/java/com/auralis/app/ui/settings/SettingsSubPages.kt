@@ -95,6 +95,7 @@ import com.auralis.app.ui.glass.GlassKind
 import com.auralis.app.ui.glass.GlassMapping
 import com.auralis.app.ui.glass.GlassSettings
 import com.auralis.app.ui.glass.LocalDockGlassStyle
+import com.auralis.app.ui.glass.LocalGlassDrag
 import com.auralis.app.ui.glass.LocalGlassSettings
 import com.auralis.app.ui.glass.dockGlassMaterial
 import com.auralis.app.ui.glass.glassSurface
@@ -270,13 +271,28 @@ private fun balanceLabel(balance: Float): String = when {
 }
 
 @Composable
-private fun SliderSetting(title: String, valueLabel: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int, onChange: (Float) -> Unit) {
+private fun SliderSetting(
+    title: String,
+    valueLabel: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    steps: Int,
+    onChangeFinished: () -> Unit = {},
+    onChange: (Float) -> Unit,
+) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
             Text(valueLabel, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Slider(value = value, onValueChange = onChange, valueRange = range, steps = steps, colors = auralisSliderColors())
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            onValueChangeFinished = onChangeFinished,
+            valueRange = range,
+            steps = steps,
+            colors = auralisSliderColors(),
+        )
     }
 }
 
@@ -579,10 +595,11 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
     val isGlass = glass()
     val profile = LocalPerformanceProfile.current
     val performanceReason = LocalPerformanceReason.current
-    // The three controls as one model, rebuilt from the persisted 0..100 ints on every tick. The
-    // sliders, the numeric readout and the preview all read this copy, so a drag can never leave
-    // the preview one frame behind the value it is displaying.
-    val liveGlass = remember(
+    // The three controls as one model: the persisted 0..100 ints are the fallback, and a slider drag
+    // writes a transient [GlassDragState] copy that the sliders, readout and preview all read, so a
+    // drag can never leave the preview one frame behind the value it is displaying.
+    val drag = LocalGlassDrag.current
+    val persistedGlass = remember(
         settings.dockGlassOpacity,
         settings.glassClarity,
         settings.dockGlassBlur,
@@ -592,6 +609,26 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
             settings.glassClarity,
             settings.dockGlassBlur,
         )
+    }
+    // Live = the transient drag copy while a slider moves. Ticks write ONLY this state, so the
+    // preview and the real dock update without a DataStore write (or a full settings re-emit) per
+    // pixel; the drag end persists the final value once. AuralisRoot clears the copy when the
+    // persisted settings catch up.
+    val liveGlass = drag.value ?: persistedGlass
+    // 0..1 snapped to whole percent, so the transient value is bit-identical to what gets saved.
+    fun snapped(value: Float): Float = (value.coerceIn(0f, 1f) * 100f).roundToInt() / 100f
+    fun preview(transform: (GlassSettings) -> GlassSettings) {
+        drag.value = transform(drag.value ?: persistedGlass)
+    }
+    fun commit() {
+        val next = drag.value ?: persistedGlass
+        actions.onUpdate {
+            it.copy(
+                dockGlassOpacity = GlassMapping.percentToInt(next.dockOpacity),
+                glassClarity = GlassMapping.percentToInt(next.glassClarity),
+                dockGlassBlur = GlassMapping.percentToInt(next.blurStrength),
+            )
+        }
     }
     val previewDock = remember(settings, liveGlass, profile, performanceReason) {
         resolveDockGlass(settings, liveGlass, profile, performanceReason)
@@ -640,7 +677,8 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                         liveGlass.glassClarity,
                         0f..1f,
                         0,
-                    ) { v -> actions.onUpdate { it.copy(glassClarity = (v * 100).roundToInt()) } }
+                        onChangeFinished = { commit() },
+                    ) { v -> preview { it.copy(glassClarity = snapped(v)) } }
                     SettingsDivider()
                     SliderSetting(
                         "Dock opacity",
@@ -648,7 +686,8 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                         liveGlass.dockOpacity,
                         0f..1f,
                         0,
-                    ) { v -> actions.onUpdate { it.copy(dockGlassOpacity = (v * 100).roundToInt()) } }
+                        onChangeFinished = { commit() },
+                    ) { v -> preview { it.copy(dockOpacity = snapped(v)) } }
                     SettingsDivider()
                     SettingsSwitchRow(
                         Icons.Rounded.AutoAwesome,
@@ -666,7 +705,8 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                         liveGlass.blurStrength,
                         0f..1f,
                         0,
-                    ) { v -> actions.onUpdate { it.copy(dockGlassBlur = (v * 100).roundToInt()) } }
+                        onChangeFinished = { commit() },
+                    ) { v -> preview { it.copy(blurStrength = snapped(v)) } }
                     SettingsDivider()
                     SettingsSwitchRow(Icons.Rounded.AutoAwesome, "Glass outlines", "1dp specular hairline around glass surfaces", settings.glassOutlines) { on -> actions.onUpdate { it.copy(glassOutlines = on) } }
                 }

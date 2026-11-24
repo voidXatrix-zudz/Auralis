@@ -1,5 +1,6 @@
 package com.auralis.app.ui
 
+import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.theme.AuralisTheme
@@ -146,6 +147,7 @@ import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.ui.performance.LocalPerformanceMode
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
+import com.auralis.app.ui.performance.PerformanceProfile
 import com.auralis.app.ui.components.glassSurface
 import com.auralis.app.logging.AppLog
 import dev.chrisbanes.haze.rememberHazeState
@@ -340,26 +342,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
         )
     }
     val glassDrag = remember { GlassDragState() }
-    val glassSettings = glassDrag.value ?: persistedGlass
-    // Once DataStore catches up with the committed drag, drop the transient copy.
+    // Once DataStore catches up with the committed drag, drop the transient copy. The effect reads
+    // the drag state only when it runs, so AuralisRoot does not subscribe to every slider tick.
     LaunchedEffect(persistedGlass) {
         if (glassDrag.value == persistedGlass) glassDrag.value = null
-    }
-
-    // Dock fill/blur for the Appearance preview + performance flags. Surface fills are derived
-    // separately by GlassKind inside glassSurface, so Glass clarity can never move the dock.
-    val clarity = glassSettings.glassClarity
-    val dockGlass = remember(settings, glassSettings, profile, performanceReason) {
-        resolveDockGlass(settings, glassSettings, profile, performanceReason)
-    }
-    val glassOptics = remember(clarity, settings.glassOutlines, dockGlass) {
-        GlassOptics(
-            clarity = clarity,
-            outlines = dockGlass.outlines,
-            fillAlpha = dockGlass.fillAlpha,
-            blurDp = dockGlass.blurDp,
-            saturation = 1.12f + 0.25f * clarity,
-        )
     }
 
     AuralisTheme(themeStyle = settings.themeStyle, darkTheme = dark, accentName = settings.accent, visualPerformance = profile.tier) {
@@ -495,11 +481,15 @@ fun AuralisRoot(viewModel: AppViewModel) {
         // and below, so the dock can blur on every supported API level.
         val glassHazeAllowed = settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
             effectiveProfile.blurEnabled
+        GlassSettingsProvider(
+            drag = glassDrag,
+            persisted = persistedGlass,
+            settings = settings,
+            profile = profile,
+            performanceReason = performanceReason,
+        ) {
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colorScheme.onBackground,
-            LocalGlassOptics provides glassOptics,
-            LocalDockGlassStyle provides dockGlass,
-            LocalGlassSettings provides glassSettings,
             LocalHazeState provides hazeState,
             LocalGlassDrag provides glassDrag,
             LocalGlassOverlay provides glassOverlay,
@@ -1006,7 +996,48 @@ fun AuralisRoot(viewModel: AppViewModel) {
             GlassOverlayScrim()
         }
         }
+        }
     }
+}
+
+/**
+ * Provides the live glass locals from the persisted settings plus the transient drag copy.
+ *
+ * This deliberately lives in its own composable: [GlassDragState.value] is read HERE, so a slider
+ * tick recomposes this small provider (and the composables that read the locals), not AuralisRoot
+ * with its navigation state, playback state and dock. [LocalGlassSettings], [LocalDockGlassStyle]
+ * and [LocalGlassOptics] are `compositionLocalOf`, so only their readers are invalidated.
+ */
+@Composable
+private fun GlassSettingsProvider(
+    drag: GlassDragState,
+    persisted: GlassSettings,
+    settings: AppSettings,
+    profile: PerformanceProfile,
+    performanceReason: String?,
+    content: @Composable () -> Unit,
+) {
+    val glass = drag.value ?: persisted
+    // Dock fill/blur for the dock + Appearance preview. Surface fills are derived separately by
+    // GlassKind inside glassSurface, so Glass clarity can never move the dock.
+    val dockGlass = remember(settings, glass, profile, performanceReason) {
+        resolveDockGlass(settings, glass, profile, performanceReason)
+    }
+    val optics = remember(glass.glassClarity, settings.glassOutlines, dockGlass) {
+        GlassOptics(
+            clarity = glass.glassClarity,
+            outlines = dockGlass.outlines,
+            fillAlpha = dockGlass.fillAlpha,
+            blurDp = dockGlass.blurDp,
+            saturation = 1.12f + 0.25f * glass.glassClarity,
+        )
+    }
+    CompositionLocalProvider(
+        LocalGlassSettings provides glass,
+        LocalDockGlassStyle provides dockGlass,
+        LocalGlassOptics provides optics,
+        content = content,
+    )
 }
 
 /** One-time post-sign-in prompt offering the YouTube Music hand-off (Part D). */

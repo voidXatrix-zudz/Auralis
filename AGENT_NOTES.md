@@ -43,9 +43,16 @@ verify by static review. One commit per step.
   - Collapsible DEBUG "Glass diagnostics" card at the bottom of Appearance with four lines
     (SDK/tier/profile blur, haze allowed + dp, input scale + lens, fill + opacity) and the two
     DEBUG switches.
+- STEP 3 (this commit): slider drags no longer persist per tick.
+  - `SliderSetting` gained `onChangeFinished`; the three glass sliders write only
+    `GlassDragState.value` while moving and persist once via `actions.onUpdate` at drag end.
+  - `LocalGlassSettings`, `LocalDockGlassStyle` and `LocalGlassOptics` are now
+    `compositionLocalOf`, so only their readers are invalidated.
+  - AuralisRoot resolves the live glass values inside a small `GlassSettingsProvider` composable
+    that reads the drag state itself, so a tick no longer recomposes the root tree.
+  - The dock `hazeStyle` is remembered on the 0.5dp-snapped radius.
 
 ## NEXT
-- STEP 3: smooth sliders (drag state, no whole-tree recomposition).
 - STEP 4: visible, pinned preview.
 - STEP 5: self-review checklist in this file.
 
