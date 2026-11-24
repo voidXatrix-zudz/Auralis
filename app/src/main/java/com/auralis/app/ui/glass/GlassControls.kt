@@ -5,7 +5,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
+import com.auralis.app.ui.theme.GlassTokens
 import dev.chrisbanes.haze.HazeState
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
@@ -66,9 +69,9 @@ enum class GlassKind { Dock, Surface }
  * Central mapping from the three 0..1 controls to concrete alphas/radii.
  *
  * Direction, per the controls' intent:
- *  - higher dock transparency -> lower dock fill alpha (0.55 -> 0.10), colour always black;
+ *  - higher dock transparency -> lower dock tint alpha (0.90 -> 0.05), colour = warm black;
  *  - higher glass clarity      -> lower surface fill alpha (0.40 -> 0.04);
- *  - higher blur strength      -> larger backdrop radius (0dp -> 40dp).
+ *  - higher blur strength      -> larger backdrop radius (0dp -> 80dp), never tier-scaled.
  */
 object GlassMapping {
     // Defaults shown by the Reset action (and used for fresh installs).
@@ -80,15 +83,13 @@ object GlassMapping {
     const val DEFAULT_GLASS_CLARITY_PERCENT = 50
     const val DEFAULT_BLUR_PERCENT = 55
 
-    /** Full-scale backdrop radius. Blur strength 0.55 -> ~22dp, 1.0 -> 40dp. */
-    const val MAX_BLUR_DP = 40f
+    /** Full-scale backdrop radius: 0% -> 0dp, 100% -> 80dp. Never scaled by the performance tier. */
+    const val MAX_BLUR_DP = 80f
 
-    private const val DOCK_FILL_MAX = 0.55f
-    /**
-     * Even at maximum see-through the dock keeps a whisper of black so cream labels stay legible
-     * over bright album art. Colour is always [com.auralis.app.ui.theme.GlassTokens.Canvas].
-     */
-    private const val DOCK_FILL_MIN = 0.10f
+    /** Dock tint stops (Dock transparency 0..1) -> tint alpha over the blurred backdrop. */
+    private val DOCK_TINT_STOPS = floatArrayOf(0f, 0.25f, 0.50f, 0.75f, 1f)
+    private val DOCK_TINT_ALPHAS = floatArrayOf(0.90f, 0.66f, 0.42f, 0.20f, 0.05f)
+
     private const val SURFACE_FILL_MAX = 0.40f
     private const val SURFACE_FILL_MIN = 0.04f
 
@@ -98,17 +99,27 @@ object GlassMapping {
      */
     const val DOCK_BORDER_ALPHA = 0.16f
 
-    /** No backdrop blur available: denser black so the dock still reads as smoked glass. */
-    const val DOCK_NO_BLUR_MIN_FILL = 0.22f
-
     /**
-     * Faint black base under every glass fill. Over the flat black backdrop it is invisible;
-     * over album art / scrolling artwork it keeps cream text legible even at maximum see-through.
+     * Faint black base under every [GlassKind.Surface] fill. Over the flat black backdrop it is
+     * invisible; over album art / scrolling artwork it keeps cream text legible. The dock family no
+     * longer uses this: it uses the adaptive [dockTextScrimAlpha] instead.
      */
     const val LEGIBILITY_SCRIM = 0.26f
 
     /** API < 31 or blur disabled: denser fill so the surface still reads as intentional glass. */
     const val NO_BLUR_MIN_FILL = 0.20f
+
+    /**
+     * Legacy dock floor. Superseded by [DOCK_NO_BLUR_TINT_FLOOR]; retained only while the old
+     * window/popup dock path still reads it, removed when that path is retired.
+     */
+    const val DOCK_NO_BLUR_MIN_FILL = 0.22f
+
+    /** Warm lift added to [GlassTokens.Canvas] for the dock tint colour. */
+    private const val DOCK_TINT_WARM = 0.03f
+
+    /** Blur radius at which the Haze input-scale cost factor bottoms out. */
+    private const val HAZE_COST_REFERENCE_DP = 28f
 
     /** Scrim behind a dialog/sheet window: the app content must not mix with dialog text. */
     const val WINDOW_SCRIM = 0.86f
@@ -132,24 +143,95 @@ object GlassMapping {
 
     fun percentToInt(value: Float): Int = (value.coerceIn(0f, 1f) * 100).roundToInt()
 
-    fun dockFillAlpha(transparency: Float): Float =
-        lerp(DOCK_FILL_MAX, DOCK_FILL_MIN, transparency).coerceIn(DOCK_FILL_MIN, DOCK_FILL_MAX)
+    /**
+     * Dock transparency -> warm-black tint alpha over the blurred backdrop.
+     * Piecewise table (0% 0.90, 25% 0.66, 50% 0.42, 75% 0.20, 100% 0.05) so the slider reads as a
+     * large, obvious change: dense smoked glass -> almost fully see-through.
+     */
+    fun dockTintAlpha(transparency: Float): Float {
+        val t = transparency.coerceIn(0f, 1f)
+        for (i in 0 until DOCK_TINT_STOPS.lastIndex) {
+            val a = DOCK_TINT_STOPS[i]
+            val b = DOCK_TINT_STOPS[i + 1]
+            if (t <= b) {
+                val f = ((t - a) / (b - a)).coerceIn(0f, 1f)
+                return DOCK_TINT_ALPHAS[i] + (DOCK_TINT_ALPHAS[i + 1] - DOCK_TINT_ALPHAS[i]) * f
+            }
+        }
+        return DOCK_TINT_ALPHAS.last()
+    }
+
+    /**
+     * The dock tint colour: pure black lifted a few percent toward warm cream so the smoked glass
+     * reads warm instead of dead grey. Alpha is supplied separately by [dockTintAlpha].
+     */
+    fun dockTintColor(): Color = lerpColor(GlassTokens.Canvas, GlassTokens.Cream, DOCK_TINT_WARM)
+
+    /** Thin warm frost over the blurred backdrop: strongest when the dock is densest. */
+    fun dockFrostAlpha(transparency: Float): Float =
+        (0.02f + 0.06f * (1f - transparency.coerceIn(0f, 1f))).coerceIn(0f, 0.08f)
+
+    /**
+     * Adaptive text/icon-only scrim. Replaces the old fixed minimum fill: it fades from 0.16 at 0%
+     * blur to 0 at full blur, so it never exceeds 0.16 and never fights the backdrop once blur is
+     * doing the legibility work. [blurFraction] = effective blur / [MAX_BLUR_DP].
+     */
+    fun dockTextScrimAlpha(blurFraction: Float): Float = 0.16f * (1f - blurFraction.coerceIn(0f, 1f))
+
+    /** Backdrop saturation boost, 1.0 at 0% blur -> 1.30 at full blur. */
+    fun dockSaturation(blurFraction: Float): Float = 1.0f + 0.30f * blurFraction.coerceIn(0f, 1f)
+
+    /** The tint floor kept ONLY when blur cannot run (Android <12 / Low mode). */
+    const val DOCK_NO_BLUR_TINT_FLOOR = 0.50f
+
+    /** Brightness lift applied by the lens pass over the blurred backdrop. */
+    const val DOCK_BRIGHTNESS = 0.03f
+
+    /**
+     * Haze cost factor: a larger blur radius is sampled at a lower input scale, 1/(1+radius/28),
+     * clamped to [0.25, 1]. Applied as [dev.chrisbanes.haze.HazeInputScale.Fixed]; it changes render
+     * cost only, never the visible radius.
+     */
+    fun hazeInputScale(radiusDp: Float): Float =
+        (1f / (1f + radiusDp.coerceAtLeast(0f) / HAZE_COST_REFERENCE_DP)).coerceIn(0.25f, 1f)
 
     fun surfaceFillAlpha(clarity: Float): Float =
         lerp(SURFACE_FILL_MAX, SURFACE_FILL_MIN, clarity).coerceIn(SURFACE_FILL_MIN, SURFACE_FILL_MAX)
 
     fun fillAlpha(kind: GlassKind, settings: GlassSettings): Float = when (kind) {
-        GlassKind.Dock -> dockFillAlpha(settings.dockTransparency)
+        GlassKind.Dock -> dockTintAlpha(settings.dockTransparency)
         GlassKind.Surface -> surfaceFillAlpha(settings.glassClarity)
     }
 
     /** Hairline alpha follows the same direction and stays subtle. */
     fun borderAlpha(value: Float): Float = lerp(BORDER_STRONG, BORDER_FAINT, value)
 
-    /** 0..1 strength -> 0..40dp, then scaled by the performance profile and whole-dp quantized. */
-    fun blurDp(strength: Float, scale: Float): Float {
-        val raw = MAX_BLUR_DP * strength.coerceIn(0f, 1f) * scale.coerceIn(0f, 1f)
-        return raw.coerceIn(0f, MAX_BLUR_DP).roundToInt().toFloat()
+    /**
+     * 0..1 strength -> 0..80dp via `80 * s^1.15`, rounded to the nearest 0.5 dp. Deliberately NOT
+     * scaled by the performance tier: the tier changes cost (Haze input scale) or turns blur off,
+     * it never changes the radius.
+     */
+    fun blurDp(strength: Float): Float {
+        val s = strength.coerceIn(0f, 1f)
+        val raw = MAX_BLUR_DP * s.pow(1.15f)
+        return (raw.coerceIn(0f, MAX_BLUR_DP) * 2f).roundToInt() / 2f
+    }
+
+    /**
+     * Compatibility overload for call sites that still pass a performance scale. The tier no longer
+     * changes the radius (it only changes Haze cost or turns blur off), so [scale] is ignored.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun blurDp(strength: Float, scale: Float): Float = blurDp(strength)
+
+    private fun lerpColor(start: Color, end: Color, fraction: Float): Color {
+        val t = fraction.coerceIn(0f, 1f)
+        return Color(
+            red = start.red + (end.red - start.red) * t,
+            green = start.green + (end.green - start.green) * t,
+            blue = start.blue + (end.blue - start.blue) * t,
+            alpha = 1f,
+        )
     }
 
     private fun lerp(start: Float, end: Float, fraction: Float): Float {

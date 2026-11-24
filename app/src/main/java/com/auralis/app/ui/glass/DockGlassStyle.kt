@@ -17,10 +17,10 @@ import com.auralis.app.ui.performance.PerformanceProfile
  */
 @Immutable
 data class DockGlassStyle(
-    /** Dock-only fill alpha derived from "Dock transparency". Never used by other surfaces. */
-    val tintAlpha: Float = GlassMapping.dockFillAlpha(GlassMapping.DEFAULT_DOCK_TRANSPARENCY),
+    /** Dock-only tint alpha derived from "Dock transparency". Never used by other surfaces. */
+    val tintAlpha: Float = GlassMapping.dockTintAlpha(GlassMapping.DEFAULT_DOCK_TRANSPARENCY),
     /** Effective backdrop blur radius in dp after the performance cap (all surfaces). */
-    val blurDp: Float = GlassMapping.blurDp(GlassMapping.DEFAULT_BLUR_STRENGTH, 1f),
+    val blurDp: Float = GlassMapping.blurDp(GlassMapping.DEFAULT_BLUR_STRENGTH),
     /** True when live backdrop blur can run (allowed by the profile and the radius is non-zero). */
     val blurEnabled: Boolean = true,
     /** AGSL lens pass; only on large surfaces and only in High. */
@@ -39,8 +39,8 @@ val LocalDockGlassStyle = staticCompositionLocalOf { DockGlassStyle() }
  * Resolves the concrete render values from the one [GlassSettings] model.
  *
  * Endpoints:
- *  - Dock transparency 0% -> 0.55 black alpha (dense), 100% -> 0.10 (see-through).
- *  - Blur 0% -> 0dp, 100% -> 40dp, scaled by the performance profile.
+ *  - Dock transparency 0% -> 0.90 warm-black alpha (dense), 100% -> 0.05 (see-through).
+ *  - Blur 0% -> 0dp, 100% -> 80dp; the tier only changes Haze input scale, never the radius.
  *  - Glass clarity is intentionally NOT read here; it belongs to non-dock surfaces only.
  */
 fun resolveDockGlass(
@@ -53,8 +53,8 @@ fun resolveDockGlass(
     val transparency = glass.dockTransparency.coerceIn(0f, 1f)
     val blurStrength = glass.blurStrength.coerceIn(0f, 1f)
 
-    val tint = GlassMapping.dockFillAlpha(transparency)
-    val effectiveBlur = GlassMapping.blurDp(blurStrength, profile.blurScale)
+    val tint = GlassMapping.dockTintAlpha(transparency)
+    val effectiveBlur = GlassMapping.blurDp(blurStrength)
     val apiSupportsBlur = sdkInt >= 31
     val blurEnabled = apiSupportsBlur && profile.blurEnabled && effectiveBlur > 0.5f
 
@@ -62,8 +62,7 @@ fun resolveDockGlass(
         sdkInt < 31 -> "Live blur needs Android 12 or newer"
         blurStrength <= 0.005f -> null
         !profile.blurEnabled -> "Live blur is off in Low performance mode"
-        systemReason != null -> "Reduced by $systemReason"
-        profile.blurScale < 1f -> "Reduced by Performance Mode (${profile.tier.label()})"
+        systemReason != null -> "Limited by $systemReason"
         else -> null
     }
 
@@ -77,10 +76,4 @@ fun resolveDockGlass(
         downsample = profile.blurDownsample,
         limitedReason = reason,
     )
-}
-
-private fun com.auralis.app.ui.performance.VisualPerformanceTier.label(): String = when (this) {
-    com.auralis.app.ui.performance.VisualPerformanceTier.HIGH -> "High"
-    com.auralis.app.ui.performance.VisualPerformanceTier.MEDIUM -> "Medium"
-    com.auralis.app.ui.performance.VisualPerformanceTier.LOW -> "Low"
 }
