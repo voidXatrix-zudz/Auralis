@@ -144,3 +144,73 @@ refraction) **and** fix the launch glitches L1–L6. Kotlin + AGSL only. No new 
   cost* factor only.
 - W4 The "limited"/"Reduced by Performance Mode" string is in `resolveDockGlass` reason `when`.
 - W5 `LensShader` is remembered (not per-frame), so adding uniforms is cheap and safe.
+
+## STEP 7 — SELF-REVIEW (10 yes/no)
+1. Blur mapping = spec (`MAX_BLUR_DP = 80f`, `radiusDp = 80 * s^1.15` rounded to 0.5 dp), targets
+   (0/25/50/75/100 %) within ±2 dp — **YES** (`GlassMappingTest`: 11 tests, 0 failures).
+2. Blur radius never scaled by tier; tier only (a) turns blur off in Low, (b) sets
+   `HazeInputScale.Fixed(scale)` with Medium ×0.8 — **YES**.
+3. "Reduced by Performance Mode" removed; "limited" text only for Android <12 / Low / battery
+   saver — **YES**.
+4. Dock tint alpha = {0.90, 0.66, 0.42, 0.20, 0.05} (±0.03), tint = `Canvas` + 3 % Cream, frost =
+   `0.02 + 0.06*(1-s)` — **YES**.
+5. Adaptive text/icon scrim = `0.16*(1-blurFraction)` (never > 0.16); old `LEGIBILITY_SCRIM` gone
+   from dock/pill (kept for `GlassKind.Surface` only); 0.50 tint floor only when blur is unavailable
+   (Android <12 / Low) — **YES**.
+6. Backdrop saturation = `1 + 0.30*blurFraction` (max 1.30) + brightness +0.03, via AGSL
+   `uSaturation`/`uBrightness` (Haze has no colour-filter hook) — **YES**.
+7. Lens/dispersion on dock circles + tab pill + mini pill; API 33+ in High **and** Medium, off in
+   Low; stronger rim + sheen fallback below 33; edge band 16 dp, `uRefract ≈ 0.35`,
+   `uChroma ≈ 0.012`, refraction 0.6×→1.0× by blur; never samples outside the layer; reuses the
+   cached `RuntimeShader` — **YES**.
+8. Rim = 1 dp Cream 55 %→12 % above content, gated by "Glass outlines"; inner sheen = Cream 8 %→0
+   at 40 % height; `noiseFactor = 0` for dock/pill — **YES**.
+9. One `Modifier.dockGlassMaterial(style, shape)` used by dock circles, tab pill, mini pill and the
+   Appearance preview; duplicated glass code deleted; preview moves live per slider and shows the
+   numeric value; "limited" text stays accurate — **YES**.
+10. Launch glitches: L1 explicit `HomeLoadState`, L2 active-sign-in-only toasts, L3 art
+    placeholder/crossfade, L4 Top Picks reveal, L5 static-logo first frame, L6 no new
+    toast/banner/animation — **YES** (L2's Clerk half lives in the WIP block; see STEP 6 note).
+
+No item answered "no"; nothing to re-fix.
+
+## STEP 8 — FINAL REPORT
+
+### Files changed (task-only commits STEP 1–6)
+- `GLASS_NOTES.md`
+- `app/src/main/java/com/auralis/app/ui/glass/GlassControls.kt` — mapping rewrite.
+- `app/src/main/java/com/auralis/app/ui/glass/DockGlassStyle.kt` — `resolveDockGlass` (reasons, refraction tier).
+- `app/src/main/java/com/auralis/app/ui/glass/LiquidGlass.kt` — `dockGlassMaterial`, AGSL lens uniforms.
+- `app/src/main/java/com/auralis/app/ui/components/AppDock.kt` — delegates; mini-pill call site.
+- `app/src/main/java/com/auralis/app/ui/settings/SettingsSubPages.kt` — live Appearance preview.
+- `app/src/test/java/com/auralis/app/ui/glass/GlassMappingTest.kt` — 11 mapping tests.
+- `app/src/main/java/com/auralis/app/ui/AppViewModel.kt` — L1/L2.
+- `app/src/main/java/com/auralis/app/ui/screens/YouTubeHomeScreen.kt` — L1 render gating.
+- `app/src/main/java/com/auralis/app/ui/components/ArtworkImage.kt` — L3.
+- `app/src/main/java/com/auralis/app/ui/home/HomeCards.kt` — L4.
+- `app/src/main/java/com/auralis/app/ui/AuralisRoot.kt` — L2 hook + L5 logo frame.
+
+### Numeric tables
+Blur radius (`s` = 0–100 %): 0→**0 dp**, 25→**16 dp**, 50→**36 dp**, 75→**57 dp**, 100→**80 dp**.
+Dock tint alpha: 0→**0.90**, 25→**0.66**, 50→**0.42**, 75→**0.20**, 100→**0.05**.
+Frost alpha (`0.02+0.06*(1-s)`): 0→**0.08**, 50→**0.05**, 100→**0.02**.
+Text scrim (`0.16*(1-s)`, cap 0.16): 0→**0.16**, 50→**0.08**, 100→**0**.
+Backdrop saturation (`1+0.30*s`, max 1.30): 0→**1.00**, 100→**1.30**; brightness **+0.03**.
+Haze input scale (`clamp(1/(1+r/28), 0.25, 1)`): r=0→**1.00**, r=80→**0.259**.
+
+### Haze APIs used (1.6.7)
+- `HazeStyle(backgroundColor, tints, blurRadius, noiseFactor, fallbackTint)`
+- `Modifier.hazeEffect(state) { blurEnabled = …; inputScale = HazeInputScale.Fixed(scale) }`
+- `HazeState`, `Modifier.hazeSource(state)`, `HazeTint`
+- (No colour-filter hook exists → saturation/brightness ride the AGSL lens.)
+
+### Could not be verified (no device/emulator allowed)
+- On-device look of the blur, colour bleed, rim, and AGSL refraction (compiled + unit-tested only).
+- Real blur cost of the `HazeInputScale.Fixed` values and the Medium ×0.8 factor.
+- Android <12 / Low / battery-saver "limited" path and the below-API-33 rim/sheen fallback (unit
+  tests run with `SDK_INT = 0`, so tiers are passed explicitly).
+- The launch-frame timing itself (L5) on a cold start.
+- The committed tree does not build standalone — pre-existing: it depends on WIP-only symbols
+  (`YouTubeDao.allRecents()`, `GlassMapping.MENU_BACKDROP_SCRIM`, `isYouTubeAuthenticated`, etc.).
+- L2's Clerk "Signed in" gate is in the working tree but not separable into a task-only commit (its
+  host block is unrelated WIP).
