@@ -66,12 +66,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.auralis.app.BuildConfig
 import com.auralis.app.data.lyrics.LyricsProviderCatalog
 import com.auralis.app.data.metadata.MetadataProviderCatalog
@@ -633,7 +637,13 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
     val previewDock = remember(settings, liveGlass, profile, performanceReason) {
         resolveDockGlass(settings, liveGlass, profile, performanceReason)
     }
-    SettingsPage("Appearance", onBack) {
+    SettingsPage(
+        "Appearance",
+        onBack,
+        pinnedHeader = if (isGlass) {
+            { AppearancePreviewHeader(liveGlass, previewDock) }
+        } else null,
+    ) {
         item { SettingsSectionLabel("Theme style") }
         item { SettingsGroupCard { Box(Modifier.padding(12.dp)) { ThemeStyleSelector(selected = settings.themeStyle, onSelect = { s -> actions.onUpdate { it.copy(themeStyle = s) } }) } } }
         // Glass is a fixed dark treatment: the light/dark mode chips and the accent palette only
@@ -711,25 +721,6 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                     SettingsSwitchRow(Icons.Rounded.AutoAwesome, "Glass outlines", "1dp specular hairline around glass surfaces", settings.glassOutlines) { on -> actions.onUpdate { it.copy(glassOutlines = on) } }
                 }
             }
-            // Live preview: the exact same material as the real dock and mini player, rendered over
-            // a vivid backdrop so each slider visibly changes it. Reads only the values above.
-            item {
-                SettingsGroupCard {
-                    AppearanceGlassPreview(
-                        glass = liveGlass,
-                        dock = previewDock,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                    )
-                    SettingsHelperText(
-                        "Preview · opacity ${(liveGlass.dockOpacity * 100).roundToInt()}% · " +
-                            "blur ${previewDock.blurDp.roundToInt()} dp · " +
-                            "clarity ${(liveGlass.glassClarity * 100).roundToInt()}%",
-                    )
-                    previewDock.limitedReason?.let { SettingsHelperText(it) }
-                }
-            }
             if (BuildConfig.DEBUG) {
                 item {
                     GlassDebugPanel(
@@ -741,6 +732,29 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                 }
             }
         }
+    }
+}
+
+/**
+ * The pinned Appearance preview: never scrolls away, never sits under the real dock. Reads the
+ * same live drag-aware values as the sliders, so a tick repaints it immediately.
+ */
+@Composable
+private fun AppearancePreviewHeader(glass: GlassSettings, dock: DockGlassStyle) {
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
+        SettingsGroupCard {
+            AppearanceGlassPreview(
+                glass = glass,
+                dock = dock,
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+            )
+        }
+        SettingsHelperText(
+            "Preview · opacity ${(glass.dockOpacity * 100).roundToInt()}% · " +
+                "blur ${dock.blurDp.roundToInt()} dp · " +
+                "clarity ${(glass.glassClarity * 100).roundToInt()}%",
+        )
+        dock.limitedReason?.let { SettingsHelperText(it) }
     }
 }
 
@@ -866,7 +880,27 @@ private fun AppearanceGlassPreview(
                     Brush.linearGradient(
                         listOf(Color(0xFF2F4BFF), Color(0xFF7A1FFF), Color(0xFFFF7A18)),
                     ),
-                ),
+                )
+                .drawBehind {
+                    // High-contrast 12dp vertical stripes: a blurred backdrop smears them into grey,
+                    // a sharp one keeps them crisp, so blur strength is visible even on flat colour.
+                    val stripe = 12.dp.toPx()
+                    var x = 0f
+                    var index = 0
+                    while (x < size.width) {
+                        drawRect(
+                            color = if (index % 2 == 0) {
+                                Color.White.copy(alpha = 0.16f)
+                            } else {
+                                Color.Black.copy(alpha = 0.22f)
+                            },
+                            topLeft = Offset(x, 0f),
+                            size = Size(stripe, size.height),
+                        )
+                        x += stripe
+                        index++
+                    }
+                },
         ) {
             Box(
                 Modifier
@@ -882,6 +916,14 @@ private fun AppearanceGlassPreview(
                     .size(60.dp)
                     .clip(CircleShape)
                     .background(Color(0xFFFFD166)),
+            )
+            Text(
+                "Stripes · 14 sp · sharp or blurred?",
+                color = Color.White,
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 18.dp),
             )
         }
         CompositionLocalProvider(

@@ -279,6 +279,12 @@ internal fun SettingsPage(
     title: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Optional content pinned between the page title and the scrolling list. Pages that need an
+     * always-visible control/preview (Appearance) pass this; every other page keeps the original
+     * layout where the title itself scrolls with the list.
+     */
+    pinnedHeader: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
     val isGlass = glass()
@@ -287,36 +293,59 @@ internal fun SettingsPage(
         derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 36 }
     }
     val bottomInset = if (isGlass) LocalDockBottomInset.current else 0.dp
+    val titleRow: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (isGlass) {
+                GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+            } else {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+            }
+            Text(
+                title,
+                style = if (collapsed) MaterialTheme.typography.titleLarge else MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold,
+                color = if (isGlass) GlassTokens.Silver else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+        }
+    }
     Box(modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
-                top = 8.dp,
-                bottom = 24.dp + bottomInset,
-            ),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item {
-                Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (isGlass) {
-                        GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
-                    } else {
-                        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-                    }
-                    Text(
-                        title,
-                        style = if (collapsed) MaterialTheme.typography.titleLarge else MaterialTheme.typography.displaySmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isGlass) GlassTokens.Silver else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(start = 12.dp),
-                    )
+        if (pinnedHeader == null) {
+            LazyColumn(
+                state = listState,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 8.dp,
+                    bottom = 24.dp + bottomInset,
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item { titleRow() }
+                content()
+            }
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    titleRow()
+                    pinnedHeader()
+                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 8.dp,
+                        bottom = 24.dp + bottomInset,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    content()
                 }
             }
-            content()
         }
     }
 }

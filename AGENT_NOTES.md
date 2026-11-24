@@ -51,9 +51,18 @@ verify by static review. One commit per step.
   - AuralisRoot resolves the live glass values inside a small `GlassSettingsProvider` composable
     that reads the drag state itself, so a tick no longer recomposes the root tree.
   - The dock `hazeStyle` is remembered on the 0.5dp-snapped radius.
+- STEP 4 (this commit): the Appearance preview is always visible and never sits under the dock.
+  - `SettingsPage` gained an optional `pinnedHeader`; when supplied the page title + header render
+    in a fixed column above a `weight(1f)` list, otherwise the original scrolling layout is kept.
+  - Appearance passes the preview card only when `isGlass`, so it sits under the title, above the
+    scrolling controls, and never under the real dock.
+  - The preview backdrop keeps its gradient and adds high-contrast 12dp vertical stripes plus a
+    centred 14sp white line ("Stripes · 14 sp · sharp or blurred?") so blur strength reads on a
+    flat colour too.
+  - The readout ("Preview · opacity NN% · blur NN dp · clarity NN%") moved into the pinned header
+    and reads the same live drag-aware values as the sliders.
 
 ## NEXT
-- STEP 4: visible, pinned preview.
 - STEP 5: self-review checklist in this file.
 
 ---
