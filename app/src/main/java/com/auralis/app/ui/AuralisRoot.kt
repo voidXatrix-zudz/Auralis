@@ -538,6 +538,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 onHidden = viewModel::releaseMetadata,
             )
             if (nowPlayingOpen && currentTrack != null) {
+                // CRASH FIX: glass inside a recorded layer must never sample the layer that records
+                // it (a RenderNode cycle aborts natively). The player records its own content, so its
+                // subtree gets a null backdrop and its surfaces fall back to the plain tint.
+                CompositionLocalProvider(LocalAppBackdrop provides null) {
                 NowPlayingScreen(
                     track = currentTrack,
                     queue = queuedTracks,
@@ -595,6 +599,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                             if (glassLayerEnabled) Modifier.layerBackdrop(appBackdrop) else Modifier,
                         ),
                 )
+                } // end CompositionLocalProvider(LocalAppBackdrop = null)
             } else {
                 Box(Modifier.fillMaxSize().nestedScroll(dockScroll)) {
                     // STEP 3: the wallpaper and every page are recorded into ONE layer carrying an
@@ -608,6 +613,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                 if (glassLayerEnabled) Modifier.layerBackdrop(appBackdrop) else Modifier,
                             ),
                     ) {
+                        // CRASH FIX: glass inside a recorded page must never sample the layer that
+                        // records it (a RenderNode cycle aborts natively). Only the dock /
+                        // mini-player / Search siblings, drawn above this layer, keep the backdrop.
+                        CompositionLocalProvider(LocalAppBackdrop provides null) {
                         // App-wide chosen player background (Glass theme only): drawn once behind
                         // every pushed screen and tab, fixed while content scrolls, INSIDE the
                         // recorded layer so glass samples the wallpaper too (spec 3.3).
@@ -929,6 +938,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     }
                             }
                         }
+                        } // end CompositionLocalProvider(LocalAppBackdrop = null)
                     }
 
                     SnackbarHost(

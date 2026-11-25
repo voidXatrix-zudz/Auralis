@@ -62,6 +62,17 @@ change on Home (its dock still samples the full page content), and the engine is
 inside its own recorded subtree (also fixes landscape Now Playing / the pushed glass sub-pages).
 Documented as a local modification in the two file headers and `NOTICE`.
 
+### Second layer (defence in depth)
+`AuralisRoot.kt` also now wraps the two recorded subtrees in
+`CompositionLocalProvider(LocalAppBackdrop provides null)`: the full player (`NowPlayingScreen`) and
+the whole page container (inside the recorded `Box`, above the wallpaper). Glass inside those subtrees
+therefore resolves a null backdrop and takes the plain-tint fallback instead of calling `drawBackdrop`
+at all, while the dock / mini-player / Search circle (siblings drawn *above* the layer) keep
+`appBackdrop` and still sample the finished frame. Both fixes are kept: the engine `isRecording` guard
+is generic (it also protects any other self-recording backdrop, e.g. the Appearance preview which
+records its own layer), and the provider null is a belt-and-braces guarantee for the app layer. Tradeoff:
+in-page glass (Library rows, Settings panels, landscape player) renders as tint, not sampled blur.
+
 ### Safety net (STEP 6)
 The global `Thread.setDefaultUncaughtExceptionHandler` already exists: `logging/CrashHandler.kt`,
 installed first in `AuralisApp.attachBaseContext:28`, writing to `filesDir/crash/crash-*.txt` (the
