@@ -4,9 +4,7 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.theme.AuralisTheme
-import com.auralis.app.ui.theme.GlassOptics
 import com.auralis.app.ui.theme.LyricsFontPreloader
-import com.auralis.app.ui.theme.LocalGlassOptics
 import com.auralis.app.ui.components.AuralisBackdrop
 import com.auralis.app.ui.glass.GlassTopBar
 import com.auralis.app.ui.glass.GlassAlertDialog
@@ -1047,8 +1045,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
  *
  * This deliberately lives in its own composable: [GlassDragState.value] is read HERE, so a slider
  * tick recomposes this small provider (and the composables that read the locals), not AuralisRoot
- * with its navigation state, playback state and dock. [LocalGlassSettings], [LocalDockGlassStyle]
- * and [LocalGlassOptics] are `compositionLocalOf`, so only their readers are invalidated.
+ * with its navigation state, playback state and dock. [LocalGlassSettings], [LocalGlassConfig] and
+ * [LocalDockGlassStyle] are `compositionLocalOf`, so only their readers are invalidated.
  */
 @Composable
 private fun GlassSettingsProvider(
@@ -1069,21 +1067,11 @@ private fun GlassSettingsProvider(
     // The ONE blur decision for every glass surface (STEP 2.6: blur is a fixed constant, so the
     // removed "Blur strength" slider no longer participates).
     val blurAllowed = GlassBlurPolicy.allowed(settings)
-    val optics = remember(config.glassClarity, settings.glassOutlines, dockGlass) {
-        GlassOptics(
-            clarity = config.glassClarity.coerceIn(0, 100) / 100f,
-            outlines = dockGlass.outlines,
-            fillAlpha = dockGlass.fillAlpha,
-            blurDp = dockGlass.blurDp,
-            saturation = 1.12f + 0.25f * (config.glassClarity.coerceIn(0, 100) / 100f),
-        )
-    }
     CompositionLocalProvider(
         LocalGlassConfig provides config,
         LocalGlassSettings provides glass,
         LocalDockGlassStyle provides dockGlass,
         LocalGlassBlurAllowed provides blurAllowed,
-        LocalGlassOptics provides optics,
         content = content,
     )
 }

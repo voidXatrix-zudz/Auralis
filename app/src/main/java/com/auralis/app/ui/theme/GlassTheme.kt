@@ -11,9 +11,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -126,6 +124,12 @@ object GlassTokens {
     const val RIM_ALPHA_TOP_LEFT = 0.55f
     const val RIM_ALPHA_BOTTOM_RIGHT = 0.12f
 
+    /** Selected-tab lens fill (a clear white bubble over the already-glassed nav pill). */
+    const val BUBBLE_FILL_ALPHA = 0.13f
+
+    /** Nested control inside an already-glassed pill (no second backdrop sample). */
+    const val NESTED_BUBBLE_ALPHA = 0.10f
+
     /**
      * Dock tint: Midnight Indigo lifted toward Vanilla Cream (a very light cream touch over a dark
      * indigo base). Deliberately dark so the dock's cream icons/labels stay readable at every
@@ -152,25 +156,6 @@ private fun blend(foreground: Color, background: Color, alpha: Float): Color = C
     blue = background.blue * (1f - alpha) + foreground.blue * alpha,
     alpha = 1f,
 )
-
-/**
- * Live optical parameters for the liquid-glass material. Derived from the persisted
- * "Glass clarity" slider (+ the legacy dock fine-tuning sliders) so the dock, mini-player,
- * dialogs and settings preview all change together.
- */
-@Immutable
-data class GlassOptics(
-    /** 0 = tinted/smoked, 1 = clear/crystal. */
-    val clarity: Float = 0.4f,
-    val outlines: Boolean = true,
-    /** The dock fill alpha resolved from "Dock opacity". */
-    val fillAlpha: Float = 0.10f,
-    val blurDp: Float = 30f,
-    /** Backdrop saturation boost applied by the lens shader on API 33+. */
-    val saturation: Float = 1.22f,
-)
-
-val LocalGlassOptics = compositionLocalOf { GlassOptics() }
 
 private val GlassColorScheme = darkColorScheme(
     primary = GlassTokens.Cream, onPrimary = GlassTokens.Indigo,
