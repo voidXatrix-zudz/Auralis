@@ -129,8 +129,8 @@ data class AppSettings(
     companion object {
         /** Default lyrics provider lookup order: word-synced first, then line-synced, then plain. */
         val DEFAULT_LYRICS_PROVIDER_ORDER: List<String> = listOf(
-            "LrcRed", "BiniLyrics", "BetterLyrics", "BetterLyricsPortato", "LyricsPlus", "Unison",
-            "KuGou", "LRCLIB", "YouTubeMusic", "YouTubeCaptions", "SimpMusic", "NetEase",
+            "LRCLIB", "BiniLyrics", "BetterLyrics", "LyricsPlus", "Unison", "KuGou",
+            "BetterLyricsPortato", "YouTubeMusic", "YouTubeCaptions", "SimpMusic", "LrcRed", "NetEase",
             "Musixmatch", "Genius", "PaxSenix", "PaxSenixSpotify", "PaxSenixMusixmatch", "LyricsOvh",
         )
     }

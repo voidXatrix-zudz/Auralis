@@ -41,6 +41,16 @@ internal fun mergeProviderOrder(stored: List<String>): List<String> {
     return kept + known.filter { it !in kept }
 }
 
+private val LEGACY_DEFAULT_LYRICS_PROVIDERS = setOf(
+    "LrcRed", "LRCLIB", "BetterLyrics", "KuGou", "YouTubeMusic",
+)
+
+private val LEGACY_DEFAULT_LYRICS_ORDER = listOf(
+    "LrcRed", "BiniLyrics", "BetterLyrics", "BetterLyricsPortato", "LyricsPlus", "Unison",
+    "KuGou", "LRCLIB", "YouTubeMusic", "YouTubeCaptions", "SimpMusic", "NetEase",
+    "Musixmatch", "Genius", "PaxSenix", "PaxSenixSpotify", "PaxSenixMusixmatch", "LyricsOvh",
+)
+
 /**
  * One-time migration for the renamed "Dock opacity" control. The old "Dock transparency" direction is
  * inverted (transparency 30% == opacity 70%) and the result is clamped to the 0..100 range.
@@ -80,6 +90,7 @@ private object Keys {
     val resumeOnReconnect = booleanPreferencesKey("resume_on_output_reconnect")
     val carKeepScreenOn = booleanPreferencesKey("car_keep_screen_on")
     val themeStyle = stringPreferencesKey("theme_style")
+    val themeStyleUserSelected = booleanPreferencesKey("theme_style_user_selected")
     val dockGlassOpacity = intPreferencesKey("dock_glass_opacity")
     /** Legacy pre-rename key ("Dock transparency"). Read once for migration, then removed on write. */
     val dockGlassTransparencyLegacy = intPreferencesKey("dock_glass_transparency")
@@ -193,7 +204,12 @@ class SettingsRepository(private val context: Context) {
         }
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
-        context.settingsStore.edit { prefs -> prefs.write(transform(prefs.toSettings())) }
+        context.settingsStore.edit { prefs ->
+            val current = prefs.toSettings()
+            val updated = transform(current)
+            if (updated.themeStyle != current.themeStyle) prefs[Keys.themeStyleUserSelected] = true
+            prefs.write(updated)
+        }
     }
 
     /** Reads one resolver's persisted rolling stats (Part M). */
@@ -268,7 +284,11 @@ class SettingsRepository(private val context: Context) {
             crossfadeSeconds = (this[Keys.crossfade] ?: d.crossfadeSeconds).coerceIn(0, 12),
             resumeOnOutputReconnect = this[Keys.resumeOnReconnect] ?: d.resumeOnOutputReconnect,
             carKeepScreenOn = this[Keys.carKeepScreenOn] ?: d.carKeepScreenOn,
-            themeStyle = enumOr(this[Keys.themeStyle], d.themeStyle),
+            themeStyle = if (this[Keys.themeStyleUserSelected] == true) {
+                enumOr(this[Keys.themeStyle], d.themeStyle)
+            } else {
+                d.themeStyle
+            },
             dockGlassOpacity = (
                 this[Keys.dockGlassOpacity]
                     ?: this[Keys.dockGlassTransparencyLegacy]?.let { dockTransparencyToOpacity(it) }
@@ -290,8 +310,12 @@ class SettingsRepository(private val context: Context) {
             youtubeSongsOnly = this[Keys.youtubeSongsOnly] ?: d.youtubeSongsOnly,
             liveSyncEnabled = this[Keys.liveSyncEnabled] ?: d.liveSyncEnabled,
             liveSyncLastSyncedAt = (this[Keys.liveSyncLastSyncedAt] ?: d.liveSyncLastSyncedAt).coerceAtLeast(0L),
-            lyricsProviderOrder = mergeLyricsProviderOrder(decodeList(this[Keys.lyricsProviderOrder], d.lyricsProviderOrder)),
-            lyricsProvidersEnabled = decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled),
+            lyricsProviderOrder = decodeList(this[Keys.lyricsProviderOrder], d.lyricsProviderOrder)
+                .let { order -> if (order == LEGACY_DEFAULT_LYRICS_ORDER) d.lyricsProviderOrder else order }
+                .let(::mergeLyricsProviderOrder),
+            lyricsProvidersEnabled = decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled).let { enabled ->
+                if (enabled == LEGACY_DEFAULT_LYRICS_PROVIDERS) d.lyricsProvidersEnabled else enabled
+            },
             metadataProvidersEnabled = decodeSet(this[Keys.metadataProvidersEnabled], d.metadataProvidersEnabled),
             preferSyncedLyrics = this[Keys.preferSyncedLyrics] ?: d.preferSyncedLyrics,
             betterLyricsApiKey = decrypt(this[Keys.betterLyricsApiKey]),
