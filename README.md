@@ -6,18 +6,30 @@ AURALIS is an Android music player focused on local music, a carefully redesigne
 
 ## Screenshots
 
-Upload your screenshots to the `screenshots/` folder using these filenames and they will appear here:
+Screens from the current AURALIS build:
 
 <table>
   <tr>
-    <th>Home</th>
-    <th>Library</th>
+    <th>Home and YouTube Music</th>
+    <th>Library and glass dock</th>
+  </tr>
+  <tr>
+    <td><img src="screenshots/home-youtube-music.jpg" width="260" alt="AURALIS Home screen with YouTube Music recommendations"></td>
+    <td><img src="screenshots/library-glass-dock.jpg" width="260" alt="AURALIS Library screen with the glass dock and mini-player"></td>
+  </tr>
+  <tr>
+    <th>Liked Music</th>
     <th>Now Playing</th>
   </tr>
   <tr>
-    <td><img src="screenshots/home.png" width="240" alt="AURALIS Home screen"></td>
-    <td><img src="screenshots/library.png" width="240" alt="AURALIS Library screen"></td>
-    <td><img src="screenshots/now-playing.png" width="240" alt="AURALIS Now Playing screen"></td>
+    <td><img src="screenshots/library-liked-music-glass-dock.jpg" width="260" alt="AURALIS Liked Music playlist with the glass dock"></td>
+    <td><img src="screenshots/now-playing-artwork.jpg" width="260" alt="AURALIS Now Playing screen with full-screen artwork"></td>
+  </tr>
+  <tr>
+    <th colspan="2">Word-by-word synced lyrics</th>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="screenshots/now-playing-word-sync.jpg" width="260" alt="AURALIS Now Playing screen showing synchronized lyrics"></td>
   </tr>
 </table>
 
@@ -45,7 +57,7 @@ YouTube Music support is optional. Connect an account and enable the integration
 
 ## Download
 
-Check the **Releases**[Releases](https://github.com/voidXatrix-zudz/Auralis/releases/) section of the GitHub repository for downloadable builds. For source builds, see the instructions below.
+Check the [Releases](https://github.com/voidXatrix-zudz/Auralis/releases/) section of the GitHub repository for downloadable builds. For source builds, see the instructions below.
 
 ## Build from source
 
@@ -77,8 +89,6 @@ AURALIS is actively developed, so you may still encounter small bugs. I'm fixing
 
 - Instagram: **https://www.instagram.com/zudz.irl?jplx=dXRnZDgwbWl4NXZ1**
 - Instagram: **https://www.instagram.com/voidzudz.exe?hvrq=MXRxOXNkdHVva2FnZw==**
-
-Replace these placeholders with your two Instagram usernames before publishing the README.
 
 ## Built with
 
