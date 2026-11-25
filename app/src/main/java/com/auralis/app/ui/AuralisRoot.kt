@@ -20,10 +20,13 @@ import com.auralis.app.ui.glass.LocalGlassOverlay
 import com.auralis.app.ui.glass.GlassConfig
 import com.auralis.app.ui.glass.GlassDragState
 import com.auralis.app.ui.glass.GlassSettings
+import com.auralis.app.ui.glass.LocalAppBackdrop
 import com.auralis.app.ui.glass.LocalGlassConfig
 import com.auralis.app.ui.glass.LocalGlassDrag
 import com.auralis.app.ui.glass.LocalGlassSettings
-import com.auralis.app.ui.glass.LocalHazeState
+import com.auralis.app.ui.glass.OpaqueLayerOnDraw
+import com.auralis.app.glass.backdrop.backdrops.layerBackdrop
+import com.auralis.app.glass.backdrop.backdrops.rememberLayerBackdrop
 import com.auralis.app.ui.glass.resolveDockGlass
 import com.auralis.app.ui.glass.rememberReduceMotion
 import com.auralis.app.ui.components.AppDock
@@ -159,8 +162,6 @@ import com.auralis.app.ui.performance.LocalPerformanceReason
 import com.auralis.app.ui.performance.PerformanceProfile
 import com.auralis.app.ui.components.glassSurface
 import com.auralis.app.logging.AppLog
-import dev.chrisbanes.haze.rememberHazeState
-import dev.chrisbanes.haze.hazeSource
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import java.io.File
@@ -332,7 +333,20 @@ fun AuralisRoot(viewModel: AppViewModel) {
 
     // Shared dock state + the backdrop window every glass surface blurs (glass only, Android 12+).
     val dockScroll = rememberDockScrollState()
-    val hazeState = rememberHazeState()
+    // STEP 3: the ONE recorded layer the dock / mini-player / Search circle sample. It records an
+    // opaque canvas first, then the wallpaper + every page (STEP 3.2). Only Glassmorphic on API 31+
+    // attaches it (`glassLayerEnabled`); Normal records nothing and pays nothing.
+    val appBackdrop = rememberLayerBackdrop(onDraw = OpaqueLayerOnDraw)
+    val glassLayerEnabled = settings.themeStyle == ThemeStyle.GLASSMORPHIC && glassConfig.isGlassCapable
+    // STEP 10.2: log once at launch whether the backdrop layer is recording (and that it records an
+    // opaque canvas first), so the Logs screen can explain a sharp-text-through-glass report.
+    LaunchedEffect(glassLayerEnabled) {
+        AppLog.i(
+            "Glass",
+            "backdrop recording=$glassLayerEnabled layer opaque=$glassLayerEnabled " +
+                "theme=${settings.themeStyle} sdk=${Build.VERSION.SDK_INT}",
+        )
+    }
     // One shared counter for open glass menus; the root draws their dim layer.
     val glassOverlay = remember { GlassOverlayState() }
     val dockStyle = if (settings.themeStyle == ThemeStyle.GLASSMORPHIC) DockStyle.GLASS else DockStyle.SOLID
@@ -493,14 +507,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
             effectiveProfile.isLow -> 0.6f
             else -> 1f
         }
-        // Every glass surface samples this one captured layer. It is registered based on whether
-        // the platform/user *allows* capture at all (Android 12+, not "Reduce blur and effects",
-        // not manual Low mode) and deliberately NOT on the Blur-strength slider, so at 0% the layer
-        // still exists and dragging the slider up blurs the dock in the same frame, without
-        // remounting the content. [GlassBlurPolicy.allowed] (which adds "strength > 0") is what
-        // each surface uses to decide whether to actually draw the blur.
-        val glassHazeAllowed = settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
-            GlassBlurPolicy.sourceAllowed(settings)
+        // STEP 3: the recorded layer is attached in exactly two mutually exclusive places (the
+        // page container and the full player). It is recorded whenever the theme is Glassmorphic
+        // and the device can blur (Android 12+); the Normal theme records nothing and pays nothing.
         GlassSettingsProvider(
             drag = glassDrag,
             persisted = glassConfig,
@@ -510,9 +519,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
         ) {
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colorScheme.onBackground,
-            LocalHazeState provides hazeState,
             LocalGlassDrag provides glassDrag,
             LocalGlassOverlay provides glassOverlay,
+            LocalAppBackdrop provides if (glassLayerEnabled) appBackdrop else null,
             LocalPerformanceProfile provides effectiveProfile,
             LocalPerformanceMode provides performanceMode,
             LocalPerformanceReason provides performanceReason,
@@ -579,51 +588,41 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onOpenBackup = { nowPlayingOpen = false; viewModel.push(Destination.Backup) },
                     onEditMetadata = { nowPlayingOpen = false; viewModel.push(Destination.MetadataEditor(currentTrack.id)) },
                     onOpenAudioAnalysis = { id -> nowPlayingOpen = false; viewModel.push(Destination.AudioAnalysis(id)) },
-                    // The full player draws its own backdrop source (the chosen player background);
-                    // an app-source here would be an ancestor of every panel, and Haze excludes
-                    // ancestor sources, so it would only waste a full-screen capture.
-                    modifier = Modifier.fillMaxSize(),
+                    // STEP 3: the full player records its own content into the SAME layer as the
+                    // pages (only one of the two composes), so its own glass samples the player
+                    // background instead of falling back to a flat tint.
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (glassLayerEnabled) Modifier.layerBackdrop(appBackdrop) else Modifier,
+                        ),
                 )
             } else {
                 Box(Modifier.fillMaxSize().nestedScroll(dockScroll)) {
-                    // App-wide chosen player background (Glass theme only): drawn once behind
-                    // every pushed screen and tab, fixed while content scrolls. It is its own
-                    // low-zIndex capture layer, a *sibling* of the content pane, so the glass
-                    // cards inside that pane can sample it (Haze excludes an ancestor source).
-                    if (settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
-                        settings.playerBackground != PlayerBackground.NONE
-                    ) {
-                        Crossfade(
-                            targetState = settings.playerBackground,
-                            animationSpec = AuralisMotion.tweenCreamy(AuralisMotion.Slow),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .then(
-                                    if (glassHazeAllowed) {
-                                        Modifier.hazeSource(hazeState, zIndex = 0f)
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
-                            label = "appBackground",
-                        ) { background -> PlayerBackgroundImage(background) }
-                    }
-                    // Everything else the glass may blur sits in this pane. It is registered as
-                    // the capture source in glass mode regardless of the blur slider, so raising
-                    // Live blur takes effect in the same frame; Normal (SOLID) never consumes the
-                    // haze. zIndex 1 lets the dock sample the scrolling content while surfaces
-                    // *inside* the pane exclude it and fall back to the zIndex-0 background layer.
+                    // STEP 3: the wallpaper and every page are recorded into ONE layer carrying an
+                    // opaque canvas (spec 3.2). It is attached to the page container only; the dock,
+                    // mini-player and Search circle are drawn above it as siblings (spec 3.4), so
+                    // they sample the finished frame instead of themselves.
                     Box(
                         Modifier
                             .fillMaxSize()
                             .then(
-                                if (glassHazeAllowed) {
-                                    Modifier.hazeSource(hazeState, zIndex = 1f)
-                                } else {
-                                    Modifier
-                                },
+                                if (glassLayerEnabled) Modifier.layerBackdrop(appBackdrop) else Modifier,
                             ),
                     ) {
+                        // App-wide chosen player background (Glass theme only): drawn once behind
+                        // every pushed screen and tab, fixed while content scrolls, INSIDE the
+                        // recorded layer so glass samples the wallpaper too (spec 3.3).
+                        if (settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
+                            settings.playerBackground != PlayerBackground.NONE
+                        ) {
+                            Crossfade(
+                                targetState = settings.playerBackground,
+                                animationSpec = AuralisMotion.tweenCreamy(AuralisMotion.Slow),
+                                modifier = Modifier.fillMaxSize(),
+                                label = "appBackground",
+                            ) { background -> PlayerBackgroundImage(background) }
+                        }
                         Column(
                             Modifier
                                 .fillMaxSize()
@@ -972,7 +971,6 @@ fun AuralisRoot(viewModel: AppViewModel) {
                             .fillMaxWidth()
                             .navigationBarsPadding()
                             .padding(bottom = if (dockStyle == DockStyle.GLASS) DockMetrics.GlassBottomMargin else DockMetrics.BottomMargin),
-                        hazeState = hazeState,
                         onExpand = { if (dockStyle == DockStyle.GLASS) dockScroll.expand() },
                         showSettingsBadge = updateState.available != null,
                         artworkUri = playbackState.artworkUri,

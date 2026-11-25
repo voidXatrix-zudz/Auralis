@@ -88,19 +88,81 @@ Spec vs. code conflicts (trust code, safest option):
   `GlassTokens.blurDpFor(tier)` everywhere (`LiquidGlass.kt`, `DockGlassStyle.kt`).
 - `:app:compileDebugKotlin` green.
 
-## STEP 3+ — BACKDROP SOURCE / MODIFIER / SURFACES (in progress)
-- Plan: `AuralisBackdrop`-hosted `rememberLayerBackdrop` records black bg + `drawContent()`, applied
-  with `Modifier.layerBackdrop` to the page container; `LocalAppBackdrop` provides it; `auralisGlass`
-  is the one `drawBackdrop` modifier. The canonical code already funnels every surface through
-  `glassSurface` / `dockGlassMaterial`, so re-pointing those two entry points at `auralisGlass`
-  converts most surfaces. Menus/sheets/dialogs stay separate windows (Step 6.2b: window blur-behind +
-  high panel tint) and are listed in the report.
+## STEP 3 — BACKDROP SOURCE (done)
+- New `ui/glass/GlassBackdrop.kt`: `LocalAppBackdrop` (staticCompositionLocalOf<LayerBackdrop?>) +
+  `OpaqueLayerOnDraw` = `{ drawRect(GlassTokens.Canvas); drawContent() }` (STEP 3.2: opaque canvas
+  first, so text can never show sharp through the glass).
+- `AuralisRoot` owns ONE `rememberLayerBackdrop(onDraw = OpaqueLayerOnDraw)`. It is attached with
+  `Modifier.layerBackdrop(appBackdrop)` in exactly TWO mutually exclusive places: the page container
+  (wallpaper + every page inside, spec 3.3) and the full player root (only one composes at a time).
+  The dock / mini-player / Search circle are SIBLINGS drawn after the page container (spec 3.4).
+- `glassLayerEnabled = theme == GLASSMORPHIC && config.isGlassCapable`; `LocalAppBackdrop` is null
+  otherwise, so Normal records nothing and pays nothing (spec 3.6/9.1).
 
-## NEXT
-- Step 3: backdrop source + `LocalAppBackdrop`.
-- Step 4: `Modifier.auralisGlass(shape, role)` reading only `LocalGlassConfig`/`LocalAppBackdrop`/
-  `GlassTokens`.
-- Step 5: capability fallbacks; Step 6: convert every surface; Steps 7–12.
+## STEP 4 + 5 — THE ONE MODIFIER (done)
+- New `ui/glass/AuralisGlass.kt`: `enum GlassRole { Dock, Panel }` and
+  `Modifier.auralisGlass(shape, role)`. It reads ONLY `LocalGlassConfig` + `LocalAppBackdrop` +
+  `GlassTokens`; nothing else. `remember(config, backdrop, shape, role)` rebuilds the modifier when
+  the config changes, so a slider drag repaints the same frame (spec 4.4/4.5).
+- Core: `clip(shape).drawBackdrop(backdrop, shape = { shape }, effects = { colorControls(SATURATION);
+  blur(blurDp*density); if (hasLens && shape is CornerBasedShape) lens(LENS_*) },
+  highlight = rim-if-outlines, shadow = Shadow.Default, onDrawSurface = { drawRect(tint) })`.
+- Fallbacks (spec 5): no backdrop / API < 31 -> `clip + background(tint) [+ hairline]`, never
+  transparent; API 31-32 -> blur + rim, no lens; API 33+ & tier != LOW -> blur + colour + lens + rim;
+  LOW tier -> blur 16dp + rim, no lens. Content behind is always blurred-or-tinted, never sharp.
+- `effectScale` has no `backdropScale` API in backdrop 1.0.0 -> effects run at full resolution
+  (documented; tunable later via `layerBlock`).
+
+## STEP 6 — EVERY SURFACE (done)
+- `LiquidGlass.kt` rewritten: `glassSurface(GlassKind, shape)` maps to
+  `auralisGlass(role = Dock/Panel)`; `dockGlassMaterial` keeps SOLID untouched and routes GLASS to
+  `auralisGlass(Dock)`; `glassBubble`/`glassTint` read `LocalGlassConfig` (bubble rim follows
+  outlines). `glassWindowSurface`/`glassWindowPanelColor`/`DialogBackdropBlur` stay for the
+  separate-window path (6.2b) and read the same config.
+- Menus/dialogs/sheets (`GlassOverlays.kt`, `GlassKit.kt`) keep their windows; `DialogBackdropBlur`
+  blurs the page behind (API 31+) and `glassWindowPanelColor` carries a high panel tint (6.2b).
+- Haze retired: removed `hazeState`/`hazeSource`/`rememberHazeState`/`LocalHazeState`/
+  `GlassMapping.hazeInputScale` everywhere, dropped `libs.haze` + the version entry, and stripped
+  the `hazeState` parameter from `glassSurface`/`dockGlassMaterial` and every `AppDock` signature.
+  The Appearance preview now records its own `previewBackdrop` and provides it locally so the
+  production modifiers sample the preview strip (not the settings page).
+- `GlassNowPlaying`: the player background is drawn inside the full player's recorded layer.
+
+## STEP 7 — SETTINGS SCREEN (verified)
+- The Appearance page already shows exactly the four controls (Dock transparency, Glass clarity,
+  Glass outlines, Performance), all writing through `GlassConfigRepository`; the Live-blur and
+  Blur-strength rows were removed in Step 2. The preview is `glassSurface`/`dockGlassMaterial`
+  over its own recorded backdrop and updates live while dragging.
+
+## STEP 10 — DIAGNOSTICS (done)
+- 10.1 `GlassConfigRepository` logs ONE `Glass` line per distinct config change
+  (`GlassConfig dock=.. clarity=.. outlines=.. perf=.. lens=.. blurDp=..`).
+- 10.2 `AuralisRoot` logs `backdrop recording=.. layer opaque=.. theme=.. sdk=..` once at launch.
+- 10.3 `auralisGlass` logs one debug-only warning if a glass-capable, Glassmorphic surface is drawn
+  with no backdrop (tint fallback). (File name is not available at runtime; message is generic.)
+
+## STEP 11 — TESTS / SELF-REVIEW
+- `GlassMappingTest` (13) + `GlassBlurPolicyTest` (5) rewritten for the new API; all pass.
+- [x] no liveBlur / blurStrength remains (only in stale `*.bak_before_dockfix` untracked files)
+- [x] no blur/alpha/outline literal outside `GlassTokens`/`GlassMappings` (shadow alphas and the
+      decorative preview gradient remain; they are shadows/art, not glass tint/blur/outline)
+- [x] recording lambda draws an opaque background first
+- [x] dock/mini-player/Search are siblings of the layerBackdrop container
+- [x] every `remember(...)` that depends on config has the right keys
+- [x] Dialog/Popup/Menu/Sheet handled per 6.2b (window blur-behind + high panel tint)
+- [x] outlines OFF removes rim + hairline on all surfaces incl. the selection lens
+- [x] dock transparency never adds black/grey tint (`dockTintAlpha` stays cream/indigo)
+- [x] glass clarity affects Panel surfaces and not the dock
+- [~] no crash on 31/32/33+/<31: fallbacks are code paths; verified by compile + unit tests only
+      (no device). Low mode -> no lens (unit-tested `hasLens`).
+- [x] Normal theme unchanged: `glassLayerEnabled` false, no layer, SOLID dock path untouched
+- [x] licence attribution added (NOTICE + README + About)
+- [x] `:app:compileDebugKotlin` green; glass unit tests green
+
+## STEP 12 / NEXT
+- Final report + phone test list delivered in the closing message.
+- Optional follow-ups: tune `BLUR_DP*`/`LENS_AMOUNT_DP`/tint from phone feedback; wire
+  `effectScale` through `layerBlock` if full-resolution effects are too costly on Low.
 
 ---
 
