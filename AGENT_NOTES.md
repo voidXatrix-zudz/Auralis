@@ -129,10 +129,33 @@ Spec vs. code conflicts (trust code, safest option):
 - `GlassNowPlaying`: the player background is drawn inside the full player's recorded layer.
 
 ## STEP 7 — SETTINGS SCREEN (verified)
-- The Appearance page already shows exactly the four controls (Dock transparency, Glass clarity,
-  Glass outlines, Performance), all writing through `GlassConfigRepository`; the Live-blur and
-  Blur-strength rows were removed in Step 2. The preview is `glassSurface`/`dockGlassMaterial`
-  over its own recorded backdrop and updates live while dragging.
+- The LIVE Appearance route is `Destination.SettingsAppearance -> AppearanceSettingsPage` in
+  `SettingsSubPages.kt`, reached via `SettingsHubScreen`. It shows exactly four controls
+  (Dock transparency, Glass clarity, Glass outlines, Performance); the three glass rows write
+  ONLY through `SettingsActions.onDockTransparencyChange/onGlassClarityChange/onGlassOutlinesChange`
+  -> `AppViewModel` -> `GlassConfigRepository`. The Live-blur and Blur-strength rows were removed.
+- The pinned preview (`AppearancePreviewHeader` -> `AppearanceGlassPreview`) records its own
+  `previewBackdrop` (`rememberLayerBackdrop(OpaqueLayerOnDraw)`), draws the colourful strip as a
+  sibling `layerBackdrop` source, and provides `LocalAppBackdrop` so the production
+  `glassSurface`/`dockGlassMaterial` sample the preview strip (not the settings page).
+- DEAD duplicate: `screens/SettingsScreen.kt` + `glass/GlassSettings.kt::GlassSettingsScreen`
+  (with `AppearanceSection`) are NOT reachable from navigation (nothing calls `SettingsScreen`);
+  they still compile and still write the same `dockGlassOpacity`/`glassClarity` fields via
+  `onUpdate`, so they are harmless. Left in place (pre-existing), noted here.
+
+## STEP 8 — MIGRATION (done)
+- `SettingsRepository.dockTransparencyToOpacity` converts the legacy transparency % to the stored
+  value; key `dock_glass_opacity`; legacy key `dock_glass_transparency` still read. Defaults are
+  STEP 8.2: dockTransparency 35, clarity 60, outlines ON (`AppSettings` line 43-48).
+
+## STEP 9 — PERFORMANCE
+- Blur/lens/colour are FIXED constants in `GlassTokens`; the tier only picks the radius
+  (`blurDpFor`) and whether the lens runs (`hasLens = sdk>=33 && tier != LOW`). No whole-screen
+  blur: only the dock / mini-player / Search circle / panels draw the backdrop modifier. The
+  Normal theme records NO layer (`glassLayerEnabled` false) and runs the SOLID dock path untouched.
+- `effectScale` (`EFFECT_RESOLUTION_*`) is defined + unit-tested but not wired: backdrop 1.0.0's
+  `drawBackdrop` has no `backdropScale`/resolution parameter, so effects run at full resolution.
+  Documented; can be added later via `layerBlock` if phone profiling asks for it.
 
 ## STEP 10 — DIAGNOSTICS (done)
 - 10.1 `GlassConfigRepository` logs ONE `Glass` line per distinct config change
@@ -140,6 +163,11 @@ Spec vs. code conflicts (trust code, safest option):
 - 10.2 `AuralisRoot` logs `backdrop recording=.. layer opaque=.. theme=.. sdk=..` once at launch.
 - 10.3 `auralisGlass` logs one debug-only warning if a glass-capable, Glassmorphic surface is drawn
   with no backdrop (tint fallback). (File name is not available at runtime; message is generic.)
+
+## CLEANUP — dead optics local removed
+- The old `GlassOptics` value + `LocalGlassOptics` local had zero readers after the rewrite; both
+  and their imports were deleted (`GlassTheme.kt`, `AuralisRoot.kt`). Every surface now reads the
+  single `GlassConfig`; no second optics channel exists.
 
 ## STEP 11 — TESTS / SELF-REVIEW
 - `GlassMappingTest` (13) + `GlassBlurPolicyTest` (5) rewritten for the new API; all pass.
@@ -157,12 +185,14 @@ Spec vs. code conflicts (trust code, safest option):
       (no device). Low mode -> no lens (unit-tested `hasLens`).
 - [x] Normal theme unchanged: `glassLayerEnabled` false, no layer, SOLID dock path untouched
 - [x] licence attribution added (NOTICE + README + About)
-- [x] `:app:compileDebugKotlin` green; glass unit tests green
+- [x] `:app:compileDebugKotlin` green; glass unit tests green; full unit suite 59 classes / 0 failures
 
-## STEP 12 / NEXT
-- Final report + phone test list delivered in the closing message.
-- Optional follow-ups: tune `BLUR_DP*`/`LENS_AMOUNT_DP`/tint from phone feedback; wire
-  `effectScale` through `layerBlock` if full-resolution effects are too costly on Low.
+## STEP 12 — FINAL
+- Live wiring verified end to end: `SettingsActions` -> `AppViewModel` -> `GlassConfigRepository`
+  (DataStore) -> `GlassConfig` StateFlow -> `GlassSettingsProvider` -> `LocalGlassConfig` ->
+  `Modifier.auralisGlass` -> the one recorded `LayerBackdrop`.
+- Follow-ups left to the phone: tune `BLUR_DP*`/`LENS_AMOUNT_DP`/tint from real-device feedback;
+  wire `effectScale` through `layerBlock` if full-resolution effects are too costly on Low.
 
 ---
 
