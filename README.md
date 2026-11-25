@@ -45,7 +45,7 @@ YouTube Music support is optional. Connect an account and enable the integration
 
 ## Download
 
-Check the **Releases** section of the GitHub repository for downloadable builds. For source builds, see the instructions below.
+Check the **Releases**[Releases](https://github.com/voidXatrix-zudz/Auralis/releases/) section of the GitHub repository for downloadable builds. For source builds, see the instructions below.
 
 ## Build from source
 
@@ -75,8 +75,8 @@ AURALIS is actively developed, so you may still encounter small bugs. I'm fixing
 
 ## Follow AURALIS
 
-- Instagram: **@YOUR_FIRST_INSTAGRAM_HANDLE**
-- Instagram: **@YOUR_SECOND_INSTAGRAM_HANDLE**
+- Instagram: **https://www.instagram.com/zudz.irl?jplx=dXRnZDgwbWl4NXZ1**
+- Instagram: **https://www.instagram.com/voidzudz.exe?hvrq=MXRxOXNkdHVva2FnZw==**
 
 Replace these placeholders with your two Instagram usernames before publishing the README.
 
