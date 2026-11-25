@@ -1,0 +1,37 @@
+AURALIS — Third-party notices
+=============================
+
+Kyant0/backdrop (AndroidLiquidGlass)
+------------------------------------
+
+The liquid-glass rendering engine used by the AURALIS Glassmorphic theme is
+vendored from:
+
+    Kyant0 / AndroidLiquidGlass
+    https://github.com/Kyant0/AndroidLiquidGlass
+    Version: 1.0.0
+
+    Copyright (c) 2025 Kyant
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+The vendored sources live in:
+
+    app/src/main/java/com/auralis/app/ui/glass/backdrop/
+
+Each vendored file keeps an Apache-2.0 header that also records the local
+modifications: the package was renamed to `com.auralis.app.glass.backdrop`,
+the Kotlin context parameter in `LayerRecorder.kt` was replaced by an explicit
+parameter (toolchain portability), and the `@Language("AGSL")` annotations were
+dropped. The sources were vendored because the published `io.github.kyant0:backdrop`
+artifacts require a newer Jetpack Compose than this project targets.

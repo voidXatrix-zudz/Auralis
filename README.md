@@ -60,6 +60,7 @@ Kotlin · Jetpack Compose · Media3 · Material 3
 ## Credits
 
 - Lyrics provided by [LRCLIB](https://lrclib.net)
+- Liquid-glass rendering engine vendored from [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) (Apache-2.0)
 
 ---
 

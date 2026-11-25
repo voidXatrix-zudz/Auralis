@@ -45,5 +45,11 @@ fun AboutScreen(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodySmall,
             color = Auralis.extras.mutedForeground,
         )
+        Text(
+            "Liquid-glass rendering uses Kyant0/backdrop, licensed under the Apache License 2.0 " +
+                "(github.com/Kyant0/AndroidLiquidGlass).",
+            style = MaterialTheme.typography.bodySmall,
+            color = Auralis.extras.mutedForeground,
+        )
     }
 }
