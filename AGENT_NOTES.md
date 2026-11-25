@@ -1,106 +1,325 @@
-# GLASS-OPACITY-FIX (active)
+# GLASS-BACKDROP-V3 (active task)
 
-Branch: `glass-opacity-fix` (from `glass-dock-v2`). Glassmorphic theme only. No build/ADB/emulator;
-verify by static review. One commit per step.
+Repo: `C:\Users\Dipanjan\Downloads\Workspace\AURALIS-FULL`, branch `glass-opacity-fix`
+(HEAD `4a9be27` + the owner's uncommitted WIP). Glassmorphic theme only. The owner builds/tests on
+the phone; this session may run `:app:compileDebugKotlin` (no adb / SDK / emulator). One commit per
+step. Toolchain: AGP 8.13.2, Kotlin 2.4.21, KSP 2.3.12, Gradle 8.14.3, Compose BOM 2025.06.01,
+Haze 1.6.7, minSdk 26, compileSdk 36, targetSdk 35, package `com.auralis.app`.
+
+GOAL: make the glass settings actually drive the UI. ONE source of truth (`GlassConfig`), ONE
+modifier (`auralisGlass`), every glass surface reads them. Engine swapped to Kyant0/backdrop
+(Apache-2.0, vendored 1.0.0). No surface may keep a private blur/alpha/outline number.
+
+## DO
+- Read before editing; never leave half-wired code; one commit per step; verify with
+  `:app:compileDebugKotlin`.
+- Keep exactly four glass controls: Dock transparency, Glass clarity, Glass outlines, Performance.
+- Blur is a FIXED `GlassTokens` constant (no "Live blur", no "Blur strength").
+- Normal theme byte-for-byte unchanged and cost-free (no layer recorded).
+- Update this section after every step; re-read after any context summary.
+- Working directly in `AURALIS-FULL`: it has the owner's unrelated WIP, so task-file commits mix it
+  in (accepted by the owner; git is file-level). Stage task files only.
+
+## DON'T
+- Do not copy BitChord / Echo-Music code (GPL-3.0). Vendored engine is Kyant0/backdrop only.
+- Do not tune more than `BLUR_DP*`, `LENS_AMOUNT_DP`, and the tint mapping.
+- Do not touch playback, downloads, YouTube/Spotify, Clerk auth, lyrics, menu items/labels/order.
+- Do not add dependencies other than the (already) vendored backdrop engine.
+
+## STEP 0 — AUDIT (done; consumer matrix + conflicts)
+Engine today = Haze 1.6.7 via `Modifier.glassSurface` / `dockGlassMaterial`; settings live in
+DataStore through `SettingsRepository` (`dock_glass_opacity`, `dock_glass_clarity`, `glass_outlines`,
+`dock_glass_blur`, `performance_profile`).
+
+| SURFACE | file(s) | read today | ignored |
+|---|---|---|---|
+| Dock (nav pill, mini-player, hidden tab circle) | `AppDock.kt`, `LiquidGlass.kt` (`dockGlassMaterial`, `glassBubble`) | `dockOpacity`→`dockFill`, `blurStrength`→`blurDp`, `perf.*`, rim | `glassClarity` |
+| In-composition surfaces (cards/rows/chips/panels/Now Playing) | `glassSurface(GlassKind.Surface)` call sites | `glassClarity`→`surfaceFillAlpha`, `blurStrength`, `perf.*`, hairline | `dockOpacity` |
+| Bubbles / icon tints | `glassBubble` / `glassTint` | Surface fill + rim | `dockOpacity` |
+| Menus / sheets / dialogs (separate windows) | `GlassOverlays.kt`, `GlassKit.kt` | `windowTintAlpha(clarity)`, `DialogBackdropBlur()` (OS radius) | `dockOpacity`; blur radius OS-fixed |
+| Root scrim | `AuralisRoot.kt` → `GlassOverlayScrim` | `MENU_BACKDROP_SCRIM` | all |
+| Appearance preview | `GlassSettings.kt`, `SettingsSubPages.kt` | live drag values | — |
+| Normal theme | all wrappers | stock Material only | everything glass |
+
+Spec vs. code conflicts (trust code, safest option):
+1. Engine: spec = Kyant0/backdrop; code = Haze. Engine swap (approved by owner).
+2. `dockBackdrop` has no `backdropScale` param → `EFFECT_RESOLUTION_*` has no direct API; effects
+   run at full resolution (documented). Optional later via `layerBlock`.
+3. `shape`/`highlight`/`shadow` are lambdas; `lens` needs a `CornerBasedShape`.
+4. `blur(radius px)` is px, not dp.
+5. `TINT_COLOR_DOCK`: spec says "very light cream"; kept a dark smoked
+   `lerp(Canvas, Cream, 0.06)` blend so dock cream icons stay readable at high opacity.
+   Deviation recorded here.
+
+## STEP 1 — ADD THE LIBRARY (done)
+- Vendored Kyant0/backdrop 1.0.0 into `app/src/main/java/com/auralis/app/ui/glass/backdrop/`
+  (package `com.auralis.app.glass.backdrop`), 26 files, Apache-2.0 header on each.
+  Vendored (not the AAR) because every published artifact needs Compose ≥ 1.9.4/1.12 which this
+  project can't use. No gradle dependency added (the unusable `io.github.kyant0:backdrop` line is
+  not present in canonical).
+- `NOTICE` added; `README.md` + `AboutScreen.kt` carry the attribution.
+- Verified API: `rememberLayerBackdrop(graphicsLayer, onDraw)`, `Modifier.layerBackdrop(backdrop)`,
+  `Modifier.drawBackdrop(backdrop, shape: () -> Shape, effects, highlight, shadow, innerShadow,
+  layerBlock, exportedBackdrop, onDrawBehind, onDrawBackdrop, onDrawSurface, onDrawFront)`.
+  Effects: `blur(radiusPx)`, `colorControls(brightness, contrast, saturation)`, `lens(refractionHeight,
+  refractionAmount, depthEffect, chromaticAberration)`. Blur/colour need API 31+, lens API 33+.
+- `:app:compileDebugKotlin` green with the engine vendored.
+
+## STEP 2 — ONE SOURCE OF TRUTH (done)
+- New `ui/glass/GlassConfig.kt`: immutable `GlassConfig(dockTransparency, glassClarity,
+  outlinesEnabled, performance, tier, sdkInt)` + `LocalGlassConfig` (`compositionLocalOf`) +
+  `isGlassCapable` (API 31) + `hasLens` (API 33 && tier != LOW). Defaults 35/60/on.
+- New `ui/glass/GlassConfigMappings.kt` (`GlassMappings`): `dockTintAlpha` (`0.02+0.98*t^1.4`),
+  `panelTintAlpha` (`0.92-0.80*c`), `outlineAlpha`, `blurDp(tier)`, `effectScale(tier)` — pure/JVM.
+- New `ui/glass/GlassConfigRepository.kt`: combines the stored values + resolved tier into ONE
+  `StateFlow<GlassConfig>`, clamps on read and write, setters `setDockTransparency/Clarity/Outlines`.
+- `AppViewModel` owns the repository, exposes `glassConfig`, and the three setters.
+- `AuralisRoot` collects `glassConfig`, provides `LocalGlassConfig`, and `GlassSettingsProvider`
+  derives the Haze bridge (`GlassSettings`) + dock style from it. `GlassDragState.value` now holds a
+  `GlassConfig?` so a slider drag is live and the drag-end commits through the repository.
+- `GlassTokens` (Step 2.4 constants): BLUR_DP_HIGH/MEDIUM=10, BLUR_DP_LOW=16, LENS_HEIGHT/AMOUNT=24,
+  SATURATION=1.5, EFFECT_RESOLUTION 0.5/0.33/0.25, RIM_WIDTH=1, RIM_ALPHA 0.55/0.12,
+  TINT_COLOR_DOCK/TINT_COLOR_PANEL, `blurDpFor(tier)`.
+- STEP 2.6 removed "Live blur" + "Blur strength" end to end: `AppSettings.dockGlassBlur` deleted
+  (default opacity 30→35, clarity 50→60), DataStore key `dock_glass_blur` renamed to a
+  delete-only `dockGlassBlurLegacy`, backup import/export of `dockGlassBlur` removed, both Appearance
+  screens (SettingsHub sub-page + Glass settings) drop the rows, `GlassMapping` blur members removed,
+  `GlassBlurPolicy.allowed/sourceAllowed` lose the `blurStrength` gate, and Haze blur now reads
+  `GlassTokens.blurDpFor(tier)` everywhere (`LiquidGlass.kt`, `DockGlassStyle.kt`).
+- `:app:compileDebugKotlin` green.
+
+## STEP 3+ — BACKDROP SOURCE / MODIFIER / SURFACES (in progress)
+- Plan: `AuralisBackdrop`-hosted `rememberLayerBackdrop` records black bg + `drawContent()`, applied
+  with `Modifier.layerBackdrop` to the page container; `LocalAppBackdrop` provides it; `auralisGlass`
+  is the one `drawBackdrop` modifier. The canonical code already funnels every surface through
+  `glassSurface` / `dockGlassMaterial`, so re-pointing those two entry points at `auralisGlass`
+  converts most surfaces. Menus/sheets/dialogs stay separate windows (Step 6.2b: window blur-behind +
+  high panel tint) and are listed in the report.
+
+## NEXT
+- Step 3: backdrop source + `LocalAppBackdrop`.
+- Step 4: `Modifier.auralisGlass(shape, role)` reading only `LocalGlassConfig`/`LocalAppBackdrop`/
+  `GlassTokens`.
+- Step 5: capability fallbacks; Step 6: convert every surface; Steps 7–12.
+
+---
+
+# PLAYBACK CONTEXT (active) — playlist-bound Next/Previous
+
+Branch: `glass-opacity-fix` (working tree has unrelated WIP; touch only playback/context files).
+No build/ADB per the task role: the owner builds and tests on the phone.
+
+## DO
+- One queue model: the Media3 timeline is the playback order. Context items are MARKED in
+  `MediaMetadata.extras`; autoplay/radio items are marked separately. One policy reads those marks.
+- Every Next/Previous (Now Playing, mini-player, notification, lock screen, headset/Bluetooth,
+  Android Auto) goes through `PlaybackService.TransportPlayer` (the session player). UI is a thin
+  delegate (`PlaybackController.next/previous`), never a second implementation.
+- Always `play()` on a successful manual skip, even if paused (old bug; do not regress).
+- Previous: >3 s restarts; else walk the REAL played history (works with shuffle and queue edits);
+  at the first context song restart, or wrap to the last with repeat-all.
+- Repeat: ALL wraps to the first CONTEXT song; ONE repeats natively but manual Next moves forward;
+  OFF + autoplay ON seeds similar songs only when the last context song is playing; OFF + OFF stops.
+- Shuffle: reorder only the CONTEXT block, current song first; autoplay stays after it.
+- Mixed local+YouTube: one queue; the service resolves `auralis-yt://<id>` lazily and the controller
+  prefetches the next stream.
+- Update this file after each phase; re-read it if unsure.
+
+## DON'T
+- Don't run Gradle / adb / SDK / emulator.
+- Don't redesign UI: only the Queue section labels ("Playing from …", "Autoplay / Up next").
+- Don't change dock/theme/glass/lyrics/downloads/YouTube fetching/stream racing/history sync/Clerk.
+- Don't insert recommendations while context songs remain (append at the end only).
+- Don't duplicate next/previous logic in Compose, the dock, or the controller.
+
+## STEP 1 FINDINGS (where playback starts)
+- Playlist detail (Normal + Glass) → `onPlayIndex` → `AppViewModel.playPlaylist(id, index)`
+  → `play(track, ordered)` → whole playlist queue (already whole, but no context id and mixed
+  YouTube taps go through a remote-only filter elsewhere).
+- Album (Library ALBUMS row/card) → `onPlayAlbum` → `play(first, album)`.
+- Liked Songs → `likedOnPlay`: local `onPlay` (queues the WHOLE LIBRARY), remote
+  `onPlayYouTubeTrackFrom` (filters out local rows → mixed list broken).
+- Downloaded → `onPlay` (queues the WHOLE LIBRARY, not the download list).
+- Local Files → `onPlay` → `playLibraryTrack(it, tracks)` (library, correct list, no context).
+- History → `playHistoryEntry`: local filters out YouTube, remote filters out local.
+- Search → local `play(it, tracks)` (library), YouTube `playYouTube` (single + radio).
+- Home → local `play(it, tracks)`, YouTube `playYouTubeTrack` (single + radio).
+- YouTube playlist detail/card → `playYouTubePlaylist*` (whole list, no context).
+- Player/service: `PlaybackService` owns ExoPlayer + `MediaLibrarySession`; `PlaybackController`
+  (MediaController) builds the timeline; `start()` calls `setMediaItems/prepare/play`.
+- Next/Previous: `PlaybackController.next/previous` (guarded by `hasNextMediaItem`, so repeat-all
+  wrap at the last item is broken) and `PlaybackService.TransportPlayer` overrides (3 s rule).
+  All UI buttons (Blend, GlassNowPlaying, NowPlayingScreen, AppDock) call the same ViewModel methods.
+- Radio on Next: `AppViewModel` init watcher appends `container.youtube.radioNext(...)` whenever
+  fewer than 3 YouTube items are ahead — in the middle of any queue, including playlists.
+  `playYouTube` also seeds 15 radio tracks immediately. No autoplay setting exists; the closest
+  gate is `settings.youtubeIntegration`, used as the autoplay switch (no new UI row).
+- Shuffle/repeat today: native Media3 (`shuffleModeEnabled`, `repeatMode`); no custom history.
+
+## IMPLEMENTATION PHASES
+1. New `PlaybackContext` + queue tags + service-side shared skip policy + events.
+2. Controller: context-aware start/restore, explicit shuffle, live `syncContext`, state fields.
+3. ViewModel: context call sites, autoplay gating, playlist-edit live sync, checkpoint context.
+4. UI: Queue "Playing from" + "Autoplay / Up next"; restore wiring.
+5. Self-review, notes, final report.
+
+## DONE
+- STEP 1 read/audit complete (findings above).
+- STEP 2 model: new `playback/PlaybackContext.kt` — `PlaybackContextKind` (PLAYLIST, ALBUM, LIKED,
+  DOWNLOADED, LOCAL, SEARCH, RADIO, HISTORY), `PlaybackContext(kind,id,name)` + factories, and the
+  `QUEUE_ROLE_EXTRA` tag with `MediaItem.queueRole()/isAutoplayItem()`.
+- STEP 3 controller: `PlaybackController` carries context on `play/start/restore`, tags each item
+  as context/autoplay, exposes `context`, `contextIds`, `autoplayIds` in `State`, adds
+  `addAutoplay`, `syncContext`, and makes `next()/previous()` thin delegates to the session player.
+  Shuffle is now CONTEXT-ONLY and physical: `toggleShuffle`/`applyShuffle`/`restoreContextOrder`
+  reorder the timeline (current song first, autoplay tail untouched); native `shuffleModeEnabled`
+  stays false so a recommendation can never land between context songs.
+- STEP 4 service: `TransportPlayer` owns the ONE skip policy — `lastContextIndex`, `firstContextIndex`,
+  `hasAutoplayAfter`, `manualNextTarget`, `skipNext`, `skipPrevious`; context order is walked in
+  order, repeat-all/one wrap to the first CONTEXT song, repeat-off may enter autoplay only when the
+  YouTube integration is on, previous keeps the >3 s restart rule, and both always `beginUserSkip()`.
+- STEP 5 viewmodel: every start path passes a context (`play/playList`, playlist, shuffle-playlist,
+  album, liked, downloaded, local, history, explore, YouTube card/track/playlist); mixed
+  local+YouTube lists now queue as ONE list (old `playYouTubeTrackFrom` no longer drops local rows);
+  the radio refill is gated on `state.context` (never mid-context) and on repeat-off; playlist edits
+  (add/remove/reorder) live-sync the active queue via `syncContext`; checkpoint saves context
+  kind/id/name; a one-shot "couldn't play — skipping" notice per failed song.
+- STEP 6 UI: `LibraryScreen`/`GlassScreens` route Liked/Local/Downloaded rows to their own lists;
+  `AuralisRoot` supplies the handlers + restored context; `NowPlayingBlend.QueuePanel` shows
+  "Playing from <name>" and an "Autoplay / Up next" section.
+- STEP 7: `:app:compileDebugKotlin` + `:app:assembleDebug` green (JDK 21). Debug APK copied out.
+
+## SELF-REVIEW
+- One policy: `grep` confirms no other skip logic; every UI button reaches
+  `PlaybackService.TransportPlayer` through the session.
+- Autoplay never interleaves: autoplay items are always inserted after the last context item
+  (`addToQueue` `insertAt`, `syncContext`, `shuffledContext`), and `manualNextTarget` refuses to
+  enter the tail while `current < lastContext`.
+- Mixed lists: `playLibraryTrack`, `playHistoryEntry`, `playLiked` pass the full local+remote list.
+- Shuffle: `shuffleModeEnabled` is forced false everywhere; queue order lives in the timeline.
+- Failure: `PlaybackService.onPlayerError` already re-resolves then skips; the toast only reports it.
+- No UI redesign; only the two Queue labels changed.
+
+---
+# ARCHIVE — LIQUID-GLASS BLUR PASS
+
+Branch: `glass-opacity-fix`. Glassmorphic theme only. No build/ADB/emulator; verify by static
+review. One commit per step.
 
 ## DO
 - Read each file fully before editing; re-read after editing.
-- Rename "Dock transparency" -> "Dock opacity" end to end (model, DataStore, backup, tests, UI).
-- New persisted key `dockGlassOpacity` (0..100). Migrate once: new = 100 - old `dockGlassTransparency`.
-- ONE `GlassMapping.dockFill(o): Color` (frost 0..0.5, frost->solid 0.5..1, alpha 0->1).
-- Keep it compiling with no new libraries; Normal theme + dock layout/motion untouched.
+- Blur must never depend on performance heuristics. The ONE rule is
+  `GlassBlurPolicy.allowed(settings, sdkInt)` = `sdkInt >= 31 && !reduceBlurAndEffects &&
+  performanceProfile != LOW && dockGlassBlur > 0`. Automatic NEVER disables blur.
+- The tier controls COST only (Haze input scale, shadow scale, refraction), never radius/on-off.
+- Keep it compiling with no new libraries; Normal theme + dock layout/motion + tabs + lyrics +
+  Now Playing layout untouched.
 - Update this section after every step.
 
 ## DON'T
 - Do not run Gradle / adb / SDK / emulator.
-- Do not touch Normal theme, dock layout/animation, tabs, lyrics, Now Playing.
-- No black tint/scrim in the dock; no `DOCK_NO_BLUR_TINT_FLOOR` / `DOCK_NO_BLUR_MIN_FILL`.
+- Do not add any user-facing option/toggle/slider beyond the existing three sliders and the two
+  switches (Live blur, Glass outlines).
+- Do not put a `graphicsLayer { renderEffect }` / RuntimeShader / `CompositingStrategy` above
+  `hazeEffect` in the dock chain (Haze would sample its own output and stop blurring).
 - Do not commit the unrelated WIP tree; stage only this task's hunks.
-- Do not mention or edit unrelated files.
 
 ## DONE
-- STEP 1 (this commit): renamed "Dock transparency" -> "Dock opacity" end to end.
-  - `GlassSettings.dockOpacity`, `DEFAULT_DOCK_OPACITY = 0.50f` / `_PERCENT = 50`.
-  - ONE `GlassMapping.dockFill(o)` (frost alpha 0..0.10 up to 0.5, smoothstep frost->`DOCK_SOLID`
-    alpha 0.10..1.00 after); deleted the 4 tint/frost/scrim fns + `DOCK_NO_BLUR_TINT_FLOOR` /
-    `DOCK_NO_BLUR_MIN_FILL`; black scrim gone from `dockGlassMaterial`; `fill.alpha >= 0.98`
-    skips Haze + lens; `blurBackdrop = false` controls draw only a 10% cream bubble + rim.
-  - Persisted `dock_glass_opacity` with one-time migration via `dockTransparencyToOpacity`
-    (30 -> 70, 100 -> 0); backup exports the new key and still imports old backups inverted.
-  - `DockGlassStyle.fillAlpha` + `opacity`, `GlassOptics.fillAlpha`, slider "Dock opacity".
-  - Unit tests: `dockFill` endpoints/monotonic/no-0.04-step + migration cases.
-- STEP 2 (this commit): dock no longer runs the AGSL lens by default.
-  - `dockGlassMaterial`/`dockSurface` default `refraction = false`; the lens only runs when the
-    DEBUG `dockLensExperimental` flag is on, and that path sets `CompositingStrategy.Offscreen`
-    on its `graphicsLayer` before the shader.
-  - Haze block sets `blurEnabled`, an explicit `blurRadius` from `dock.blurDp`, and
-    `HazeInputScale.Fixed(...)`; the DEBUG "Haze input scale: Default" switch uses `Auto`.
-  - Brightness lift is a 4% additive white Haze tint (no AGSL); `dockSaturation` is now
-    `1.0 + 0.6 * blur` and only the experimental lens uses it.
-  - Elevation shadow is skipped while the fill is translucent (< 0.6 alpha) so it cannot darken
-    the pane from underneath.
-  - Hidden active-tab circle passes `blurBackdrop = circleIn > 0.01f` (no wasted blur pass).
-  - Collapsible DEBUG "Glass diagnostics" card at the bottom of Appearance with four lines
-    (SDK/tier/profile blur, haze allowed + dp, input scale + lens, fill + opacity) and the two
-    DEBUG switches.
-- STEP 3 (this commit): slider drags no longer persist per tick.
-  - `SliderSetting` gained `onChangeFinished`; the three glass sliders write only
-    `GlassDragState.value` while moving and persist once via `actions.onUpdate` at drag end.
-  - `LocalGlassSettings`, `LocalDockGlassStyle` and `LocalGlassOptics` are now
-    `compositionLocalOf`, so only their readers are invalidated.
-  - AuralisRoot resolves the live glass values inside a small `GlassSettingsProvider` composable
-    that reads the drag state itself, so a tick no longer recomposes the root tree.
-  - The dock `hazeStyle` is remembered on the 0.5dp-snapped radius.
-- STEP 4 (this commit): the Appearance preview is always visible and never sits under the dock.
-  - `SettingsPage` gained an optional `pinnedHeader`; when supplied the page title + header render
-    in a fixed column above a `weight(1f)` list, otherwise the original scrolling layout is kept.
-  - Appearance passes the preview card only when `isGlass`, so it sits under the title, above the
-    scrolling controls, and never under the real dock.
-  - The preview backdrop keeps its gradient and adds high-contrast 12dp vertical stripes plus a
-    centred 14sp white line ("Stripes · 14 sp · sharp or blurred?") so blur strength reads on a
-    flat colour too.
-  - The readout ("Preview · opacity NN% · blur NN dp · clarity NN%") moved into the pinned header
-    and reads the same live drag-aware values as the sliders.
-- STEP 5 (this commit): self-review. Static only (no Gradle/adb); each item is a grep/read result.
+- STEP 1 (this commit): decoupled Live blur from the performance tier.
+  - New `ui/glass/GlassBlurPolicy.kt`: `GlassBlurPolicy.allowed(...)` + `LocalGlassBlurAllowed`
+    (provided once at the root by `GlassSettingsProvider`).
+  - `AdaptiveTierResolver.baseTier`: LOW only for `isLowRamDevice || totalRamGb < 3.0`; low cores
+    or a small heap class only cap at MEDIUM. `availableRamGb` no longer influences the tier.
+    `stepDown`: HIGH -> MEDIUM, MEDIUM stays MEDIUM (no automatic LOW).
+  - Every glass blur gate now reads the policy: `glassSurface`, `dockGlassMaterial`,
+    `glassWindowPanelColor`, `DialogBackdropBlur`, `resolveDockGlass`, `glassHazeAllowed`,
+    `GlassNowPlaying` player-background source.
+  - `resolveDockGlass.limitedReason` states the TRUE cause ("Live blur needs Android 12 or newer" /
+    "Blur is off: Performance is set to Low" / "Blur is off: Reduce blur and effects is on").
+  - Tests: `PerformanceResolverTest` (new base/step-down cases), `GlassBlurPolicyTest` (new),
+    `GlassMappingTest` (reason cases).
+- STEP 2 (this commit): one back arrow + read-only diagnostics.
+  - `Destination.isSettingsDestination` (NavState.kt); the app `TopBar` is suppressed for the
+    Settings hub and every Settings sub-page, so Appearance shows exactly one back + title.
+  - `GlassDebugPanel` is now READ-ONLY, debug-only, and scrolls above the dock stack: SDK, mode,
+    tier, totalRamGb, availableRamGb, cores, memoryClassMb, batterySaver, thermalStatus, blur
+    policy allowed, dock blur dp, haze input scale.
+  - Removed the "Dock lens (experimental)" and "Haze input scale: Default" toggles and their
+    settings fields/keys (`dockLensExperimental`, `dockHazeDefaultScale`).
+  - `LocalDeviceConditions` added (PerformanceLocals.kt) and provided from the root.
+- STEP 3 (this commit): Haze 1.6.7 dock path verified + simplified.
+  - Read `HazeEffectNode.kt` / `HazeSourceNode.kt` / `HazeStyle.kt` at tag 1.6.7: `hazeEffect`
+    samples the nearest registered `hazeSource` that is NOT an ancestor, so the dock effect node
+    (a sibling of the content pane) does find an area and blurs on API 31+.
+  - `dockGlassMaterial` order is now: outside-only shadow, `clip(shape)`, `hazeEffect {}`, then the
+    fill / specular / 3dp inner stroke / 1dp rim as INNER content. The AGSL lens is gone from the
+    dock entirely (`LensShader` kept for the non-dock `liquidGlass`).
+  - Haze args: `blurEnabled = true`, `blurRadius` from `dock.blurDp`, `inputScale = Fixed(...)`,
+    `noiseFactor = 0`.
+  - Active-tab circle passes `blurBackdrop = circleIn > 0.01f`; the mini-player play/next stay
+    `blurBackdrop = false` (faint cream bubble, bare white icons).
+- STEP 4 (this commit): reference look.
+  - Fill is `GlassMapping.dockFill` (no black/grey; nearly clear at the default 30%).
+  - Backdrop vibrancy via a Haze `HazeTint(..., BlendMode.Saturation)` (0 at 0% blur -> 0.45 at
+    full), so only the blurred backdrop is saturated, never the content.
+  - Rim 1dp white 0.60 -> 0.08 -> 0.35; 3dp inner stroke white 0.14 -> 0.02; top specular white
+    0.10 -> 0 over the top 40%; all gated by "Glass outlines".
+  - Active-tab bubble is white 13% + 1dp rim (`glassBubble`); active tab label/icons 100% cream,
+    inactive 70%.
+  - Fresh-install defaults: Dock opacity 30%, Blur strength 60% (`GlassMapping.DEFAULT_*`,
+    `AppSettings.dockGlassOpacity/dockGlassBlur`). Saved values are untouched.
+  - Appearance preview pill + circle run the same `dockGlassMaterial` and now receive
+    `LocalGlassBlurAllowed`, so the preview blurs exactly when the real dock does.
+- STEP 5 (this commit): static self-review (see SELF-REVIEW below).
+- LATE FIX (compile, found by `:app:assembleDebug`): `dockInnerStroke`'s `drawOutline` import corrected
+  to `androidx.compose.ui.graphics.drawOutline` (it lives in `androidx.compose.ui.graphics.OutlineKt`,
+  NOT `...graphics.drawscope`). Debug APK then builds; copied to `Desktop\\AURALIS-debug.apk`.
+- FIX (dock colour cast, report on device): REMOVED the red `HazeTint(..., BlendMode.Saturation)` from
+  `dockGlassMaterial`. Saturation blend forces the backdrop to full saturation at its own hue, so warm
+  album art / the orange stripes pushed the whole dock to red. The dock now blurs with a single faint
+  neutral white brightness lift and NO colour tint, so the blurred content keeps its own colour
+  (the reference look). `GlassMapping.dockSaturation` is kept as a tested mapping but is no longer
+  applied. No options/toggles added or changed.
+- FIX (dock blur not tracking the slider, report on device): split the blur policy into two rules.
+  `GlassBlurPolicy.sourceAllowed(settings)` decides whether the single backdrop capture layer exists
+  (platform + "Reduce blur and effects" + manual Low only; it IGNORES the slider). `GlassBlurPolicy.allowed(settings, blurStrength)`
+  decides whether a surface actually blurs, and now takes the live slider value. Root:
+  `glassHazeAllowed` uses `sourceAllowed` (so the layer exists at 0% and raising the slider starts
+  blurring in the same frame), and `GlassSettingsProvider`/`resolveDockGlass` use the live
+  `glass.blurStrength`. This removes the asymmetry where the Appearance preview (own local
+  `hazeSource`) blurred while the real dock had no registered source and stayed sharp until the
+  drag committed. The read-only debug panel now reports the resolved live `dock.blurEnabled`.
+  Tests added: live-value decision and capture-layer registration at a zero slider.
 
 ## SELF-REVIEW (STEP 5)
-- Old-name sweep: `dockTransparency` / `dockGlassTransparency` / `dock_glass_transparency` /
-  "Dock transparency" appear ONLY in the one-time migration (`dockTransparencyToOpacity`,
-  `Keys.dockGlassTransparencyLegacy`), the old-backup import branch, and the migration test. No
-  other reader/writer. (The stray `AuralisRoot.kt.bak_before_dockfix` is untracked/not compiled.)
-- Removed dock tint/frost/scrim symbols (`DOCK_NO_BLUR_TINT_FLOOR`, `DOCK_NO_BLUR_MIN_FILL`,
-  `dockTint*`/`dockFrost*`/`dockScrim*`/`dockFloor*`): 0 matches in `app/src/main`.
-- `dockGlassMaterial`: the dock fill is exactly `GlassMapping.dockFill(opacity)`; no black scrim,
-  no tint floor. `fill.alpha >= 0.98` skips both Haze and the lens; `blurBackdrop = false` draws
-  only a 10% cream bubble + rim. `canvas`/`Cream`/`Indigo` tokens unchanged.
-- Dock opacity endpoints: 0% -> `dockFill(0f)` alpha 0.00 (see-through: blur + rim only);
-  50% -> frost cream alpha 0.10; 100% -> `DOCK_SOLID` alpha exactly 1.00. Alpha is non-decreasing
-  and every 1% step moves alpha by <= 0.04 (asserted in `GlassMappingTest`).
-- Blur strength: 0% -> `blurDp(0f)` = 0dp (stripes stay sharp); 100% -> `blurDp(1f)` = 80dp
-  (`MAX_BLUR_DP`), tier never scales the radius. The pinned preview's 12dp stripes + 14sp line make
-  this visible on flat colour.
-- Glass clarity moves only the non-dock `GlassKind.Surface` fill (`surfaceFillAlpha`); Glass
-  outlines gates the dock rim + surface hairline; Live blur toggles `dockGlassBlur` and restores
-  `DEFAULT_BLUR_PERCENT` when re-enabled. None of them move the dock fill.
-- Normal theme unaffected: the dock/glass code is behind `style == DockStyle.GLASS`/`isGlass`
-  (`dockGlassMaterial` returns the original solid path for `DockStyle.SOLID`), and the Appearance
-  pinned preview is only passed when `isGlass` is true.
-- Migration: `dockTransparencyToOpacity(30) == 70` and `dockTransparencyToOpacity(100) == 0`
-  (test `old transparency migrates to the inverted opacity`); old backups import through the same
-  helper; new backups export the new `dockGlassOpacity` key.
-- Scope: only the Glassmorphic theme path was changed. Files touched across the five steps are
-  listed below; the unrelated WIP tree (incl. `SettingsHub.kt`'s dialog/lyrics hunks) was left
-  uncommitted.
+- `grep profile.blurEnabled` in the glass path: only `PerformanceController` (its own log) and
+  `ui/screens/LyricsContent.kt` (lyrics focus blur, out of scope). No dock/card/window glass path
+  reads it.
+- Automatic never disables blur: `GlassBlurPolicy.allowed` has no device input at all, and
+  `GlassBlurPolicyTest.automatic never disables blur` asserts it.
+- Resolver: LOW only for `isLowRamDevice || totalRamGb < 3.0` (tests `onlyLowRamOrUnder3GbForcesLow`,
+  `lowCoresOrSmallHeapOnlyCapAtMediumNeverForceLow`, `lowAvailableRamNoLongerForcesLow`).
+- `dockGlassMaterial`: no black scrim/tint; fill is exactly `dockFill`; no `renderEffect` /
+  RuntimeShader / CompositingStrategy above `hazeEffect`; the AGSL lens is dock-free.
+- Duplicate back arrow: `nav.top?.isSettingsDestination` suppresses the shared `TopBar` on the hub
+  and every sub-page (`SettingsPage` draws the single back + title).
+- Debug toggles and their keys removed; the only DEBUG card is the read-only diagnostics.
+- Normal theme untouched (`dockGlassMaterial` returns the original solid path for `DockStyle.SOLID`;
+  the pinned preview only exists when `isGlass`).
 
 ## NEXT
-- (none) Task complete: STEP 1-5 committed. Follow-up WIP stash restore happens after the report.
+- User builds and tests the dock pass (see the phone checklist in the report).
+- Nothing else planned unless the phone shows the dock is still sharp; in that case the diagnostics
+  card prints the exact reason.
 
-## FILES (five steps)
-- `data/settings/SettingsRepository.kt`, `data/backup/BackupRepository.kt`,
-  `domain/model/AppSettings.kt`, `ui/theme/GlassTheme.kt`, `ui/glass/GlassControls.kt`,
-  `ui/glass/DockGlassStyle.kt`, `ui/glass/LiquidGlass.kt`, `ui/glass/GlassSettings.kt`,
-  `ui/components/AppDock.kt`, `ui/AuralisRoot.kt`, `ui/settings/SettingsHub.kt`,
-  `ui/settings/SettingsSubPages.kt`, `test/.../GlassMappingTest.kt`, `AGENT_NOTES.md`.
+## FILES
+- New: `ui/glass/GlassBlurPolicy.kt`, `test/.../GlassBlurPolicyTest.kt`.
+- Changed: `ui/performance/PerformanceResolver.kt`, `PerformanceProfile.kt`, `PerformanceLocals.kt`,
+  `ui/glass/DockGlassStyle.kt`, `ui/glass/LiquidGlass.kt`, `ui/glass/GlassControls.kt`,
+  `ui/components/AppDock.kt`, `ui/AuralisRoot.kt`, `ui/AppViewModel.kt`, `ui/nav/NavState.kt`,
+  `ui/settings/SettingsSubPages.kt`, `domain/model/AppSettings.kt`,
+  `data/settings/SettingsRepository.kt`, `ui/glass/GlassNowPlaying.kt`,
+  `test/.../PerformanceResolverTest.kt`, `test/.../GlassMappingTest.kt`, `AGENT_NOTES.md`.
 
 ---
 
@@ -283,3 +502,18 @@ Legend: FIXED / SKIP(reason). "Glass" = reachable in Glassmorphic theme.
   Library "+", Now Playing three-dot, a song overflow menu, a Settings ChoiceDialog, a bottom
   sheet, a confirm dialog.
 - No further code changes planned unless the build/test reveals an issue.
+
+## NOW PLAYING → ADD TO PLAYLIST (2026-11-24)
+- `ui/components/PlaylistPicker.kt` (new): `playlistPickRows(...)` merges local playlists with the
+  signed-in account's playlists and de-duplicates a mirrored playlist by its normalised browse id;
+  `PlaylistPickerDialog` renders the list (local rows accept any song, account-only rows accept
+  streamed YouTube songs only).
+- `NowPlayingBlend.kt`: the header three-dot (`PlayerMoreMenu`) now has "Add to playlist" at the top.
+  Picking a local row calls `AppViewModel.addToPlaylist` (Room write + existing account sync);
+  picking an account-only row calls the new `AppViewModel.addToAccountPlaylist` (direct
+  `YouTubeRepository.addPlaylistVideo`, queued in `youtube_sync_ops` when offline).
+- `NowPlayingScreen.kt` / `AuralisRoot.kt`: thread the playlist flows and callbacks into the Blend
+  screen; opening the picker refreshes the account playlist list (`refreshYouTubeLibrary`).
+- Tests: `PlaylistPickerTest` (6 cases: mirror de-duplication, VL-normalisation, local-only rows,
+  ordering, duplicate account ids, origin labels). Full suite: 369 tests, 1 pre-existing glass
+  failure (`GlassMappingTest`), unrelated.
