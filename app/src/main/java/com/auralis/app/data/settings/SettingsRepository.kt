@@ -41,10 +41,6 @@ internal fun mergeProviderOrder(stored: List<String>): List<String> {
     return kept + known.filter { it !in kept }
 }
 
-private val LEGACY_DEFAULT_LYRICS_PROVIDERS = setOf(
-    "LrcRed", "LRCLIB", "BetterLyrics", "KuGou", "YouTubeMusic",
-)
-
 private val LEGACY_DEFAULT_LYRICS_ORDER = listOf(
     "LrcRed", "BiniLyrics", "BetterLyrics", "BetterLyricsPortato", "LyricsPlus", "Unison",
     "KuGou", "LRCLIB", "YouTubeMusic", "YouTubeCaptions", "SimpMusic", "NetEase",
@@ -114,6 +110,7 @@ private object Keys {
     val liveSyncLastSyncedAt = longPreferencesKey("live_sync_last_synced_at")
     val lyricsProviderOrder = stringPreferencesKey("lyrics_provider_order")
     val lyricsProvidersEnabled = stringPreferencesKey("lyrics_providers_enabled")
+    val lyricsProviderDefaultsMigrated = booleanPreferencesKey("lyrics_provider_defaults_migrated")
     val metadataProvidersEnabled = stringPreferencesKey("metadata_providers_enabled")
     val preferSyncedLyrics = booleanPreferencesKey("prefer_synced_lyrics")
     val overwriteExistingTags = booleanPreferencesKey("overwrite_existing_tags")
@@ -208,6 +205,8 @@ class SettingsRepository(private val context: Context) {
             val current = prefs.toSettings()
             val updated = transform(current)
             if (updated.themeStyle != current.themeStyle) prefs[Keys.themeStyleUserSelected] = true
+            // Persist the one-time upgrade default merge. Later explicit deselections are preserved.
+            prefs[Keys.lyricsProviderDefaultsMigrated] = true
             prefs.write(updated)
         }
     }
@@ -314,7 +313,7 @@ class SettingsRepository(private val context: Context) {
                 .let { order -> if (order == LEGACY_DEFAULT_LYRICS_ORDER) d.lyricsProviderOrder else order }
                 .let(::mergeLyricsProviderOrder),
             lyricsProvidersEnabled = decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled).let { enabled ->
-                if (enabled == LEGACY_DEFAULT_LYRICS_PROVIDERS) d.lyricsProvidersEnabled else enabled
+                if (this[Keys.lyricsProviderDefaultsMigrated] == true) enabled else enabled + d.lyricsProvidersEnabled
             },
             metadataProvidersEnabled = decodeSet(this[Keys.metadataProvidersEnabled], d.metadataProvidersEnabled),
             preferSyncedLyrics = this[Keys.preferSyncedLyrics] ?: d.preferSyncedLyrics,
