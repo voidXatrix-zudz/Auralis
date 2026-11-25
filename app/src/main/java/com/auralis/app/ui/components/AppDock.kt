@@ -6,7 +6,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -79,8 +78,8 @@ import com.auralis.app.ui.glass.dockGlassMaterial
 import com.auralis.app.ui.glass.glassBubble
 import com.auralis.app.ui.glass.rememberReduceMotion
 import com.auralis.app.ui.nav.Tab
+import com.auralis.app.ui.theme.AuralisMotion
 import com.auralis.app.ui.theme.GlassTokens
-import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -297,7 +296,6 @@ fun AppDock(
     onNext: () -> Unit,
     onOpenNowPlaying: () -> Unit,
     modifier: Modifier = Modifier,
-    hazeState: HazeState? = null,
     onExpand: () -> Unit = {},
     /** Draws a small accent dot on the Settings slot while a release update is available. */
     showSettingsBadge: Boolean = false,
@@ -316,7 +314,6 @@ fun AppDock(
             onNext = onNext,
             onOpenNowPlaying = onOpenNowPlaying,
             modifier = modifier,
-            hazeState = hazeState,
             onExpand = onExpand,
             glass = glass,
             artworkUri = artworkUri,
@@ -362,7 +359,6 @@ fun AppDock(
             // nav pill during the morph. Exactly four children.
             DockNavPill(
                 style = style,
-                hazeState = hazeState,
                 glass = glass,
                 selected = selected,
                 labelAlpha = labelAlpha,
@@ -379,7 +375,6 @@ fun AppDock(
             )
             DockEdgeCircle(
                 style = style,
-                hazeState = hazeState,
                 glass = glass,
                 icon = Icons.Rounded.Home,
                 description = "Home",
@@ -393,7 +388,6 @@ fun AppDock(
             )
             DockEdgeCircle(
                 style = style,
-                hazeState = hazeState,
                 glass = glass,
                 icon = Icons.Rounded.Search,
                 description = "Search",
@@ -406,7 +400,6 @@ fun AppDock(
             )
             DockMiniPill(
                 style = style,
-                hazeState = hazeState,
                 glass = glass,
                 track = track,
                 playing = playing,
@@ -469,7 +462,6 @@ fun AppDock(
 @Composable
 private fun DockNavPill(
     style: DockStyle,
-    hazeState: HazeState?,
     glass: DockGlassStyle,
     selected: Tab?,
     labelAlpha: Float,
@@ -493,15 +485,14 @@ private fun DockNavPill(
     val items = DockNavItems
     val reduceMotion = rememberReduceMotion()
     val slideSpec: androidx.compose.animation.core.AnimationSpec<Float> =
-        if (reduceMotion) snap() else spring(dampingRatio = 0.62f, stiffness = 260f)
+        if (reduceMotion) snap() else AuralisMotion.springSlide
     val tintSpec: androidx.compose.animation.core.AnimationSpec<Color> =
-        if (reduceMotion) snap() else spring(dampingRatio = 0.75f, stiffness = 520f)
+        if (reduceMotion) snap() else AuralisMotion.springColor
 
     Box(
         modifier
             .dockSurface(
                 style = style,
-                hazeState = hazeState,
                 glass = glass,
                 shape = pillShape,
                 cornerRadius = 32.dp,
@@ -516,12 +507,12 @@ private fun DockNavPill(
                     val interaction = remember { MutableInteractionSource() }
                     val tint by animateColorAsState(
                         targetValue = if (active) activeTint else unselected,
-                        animationSpec = tween(180),
+                        animationSpec = AuralisMotion.tweenCreamy(AuralisMotion.Fast),
                         label = "dockSlotTint",
                     )
                     val capsule by animateFloatAsState(
                         targetValue = if (active) 1f else 0f,
-                        animationSpec = tween(180),
+                        animationSpec = AuralisMotion.tweenCreamy(AuralisMotion.Fast),
                         label = "dockCapsule",
                     )
                     Box(
@@ -678,7 +669,6 @@ private fun DockSlotContent(item: DockNavItem, active: Boolean, tint: Color, lab
 @Composable
 private fun DockEdgeCircle(
     style: DockStyle,
-    hazeState: HazeState?,
     glass: DockGlassStyle,
     icon: ImageVector,
     description: String,
@@ -702,7 +692,6 @@ private fun DockEdgeCircle(
             }
             .dockControlCircle(
                 style = style,
-                hazeState = hazeState,
                 glass = glass,
                 solidFill = MaterialTheme.colorScheme.surface,
             )
@@ -731,7 +720,6 @@ private fun DockEdgeCircle(
 @Composable
 private fun DockMiniPill(
     style: DockStyle,
-    hazeState: HazeState?,
     glass: DockGlassStyle,
     track: Track?,
     playing: Boolean,
@@ -752,7 +740,6 @@ private fun DockMiniPill(
             .fillMaxSize()
             .dockSurface(
                 style = style,
-                hazeState = hazeState,
                 glass = glass,
                 shape = shape,
             )
@@ -803,7 +790,6 @@ private fun DockMiniPill(
             }
             DockPlayButton(
                 style = style,
-                hazeState = hazeState,
                 glass = glass,
                 playing = playing,
                 onToggle = onTogglePlay,
@@ -821,7 +807,6 @@ private fun DockMiniPill(
                 if (nextAlpha > 0.01f) {
                     DockNextButton(
                         style = style,
-                        hazeState = hazeState,
                         glass = glass,
                         onClick = onNext,
                     )
@@ -835,7 +820,6 @@ private fun DockMiniPill(
 @Composable
 private fun DockPlayButton(
     style: DockStyle,
-    hazeState: HazeState?,
     glass: DockGlassStyle,
     playing: Boolean,
     onToggle: () -> Unit,
@@ -860,7 +844,6 @@ private fun DockPlayButton(
                 .size(if (style == DockStyle.GLASS) DockDimens.MiniButtonSize else 40.dp)
                 .dockControlCircle(
                     style = style,
-                    hazeState = hazeState,
                     glass = glass,
                     solidFill = MaterialTheme.colorScheme.primary,
                     blurBackdrop = false,
@@ -881,7 +864,6 @@ private fun DockPlayButton(
 @Composable
 private fun DockNextButton(
     style: DockStyle,
-    hazeState: HazeState?,
     glass: DockGlassStyle,
     onClick: () -> Unit,
 ) {
@@ -904,7 +886,6 @@ private fun DockNextButton(
                 .size(if (style == DockStyle.GLASS) DockDimens.MiniButtonSize else 40.dp)
                 .dockControlCircle(
                     style = style,
-                    hazeState = hazeState,
                     glass = glass,
                     solidFill = MaterialTheme.colorScheme.primary,
                     blurBackdrop = false,
@@ -928,19 +909,15 @@ private fun DockNextButton(
 @Composable
 private fun Modifier.dockSurface(
     style: DockStyle,
-    hazeState: HazeState?,
     glass: DockGlassStyle,
     shape: Shape,
     solidFill: Color? = null,
     cornerRadius: Dp = 32.dp,
-    refraction: Boolean = false,
 ): Modifier = dockGlassMaterial(
     style = style,
     shape = shape,
-    hazeState = hazeState,
     solidFill = solidFill,
     cornerRadius = cornerRadius,
-    refraction = refraction && glass.refractionEnabled,
 )
 
 /** Small circular dock control. Dock opacity drives its fill; never Glass clarity. */
@@ -948,7 +925,6 @@ private fun Modifier.dockSurface(
 @Suppress("UNUSED_PARAMETER")
 private fun Modifier.dockControlCircle(
     style: DockStyle,
-    hazeState: HazeState?,
     glass: DockGlassStyle,
     solidFill: Color,
     /**
@@ -959,10 +935,8 @@ private fun Modifier.dockControlCircle(
 ): Modifier = dockGlassMaterial(
     style = style,
     shape = CircleShape,
-    hazeState = hazeState,
     solidFill = solidFill,
     cornerRadius = 40.dp,
-    refraction = false,
     blurBackdrop = blurBackdrop,
 )
 
@@ -989,7 +963,7 @@ private fun pressScale(interaction: MutableInteractionSource): Float {
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.95f else 1f,
-        animationSpec = spring(dampingRatio = 0.80f, stiffness = 480f),
+        animationSpec = AuralisMotion.springPress,
         label = "dockPress",
     )
     return scale
@@ -1008,7 +982,6 @@ private fun GlassDock(
     onNext: () -> Unit,
     onOpenNowPlaying: () -> Unit,
     modifier: Modifier,
-    hazeState: HazeState?,
     onExpand: () -> Unit,
     glass: DockGlassStyle,
     artworkUri: Any? = null,
@@ -1034,7 +1007,6 @@ private fun GlassDock(
             // it slides over the fading circles.
             GlassNavPill(
                 glass = surfaceGlass,
-                hazeState = hazeState,
                 selected = selected,
                 enabled = p < 0.5f,
                 onSelectTab = onSelectTab,
@@ -1054,7 +1026,6 @@ private fun GlassDock(
                 enabled = true,
                 onClick = { onSelectTab(Tab.SEARCH) },
                 glass = surfaceGlass,
-                hazeState = hazeState,
             )
             GlassCircleButton(
                 icon = activeTab.dockIcon(),
@@ -1064,12 +1035,10 @@ private fun GlassDock(
                 enabled = p >= 0.5f,
                 onClick = onExpand,
                 glass = surfaceGlass,
-                hazeState = hazeState,
                 blurBackdrop = circleIn > 0.01f,
             )
             DockMiniPill(
                 style = DockStyle.GLASS,
-                hazeState = hazeState,
                 glass = surfaceGlass,
                 track = track,
                 playing = playing,
@@ -1126,7 +1095,6 @@ private fun GlassDock(
 @Composable
 private fun GlassNavPill(
     glass: DockGlassStyle,
-    hazeState: HazeState?,
     selected: Tab?,
     enabled: Boolean,
     onSelectTab: (Tab) -> Unit,
@@ -1136,13 +1104,12 @@ private fun GlassNavPill(
     val selectedIndex = GlassDockItems.indexOfFirst { it.tab == selected }
     val reduceMotion = rememberReduceMotion()
     val slideSpec: androidx.compose.animation.core.AnimationSpec<Float> =
-        if (reduceMotion) snap() else spring(dampingRatio = 0.72f, stiffness = 300f)
+        if (reduceMotion) snap() else AuralisMotion.springSlide
 
     Box(
         modifier
             .dockSurface(
                 style = DockStyle.GLASS,
-                hazeState = hazeState,
                 glass = glass,
                 shape = pillShape,
                 cornerRadius = 32.dp,
@@ -1184,13 +1151,13 @@ private fun GlassNavPill(
                     val interaction = remember { MutableInteractionSource() }
                     val press = pressScale(interaction)
                     val tint by animateColorAsState(
-                        targetValue = if (active) GlassTokens.Cream else GlassTokens.Cream55,
-                        animationSpec = spring(dampingRatio = 0.80f, stiffness = 520f),
+                        targetValue = if (active) GlassTokens.Cream else GlassTokens.Cream.copy(alpha = 0.70f),
+                        animationSpec = AuralisMotion.springColor,
                         label = "glassSlotTint",
                     )
                     val contentScale by animateFloatAsState(
                         targetValue = if (active) 1f else 0.90f,
-                        animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+                        animationSpec = AuralisMotion.springMedium,
                         label = "glassSlotScale",
                     )
                     Box(
@@ -1252,7 +1219,6 @@ private fun GlassCircleButton(
     enabled: Boolean,
     onClick: () -> Unit,
     glass: DockGlassStyle,
-    hazeState: HazeState?,
     /** False while the circle is invisible/fading: no point sampling the backdrop for 0 alpha. */
     blurBackdrop: Boolean = true,
 ) {
@@ -1269,7 +1235,6 @@ private fun GlassCircleButton(
             }
             .dockControlCircle(
                 style = DockStyle.GLASS,
-                hazeState = hazeState,
                 glass = glass,
                 solidFill = MaterialTheme.colorScheme.surface,
                 blurBackdrop = blurBackdrop,

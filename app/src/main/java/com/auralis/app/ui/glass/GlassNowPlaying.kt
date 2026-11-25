@@ -72,8 +72,6 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Timer
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -138,11 +136,9 @@ import com.auralis.app.ui.components.PlayerBackgroundImage
 import com.auralis.app.ui.components.QualityBadgeContent
 import com.auralis.app.ui.components.qualityBadgeContent
 import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
-import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.screens.LiquidLyricsScreen
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LyricsTypography
-import dev.chrisbanes.haze.hazeSource
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -336,27 +332,11 @@ fun GlassNowPlayingScreen(
                 )
             }
             else -> {
-                // The chosen player background is the full player's Haze source. It is a sibling
-                // of the scrolling column, so every glass panel over it gets a real backdrop
-                // blur (a source that is an ancestor would be excluded by Haze).
+                // STEP 3: the chosen player background is drawn INSIDE the full player's recorded
+                // layer (the screen root carries Modifier.layerBackdrop), so every glass panel over
+                // it samples a real blurred backdrop with no separate capture state.
                 if (settings.playerBackground != PlayerBackground.NONE) {
-                    val hazeState = LocalHazeState.current
-                    // The full-screen capture is an expensive extra, so it follows Live blur.
-                    val blurEnabled = LocalPerformanceProfile.current.blurEnabled &&
-                        Build.VERSION.SDK_INT >= 31
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (hazeState != null && blurEnabled) {
-                                    Modifier.hazeSource(hazeState)
-                                } else {
-                                    Modifier
-                                },
-                            ),
-                    ) {
-                        PlayerBackgroundImage(settings.playerBackground)
-                    }
+                    PlayerBackgroundImage(settings.playerBackground, Modifier.fillMaxSize())
                 }
                 Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
                     Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -498,7 +478,7 @@ fun GlassNowPlayingScreen(
                                                 tint = GlassTokens.Cream,
                                                 size = 36.dp,
                                             )
-                                            DropdownMenu(expanded = lyricsMenuOpen, onDismissRequest = { lyricsMenuOpen = false }) {
+                                            GlassMenu(expanded = lyricsMenuOpen, onDismissRequest = { lyricsMenuOpen = false }) {
                                                 DropdownMenuItem(
                                                     text = { Text("Paste lyrics") },
                                                     leadingIcon = { Icon(Icons.Rounded.ContentPaste, null) },
@@ -688,6 +668,7 @@ fun GlassNowPlayingScreen(
         AudioInfoSheet(
             track = track,
             settings = settings,
+            resolvedStream = playback.resolvedStream,
             onDismiss = { audioInfoOpen = false },
             onOpenAnalysis = {
                 audioInfoOpen = false
@@ -696,7 +677,7 @@ fun GlassNowPlayingScreen(
         )
     }
 
-    if (addSongsOpen) AlertDialog(
+    if (addSongsOpen) GlassMaterialAlertDialog(
         onDismissRequest = { addSongsOpen = false },
         title = { Text("Add songs to queue") },
         text = {
@@ -719,7 +700,7 @@ fun GlassNowPlayingScreen(
         confirmButton = { TextButton(onClick = { addSongsOpen = false }) { Text("Done") } },
     )
 
-    if (sleepTimerOpen) AlertDialog(
+    if (sleepTimerOpen) GlassMaterialAlertDialog(
         onDismissRequest = { sleepTimerOpen = false },
         title = { Text("Sleep timer") },
         text = {
@@ -753,7 +734,7 @@ fun GlassNowPlayingScreen(
         },
     )
 
-    if (pasteOpen) AlertDialog(
+    if (pasteOpen) GlassMaterialAlertDialog(
         onDismissRequest = { pasteOpen = false },
         title = { Text("Paste lyrics") },
         text = {

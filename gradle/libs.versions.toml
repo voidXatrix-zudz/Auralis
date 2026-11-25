@@ -19,7 +19,6 @@ media3 = "1.7.1"
 documentfile = "1.1.0"
 coil = "3.2.0"
 junit = "4.13.2"
-haze = "1.6.7"
 okhttp = "4.12.0"
 kotlinxSerialization = "1.8.1"
 # Pinned YouTube extractor. When YouTube breaks stream extraction, bump only this value.
@@ -68,8 +67,6 @@ media3-common = { module = "androidx.media3:media3-common", version.ref = "media
 
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
-
-haze = { module = "dev.chrisbanes.haze:haze", version.ref = "haze" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }

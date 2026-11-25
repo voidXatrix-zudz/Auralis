@@ -8,7 +8,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import com.auralis.app.ui.theme.GlassTokens
-import dev.chrisbanes.haze.HazeState
 
 /**
  * BRIDGE (Steps 2-3): the old 0..1 view of [GlassConfig] consumed by the Haze pipeline that Steps
@@ -48,16 +47,14 @@ class GlassDragState {
 val LocalGlassDrag = staticCompositionLocalOf { GlassDragState() }
 
 /**
- * The one Haze capture state. Provided at the root so a surface never has to thread a parameter
- * (or silently pass `null`, which is what previously disabled blur on every card).
+ * Which family of glass a surface belongs to. This is the ONLY scoping switch in the pipeline.
  */
-val LocalHazeState = staticCompositionLocalOf<HazeState?> { null }
-
-/** Which family of glass a surface belongs to. This is the ONLY scoping switch in the pipeline. */
 enum class GlassKind { Dock, Surface }
 
 /**
- * BRIDGE mapping for the Haze pipeline that Steps 4-6 replace.
+ * BRIDGE mapping for surfaces and separate-window overlays (Step 6). The live in-composition glass
+ * now flows through the one `auralisGlass` modifier and [GlassConfigMappings]; this object remains
+ * the single home for the fixed dock/window scrim maths the overlay windows still read.
  *
  * Direction, per the controls' intent:
  *  - higher dock opacity   -> denser dock fill (0 = clear, 1 = opaque solid);
@@ -88,9 +85,6 @@ object GlassMapping {
 
     /** API < 31 or blur disabled: denser fill so the surface still reads as intentional glass. */
     const val NO_BLUR_MIN_FILL = 0.20f
-
-    /** Blur radius at which the Haze input-scale cost factor bottoms out. */
-    private const val HAZE_COST_REFERENCE_DP = 28f
 
     /** Scrim behind a dialog/sheet window: the app content must not mix with dialog text. */
     const val WINDOW_SCRIM = 0.86f
@@ -154,16 +148,8 @@ object GlassMapping {
         return lerpColor(GlassTokens.Cream, DOCK_SOLID, f).copy(alpha = lerp(0.10f, 1f, f))
     }
 
-    /** Additive brightness lift applied to the blurred layer (Haze tint, no AGSL required). */
+    /** Additive brightness lift applied to the blurred layer (tint, no AGSL required). */
     const val DOCK_BRIGHTNESS = 0.04f
-
-    /**
-     * Haze cost factor: a larger blur radius is sampled at a lower input scale, 1/(1+radius/28),
-     * clamped to [0.25, 1]. Applied as [dev.chrisbanes.haze.HazeInputScale.Fixed]; it changes render
-     * cost only, never the visible radius.
-     */
-    fun hazeInputScale(radiusDp: Float): Float =
-        (1f / (1f + radiusDp.coerceAtLeast(0f) / HAZE_COST_REFERENCE_DP)).coerceIn(0.25f, 1f)
 
     fun surfaceFillAlpha(clarity: Float): Float =
         lerp(SURFACE_FILL_MAX, SURFACE_FILL_MIN, clarity).coerceIn(SURFACE_FILL_MIN, SURFACE_FILL_MAX)

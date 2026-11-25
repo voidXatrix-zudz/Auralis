@@ -117,9 +117,14 @@ import com.auralis.app.ui.glass.GlassMapping
 import com.auralis.app.ui.glass.GlassSettings
 import com.auralis.app.ui.glass.LocalDockGlassStyle
 import com.auralis.app.ui.glass.LocalGlassBlurAllowed
+import com.auralis.app.glass.backdrop.backdrops.LayerBackdrop
+import com.auralis.app.glass.backdrop.backdrops.layerBackdrop
+import com.auralis.app.glass.backdrop.backdrops.rememberLayerBackdrop
+import com.auralis.app.ui.glass.LocalAppBackdrop
 import com.auralis.app.ui.glass.LocalGlassConfig
 import com.auralis.app.ui.glass.LocalGlassDrag
 import com.auralis.app.ui.glass.LocalGlassSettings
+import com.auralis.app.ui.glass.OpaqueLayerOnDraw
 import com.auralis.app.ui.glass.dockGlassMaterial
 import com.auralis.app.ui.glass.glassSurface
 import com.auralis.app.ui.glass.resolveDockGlass
@@ -128,13 +133,10 @@ import com.auralis.app.ui.performance.LocalDeviceConditions
 import com.auralis.app.ui.performance.LocalPerformanceMode
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
-import com.auralis.app.ui.performance.VisualPerformanceTier
 import com.auralis.app.ui.theme.Accents
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.auralisSliderColors
 import com.auralis.app.ui.theme.auralisSwitchColors
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeSource
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
@@ -821,14 +823,14 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
     val previewDock = remember(settings, liveConfig, profile, performanceReason) {
         resolveDockGlass(settings, liveGlass, profile, performanceReason)
     }
-    // The one HazeState the preview's source and every preview surface share. Hoisted out of the
-    // preview so the DEBUG diagnostics card can read the very same state the preview renders with.
-    val previewHaze = remember { HazeState() }
+    // The one backdrop the preview's source and every preview surface share. Hoisted out of the
+    // preview so the DEBUG diagnostics card can read the very same recorded layer the preview uses.
+    val previewBackdrop = rememberLayerBackdrop(onDraw = OpaqueLayerOnDraw)
     SettingsPage(
         "Appearance",
         onBack,
         pinnedHeader = if (isGlass) {
-            { AppearancePreviewHeader(liveGlass, previewDock, previewHaze) }
+            { AppearancePreviewHeader(liveGlass, previewDock, previewBackdrop) }
         } else null,
     ) {
         item { SettingsSectionLabel("Theme style") }
@@ -900,7 +902,7 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
             }
             if (BuildConfig.DEBUG) {
                 item {
-                    GlassDebugPanel(dock = previewDock, haze = previewHaze)
+                    GlassDebugPanel(dock = previewDock, backdrop = previewBackdrop)
                 }
             }
         }
@@ -912,13 +914,13 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
  * same live drag-aware values as the sliders, so a tick repaints it immediately.
  */
 @Composable
-private fun AppearancePreviewHeader(glass: GlassSettings, dock: DockGlassStyle, haze: HazeState) {
+private fun AppearancePreviewHeader(glass: GlassSettings, dock: DockGlassStyle, backdrop: LayerBackdrop) {
     Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
         SettingsGroupCard {
             AppearanceGlassPreview(
                 glass = glass,
                 dock = dock,
-                haze = haze,
+                backdrop = backdrop,
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
             )
         }
@@ -932,22 +934,20 @@ private fun AppearancePreviewHeader(glass: GlassSettings, dock: DockGlassStyle, 
 }
 
 /**
- * DEBUG-only, READ-ONLY diagnostics for the dock glass path. It answers "why is there no blur?"
- * without a logcat, and doubles as the Live-blur proof: the policy line is the same
- * [GlassBlurPolicy] the dock renders with. The caller's `BuildConfig.DEBUG` check removes the whole
- * card in release builds.
+ * DEBUG-only, READ-ONLY diagnostics for the glass path. It answers "why is there no blur?"
+ * without a logcat, and doubles as the wiring proof: the policy line is the same
+ * [GlassBlurPolicy] the dock renders with, and the backdrop probe reads the preview's own
+ * recorded layer. The caller's `BuildConfig.DEBUG` check removes the whole card in release builds.
  */
 @Composable
 private fun GlassDebugPanel(
     dock: DockGlassStyle,
-    haze: HazeState,
+    backdrop: LayerBackdrop,
 ) {
     val profile = LocalPerformanceProfile.current
     val mode = LocalPerformanceMode.current
     val conditions = LocalDeviceConditions.current
     var open by remember { mutableStateOf(false) }
-    val costFactor = if (profile.tier == VisualPerformanceTier.MEDIUM) 0.8f else 1f
-    val inputScale = (GlassMapping.hazeInputScale(dock.blurDp) * costFactor).coerceIn(0.25f, 1f)
     // The resolved, live decision (this is what the dock actually renders), not the persisted one.
     val blurAllowed = dock.blurEnabled
     SettingsGroupCard {
@@ -995,27 +995,16 @@ private fun GlassDebugPanel(
                 DebugLine(
                     "blur policy ${onOff(blurAllowed)} · " +
                         "dock blur ${"%.0f".format(dock.blurDp)}dp · " +
-                        "haze scale ${"%.2f".format(inputScale)}",
+                        "lens ${onOff(dock.refractionEnabled)}",
                 )
                 DebugLine(
                     "fill ${"%.2f".format(dock.fillAlpha)} · " +
                         "opacity ${(dock.opacity * 100).roundToInt()}%",
                 )
-                // Haze probe. Reads the preview's OWN source/effect state (public HazeState API).
-                // "src 0" = no source area registered, so Haze draws nothing anywhere. "src 1"
-                // with a non-zero "layer" means Haze holds the captured pixels, so any missing
-                // blur is platform-side (RenderEffect), not the wiring.
-                val src = haze.areas.firstOrNull()
-                val withLayer = haze.areas.count { it.contentLayer != null }
-                DebugLine(
-                    "haze src ${haze.areas.size} · withLayer $withLayer · " +
-                        "z ${"%.0f".format(src?.zIndex ?: 0f)}",
-                )
-                DebugLine(
-                    "src ${dim(src?.size?.width)}×${dim(src?.size?.height)} · " +
-                        "layer ${src?.contentLayer?.size?.width ?: -1}×" +
-                        "${src?.contentLayer?.size?.height ?: -1}",
-                )
+                // Backdrop probe: a non-zero recorded layer means the preview is recording, so any
+                // missing blur is platform-side, not the modifier wiring.
+                val layerSize = backdrop.graphicsLayer.size
+                DebugLine("backdrop layer ${layerSize.width}×${layerSize.height}")
             }
         }
     }
@@ -1033,22 +1022,17 @@ private fun DebugLine(text: String) {
 
 private fun onOff(value: Boolean): String = if (value) "ON" else "OFF"
 
-/** NaN-safe dimension for the Haze probe (an unplaced area reports an unspecified size). */
-private fun dim(value: Float?): Int =
-    if (value == null || value.isNaN()) -1 else value.roundToInt()
-
 /**
  * The Appearance preview. It is not a mock: the bar and the circle both run the production
- * [dockGlassMaterial], and the small tile runs the production [glassSurface] surface path, so
- * "Dock opacity", "Blur strength", "Glass clarity" and "Glass outlines" all move something
- * real. The colourful backdrop exists purely so blur, colour bleed, saturation and the rim are
- * visible against the black preview frame.
+ * [dockGlassMaterial], and the small tile runs the production [glassSurface] surface path, over a
+ * private backdrop recorded from the colourful strip, so "Dock transparency", "Glass clarity" and
+ * "Glass outlines" all move something real.
  */
 @Composable
 private fun AppearanceGlassPreview(
     glass: GlassSettings,
     dock: DockGlassStyle,
-    haze: HazeState,
+    backdrop: LayerBackdrop,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -1057,10 +1041,12 @@ private fun AppearanceGlassPreview(
             .clip(RoundedCornerShape(20.dp))
             .background(GlassTokens.Canvas),
     ) {
+        // The recorded source: the colourful strip every preview surface samples. It lives in its
+        // own node so the glass pills drawn after it read a finished layer, never themselves.
         Box(
             Modifier
                 .matchParentSize()
-                .hazeSource(haze)
+                .layerBackdrop(backdrop)
                 .background(
                     Brush.linearGradient(
                         listOf(Color(0xFF2F4BFF), Color(0xFF7A1FFF), Color(0xFFFF7A18)),
@@ -1112,9 +1098,9 @@ private fun AppearanceGlassPreview(
             )
         }
         // DEBUG probe: a copy of the stripes blurred by the PLATFORM (Compose blur → a
-        // RenderEffect), never by Haze. If this smears while the dock pill stays sharp, the
-        // platform can blur and the fault is in the Haze wiring; if this is sharp too, the
-        // device itself is not rendering backdrop blur.
+        // RenderEffect). If this smears while the dock pill stays sharp, the platform can blur and
+        // the fault is in the backdrop wiring; if this is sharp too, the device itself is not
+        // rendering backdrop blur.
         if (BuildConfig.DEBUG) {
             Box(
                 Modifier
@@ -1150,6 +1136,8 @@ private fun AppearanceGlassPreview(
             LocalDockGlassStyle provides dock,
             // The preview must blur iff the real dock blurs, so it reads the same resolved policy.
             LocalGlassBlurAllowed provides dock.blurEnabled,
+            // Point the production glass modifier at the preview's own recorded strip.
+            LocalAppBackdrop provides backdrop,
         ) {
             // Non-dock surface path: Glass clarity drives this fill and hairline.
             Row(
@@ -1157,7 +1145,7 @@ private fun AppearanceGlassPreview(
                     .align(Alignment.TopStart)
                     .padding(start = 14.dp, top = 14.dp)
                     .height(32.dp)
-                    .glassSurface(GlassKind.Surface, CircleShape, hazeState = haze)
+                    .glassSurface(GlassKind.Surface, CircleShape)
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1170,7 +1158,7 @@ private fun AppearanceGlassPreview(
                     .padding(start = 12.dp, end = 12.dp, bottom = 14.dp)
                     .fillMaxWidth()
                     .height(50.dp)
-                    .dockGlassMaterial(DockStyle.GLASS, CircleShape, hazeState = haze, cornerRadius = 25.dp)
+                    .dockGlassMaterial(DockStyle.GLASS, CircleShape, cornerRadius = 25.dp)
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -1190,7 +1178,6 @@ private fun AppearanceGlassPreview(
                     .dockGlassMaterial(
                         DockStyle.GLASS,
                         CircleShape,
-                        hazeState = haze,
                         cornerRadius = 17.dp,
                         blurBackdrop = false,
                     ),

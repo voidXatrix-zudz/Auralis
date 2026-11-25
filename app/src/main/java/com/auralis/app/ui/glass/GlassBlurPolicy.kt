@@ -3,20 +3,18 @@ package com.auralis.app.ui.glass
 import android.os.Build
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.auralis.app.domain.model.AppSettings
-import com.auralis.app.domain.model.PerformanceMode
 
 /**
- * The ONE rule that decides whether Live backdrop blur may run.
+ * The ONE rule that decides whether backdrop blur may run.
  *
  * Blur is a first-class part of the Glassmorphism look, so it must NOT depend on performance
  * heuristics. Device RAM, core count, heap class, Battery Saver and thermal state never decide
- * whether the glass blurs: they only change how expensive the blur is (Haze input scale, shadow
- * scale, refraction). Automatic NEVER disables blur.
+ * whether the glass blurs: at every tier the content behind the glass is blurred (Low uses a
+ * larger, cheaper radius). Automatic NEVER disables blur.
  *
  * Blur is disallowed only when:
- *  - the platform cannot blur (API < 31), or
- *  - the user explicitly turned on "Reduce blur and effects", or
- *  - the user manually selected the Low performance mode.
+ *  - the platform cannot blur-plus-sample a recorded layer (API < 31), or
+ *  - the user explicitly turned on "Reduce blur and effects".
  *
  * The old "Blur strength" slider is gone (STEP 2.6): blur is a fixed constant, so it is no longer
  * part of this decision.
@@ -26,9 +24,7 @@ import com.auralis.app.domain.model.PerformanceMode
  */
 object GlassBlurPolicy {
     fun allowed(settings: AppSettings, sdkInt: Int = Build.VERSION.SDK_INT): Boolean =
-        sdkInt >= 31 &&
-            !settings.reduceBlurAndEffects &&
-            settings.performanceProfile != PerformanceMode.LOW
+        sdkInt >= 31 && !settings.reduceBlurAndEffects
 
     /**
      * Whether the single backdrop capture layer may exist at all. Capturing costs nothing while no
@@ -41,6 +37,6 @@ object GlassBlurPolicy {
 /**
  * Pre-computed [GlassBlurPolicy.allowed] value for the current composition, provided once at the
  * app root. Defaults to `false` so a surface rendered without a provider simply draws no blur
- * rather than silently sampling a Haze layer.
+ * rather than silently sampling a backdrop layer.
  */
 val LocalGlassBlurAllowed = staticCompositionLocalOf { false }

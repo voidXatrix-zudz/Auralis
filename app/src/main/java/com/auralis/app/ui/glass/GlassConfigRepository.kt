@@ -3,12 +3,14 @@ package com.auralis.app.ui.glass
 import android.os.Build
 import com.auralis.app.data.settings.SettingsRepository
 import com.auralis.app.domain.model.AppSettings
+import com.auralis.app.logging.AppLog
 import com.auralis.app.ui.performance.VisualPerformanceTier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -33,6 +35,17 @@ class GlassConfigRepository(
     val config: StateFlow<GlassConfig> =
         combine(settings, tier) { stored, resolvedTier -> stored.toGlassConfig(resolvedTier) }
             .distinctUntilChanged()
+            // STEP 10.1: ONE Logs line per GlassConfig change, so the in-app Logs screen shows
+            // exactly what the renderer was told without an attached debugger.
+            .onEach { config ->
+                AppLog.i(
+                    "Glass",
+                    "GlassConfig dock=${config.dockTransparency} clarity=${config.glassClarity} " +
+                        "outlines=${if (config.outlinesEnabled) "on" else "off"} " +
+                        "perf=${config.performance.name} lens=${config.hasLens} " +
+                        "blurDp=${GlassMappings.blurDp(config.tier).toInt()}",
+                )
+            }
             .stateIn(
                 scope = scope,
                 started = SharingStarted.Eagerly,
