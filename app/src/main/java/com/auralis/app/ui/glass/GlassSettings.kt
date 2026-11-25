@@ -1,6 +1,5 @@
 package com.auralis.app.ui.glass
 
-import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -50,7 +49,6 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -385,31 +383,17 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
     val dockGlass = LocalDockGlassStyle.current
     val profile = LocalPerformanceProfile.current
     val performanceReason = LocalPerformanceReason.current
+    // STEP 2: the persisted GlassConfig is the source of truth; a slider drag writes a transient
+    // copy so the preview and the real surfaces move on the same frame.
+    val persistedConfig = LocalGlassConfig.current
     val drag = LocalGlassDrag.current
-    val persisted = GlassSettings.fromPercent(
-        settings.dockGlassOpacity,
-        settings.glassClarity,
-        settings.dockGlassBlur,
-    )
-    // Drag-time values are live; the persisted copy is the fallback.
-    val live = drag.value ?: persisted
-    // 0..1 snapped to whole percent, so the transient value is bit-identical to what gets saved.
-    fun snapped(value: Float): Float = (value.coerceIn(0f, 1f) * 100f).roundToInt() / 100f
-    fun preview(transform: (GlassSettings) -> GlassSettings) {
-        drag.value = transform(drag.value ?: persisted)
+    val liveConfig = drag.value ?: persistedConfig
+    fun percent(value: Float): Int = (value.coerceIn(0f, 1f) * 100f).roundToInt()
+    fun preview(transform: (GlassConfig) -> GlassConfig) {
+        drag.value = transform(drag.value ?: persistedConfig)
     }
-    fun commit() {
-        val next = drag.value ?: persisted
-        onUpdate {
-            it.copy(
-                dockGlassOpacity = GlassMapping.percentToInt(next.dockOpacity),
-                glassClarity = GlassMapping.percentToInt(next.glassClarity),
-                dockGlassBlur = GlassMapping.percentToInt(next.blurStrength),
-            )
-        }
-    }
-    val clarityPercent = (live.glassClarity * 100).roundToInt()
-    val dockPercent = (live.dockOpacity * 100).roundToInt()
+    val clarityPercent = liveConfig.glassClarity.coerceIn(0, 100)
+    val dockPercent = liveConfig.dockTransparency.coerceIn(0, 100)
 
     SegmentedRow(
         icon = Icons.Rounded.Palette,
@@ -452,9 +436,9 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
             Text("$clarityPercent%", style = MaterialTheme.typography.labelMedium, color = GlassTokens.SilverMuted)
         }
         Slider(
-            value = live.glassClarity,
-            onValueChange = { value -> preview { it.copy(glassClarity = snapped(value)) } },
-            onValueChangeFinished = { commit() },
+            value = clarityPercent / 100f,
+            onValueChange = { value -> preview { it.copy(glassClarity = percent(value)) } },
+            onValueChangeFinished = { onUpdate { it.copy(glassClarity = clarityPercent) } },
             colors = violetSliderColors(),
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -464,8 +448,8 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
                     label,
                     clarityPercent == value,
                     {
-                        preview { it.copy(glassClarity = value / 100f) }
-                        commit()
+                        drag.value = null
+                        onUpdate { it.copy(glassClarity = value) }
                     },
                     blur = false,
                 )
@@ -477,9 +461,9 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         Row(verticalAlignment = Alignment.CenterVertically) {
             TintedIcon(Icons.Rounded.Palette)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text("Dock opacity", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                Text("Dock transparency", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                 Text(
-                    "Dock opacity: dock only",
+                    "Dock transparency: dock only",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -487,9 +471,9 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
             Text("$dockPercent%", style = MaterialTheme.typography.labelMedium, color = GlassTokens.SilverMuted)
         }
         Slider(
-            value = live.dockOpacity,
-            onValueChange = { value -> preview { it.copy(dockOpacity = snapped(value)) } },
-            onValueChangeFinished = { commit() },
+            value = dockPercent / 100f,
+            onValueChange = { value -> preview { it.copy(dockTransparency = percent(value)) } },
+            onValueChangeFinished = { onUpdate { it.copy(dockGlassOpacity = dockPercent) } },
             colors = violetSliderColors(),
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -499,42 +483,6 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         }
     }
     Divider()
-    val blurSupported = Build.VERSION.SDK_INT >= 31
-    ToggleRow(
-        icon = Icons.Rounded.AutoAwesome,
-        title = "Live blur",
-        description = if (blurSupported) "Live blur: blur strength on every glass surface" else "Needs Android 12 or newer",
-        checked = live.blurStrength > 0f && blurSupported,
-        onCheckedChange = { enabled ->
-            if (blurSupported) {
-                preview { it.copy(blurStrength = if (enabled) GlassMapping.DEFAULT_BLUR_STRENGTH else 0f) }
-                commit()
-            }
-        },
-        showDivider = false,
-    )
-    Column(Modifier.padding(horizontal = 14.dp)) {
-        Slider(
-            value = live.blurStrength,
-            onValueChange = { value -> preview { it.copy(blurStrength = snapped(value)) } },
-            onValueChangeFinished = { commit() },
-            enabled = blurSupported,
-            colors = violetSliderColors(),
-            modifier = Modifier.padding(top = 0.dp),
-        )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Off", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                "${(live.blurStrength * GlassMapping.MAX_BLUR_DP).roundToInt()}dp chosen · ${dockGlass.blurDp.roundToInt()}dp active",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        val hint = dockGlass.limitedReason
-        if (hint != null) {
-            InfoNote(hint)
-        }
-    }
     Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
         DockGlassPreview(
             fillAlpha = dockGlass.fillAlpha,
@@ -542,6 +490,10 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
             outlines = dockGlass.outlines,
             modifier = Modifier.fillMaxWidth(),
         )
+        val hint = dockGlass.limitedReason
+        if (hint != null) {
+            InfoNote(hint)
+        }
     }
     Divider()
     Row(
@@ -553,9 +505,8 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
                     drag.value = null
                     onUpdate {
                         it.copy(
-                            dockGlassOpacity = GlassMapping.DEFAULT_DOCK_OPACITY_PERCENT,
-                            glassClarity = GlassMapping.DEFAULT_GLASS_CLARITY_PERCENT,
-                            dockGlassBlur = GlassMapping.DEFAULT_BLUR_PERCENT,
+                            dockGlassOpacity = GlassConfig.DEFAULT_DOCK_TRANSPARENCY,
+                            glassClarity = GlassConfig.DEFAULT_GLASS_CLARITY,
                         )
                     }
                 },
@@ -572,7 +523,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         )
         Spacer(Modifier.weight(1f))
         Text(
-            "${GlassMapping.DEFAULT_DOCK_OPACITY_PERCENT}% · ${GlassMapping.DEFAULT_GLASS_CLARITY_PERCENT}% · ${GlassMapping.DEFAULT_BLUR_PERCENT}%",
+            "${GlassConfig.DEFAULT_DOCK_TRANSPARENCY}% · ${GlassConfig.DEFAULT_GLASS_CLARITY}%",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -582,7 +533,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         icon = Icons.Rounded.AutoAwesome,
         title = "Glass outlines",
         description = "1dp specular hairline around glass surfaces",
-        checked = settings.glassOutlines,
+        checked = liveConfig.outlinesEnabled,
         onCheckedChange = { enabled -> onUpdate { it.copy(glassOutlines = enabled) } },
     )
     Divider()
@@ -682,7 +633,7 @@ private fun PlaybackSection(
                 onClick = { replayOpen = true },
                 blur = false,
             )
-            DropdownMenu(replayOpen, { replayOpen = false }) {
+            GlassMenu(replayOpen, { replayOpen = false }) {
                 ReplayGainMode.entries.forEach { mode ->
                     DropdownMenuItem(
                         text = { Text(mode.name.lowercase().replaceFirstChar { c -> c.uppercase() }) },

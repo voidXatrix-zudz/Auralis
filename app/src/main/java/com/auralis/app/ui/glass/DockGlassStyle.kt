@@ -4,17 +4,19 @@ import android.os.Build
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.compositionLocalOf
 import com.auralis.app.domain.model.AppSettings
+import com.auralis.app.domain.model.PerformanceMode
 import com.auralis.app.ui.performance.PerformanceProfile
-import com.auralis.app.ui.performance.VisualPerformanceTier
+import com.auralis.app.ui.theme.GlassTokens
 
 /**
  * The performance/optics flags every glass surface renders with, plus the dock's resolved fill and
  * blur for the Appearance preview.
  *
- * The three user controls live in [GlassSettings]; this object only translates them for the
- * performance profile (blur allowed?, downsample, refraction, outlines) and carries the dock's
- * resolved fill/blur for the Appearance preview. Non-dock surfaces read [GlassMapping.fillAlpha]
- * with their own [GlassKind], so the dock and the cards can never leak into each other.
+ * The three user controls live in [GlassSettings]; this object resolves them together with the
+ * one blur policy ([GlassBlurPolicy]) and the performance *cost* flags (downsample, refraction,
+ * outlines), and carries the dock's resolved fill/blur for the Appearance preview. Non-dock
+ * surfaces read [GlassMapping.fillAlpha] with their own [GlassKind], so the dock and the cards can
+ * never leak into each other.
  */
 @Immutable
 data class DockGlassStyle(
@@ -22,16 +24,12 @@ data class DockGlassStyle(
     val fillAlpha: Float = GlassMapping.dockFill(GlassMapping.DEFAULT_DOCK_OPACITY).alpha,
     /** The 0..1 "Dock opacity" control (0 = clear, 1 = opaque solid). Never used by other surfaces. */
     val opacity: Float = GlassMapping.DEFAULT_DOCK_OPACITY,
-    /** Effective backdrop blur radius in dp after the performance cap (all surfaces). */
-    val blurDp: Float = GlassMapping.blurDp(GlassMapping.DEFAULT_BLUR_STRENGTH),
-    /** True when live backdrop blur can run (allowed by the profile and the radius is non-zero). */
+    /** Fixed backdrop blur radius for the resolved tier (all surfaces). */
+    val blurDp: Float = GlassTokens.BLUR_DP_MEDIUM,
+    /** True when Live blur is allowed (see [GlassBlurPolicy]) and the radius is non-zero. */
     val blurEnabled: Boolean = true,
-    /** AGSL lens pass; only on large surfaces and only in High. */
-    val refractionEnabled: Boolean = true,
-    /** DEBUG-only "Dock lens (experimental)": run the AGSL lens on the dock, off by default. */
-    val lensExperimental: Boolean = false,
-    /** DEBUG-only "Haze input scale: Default": stop pinning Haze's input scale. */
-    val hazeDefaultScale: Boolean = false,
+    /** AGSL lens pass; allowed by the profile (High only). */
+    val refractionEnabled: Boolean = false,
     val outlines: Boolean = true,
     val shadowScale: Float = 1f,
     /** Haze backdrop downsample (1.0 = full resolution). */
@@ -43,33 +41,35 @@ data class DockGlassStyle(
 val LocalDockGlassStyle = compositionLocalOf { DockGlassStyle() }
 
 /**
- * Resolves the concrete render values from the one [GlassSettings] model.
+ * Resolves the concrete render values from the one [GlassSettings] bridge (itself derived from
+ * [GlassConfig]).
  *
  * Endpoints:
- *  - Dock opacity 0% -> fully transparent fill (blur + rim only), 100% -> opaque solid.
- *  - Blur 0% -> 0dp, 100% -> 80dp; the tier only changes Haze input scale, never the radius.
+ *  - Dock transparency 0% -> fully transparent fill (blur + rim only), 100% -> opaque solid.
+ *  - Blur is a fixed [GlassTokens] constant per tier (10 dp High/Medium, 16 dp Low).
  *  - Glass clarity is intentionally NOT read here; it belongs to non-dock surfaces only.
  */
 fun resolveDockGlass(
     settings: AppSettings,
     glass: GlassSettings,
     profile: PerformanceProfile,
-    systemReason: String? = null,
+    @Suppress("UNUSED_PARAMETER") systemReason: String? = null,
     sdkInt: Int = Build.VERSION.SDK_INT,
 ): DockGlassStyle {
     val opacity = glass.dockOpacity.coerceIn(0f, 1f)
-    val blurStrength = glass.blurStrength.coerceIn(0f, 1f)
 
     val fillAlpha = GlassMapping.dockFill(opacity).alpha
-    val effectiveBlur = GlassMapping.blurDp(blurStrength)
-    val apiSupportsBlur = sdkInt >= 31
-    val blurEnabled = apiSupportsBlur && profile.blurEnabled && effectiveBlur > 0.5f
+    // Blur is a fixed constant now (STEP 2.4): the tier only chooses the radius, never on/off.
+    val effectiveBlur = GlassTokens.blurDpFor(profile.tier)
+    val blurAllowed = GlassBlurPolicy.allowed(settings, sdkInt)
+    val blurEnabled = blurAllowed && effectiveBlur > 0.5f
 
+    // The reason must state the TRUE cause. Battery Saver / thermal no longer limit blur, so they
+    // are deliberately absent; there is no blur-strength slider any more either.
     val reason = when {
         sdkInt < 31 -> "Live blur needs Android 12 or newer"
-        blurStrength <= 0.005f -> null
-        !profile.blurEnabled -> "Live blur is off in Low performance mode"
-        systemReason != null -> "Limited by $systemReason"
+        settings.reduceBlurAndEffects -> "Blur is off: Reduce blur and effects is on"
+        settings.performanceProfile == PerformanceMode.LOW -> "Blur is off: Performance is set to Low"
         else -> null
     }
 
@@ -78,10 +78,7 @@ fun resolveDockGlass(
         opacity = opacity,
         blurDp = effectiveBlur,
         blurEnabled = blurEnabled,
-        refractionEnabled = blurEnabled &&
-            (profile.tier == VisualPerformanceTier.HIGH || profile.tier == VisualPerformanceTier.MEDIUM),
-        lensExperimental = com.auralis.app.BuildConfig.DEBUG && settings.dockLensExperimental,
-        hazeDefaultScale = com.auralis.app.BuildConfig.DEBUG && settings.dockHazeDefaultScale,
+        refractionEnabled = blurEnabled && profile.refractionEnabled,
         outlines = settings.glassOutlines,
         shadowScale = profile.shadowScale,
         downsample = profile.blurDownsample,

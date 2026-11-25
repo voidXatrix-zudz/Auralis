@@ -98,6 +98,51 @@ object GlassTokens {
     val RadiusCard = 24.dp
     val RadiusLg = 26.dp
     val RadiusXl = 32.dp
+
+    // ---------------------------------------------------------------------------------------------
+    // STEP 2.4 - fixed glass-effect constants. Blur is NOT a user setting: these are the only blur,
+    // lens, saturation, rim and resolution numbers in the project. No other file may hardcode one.
+    // ---------------------------------------------------------------------------------------------
+
+    /** Backdrop blur radius per resolved performance tier, in dp. */
+    const val BLUR_DP_HIGH = 10f
+    const val BLUR_DP_MEDIUM = 10f
+    const val BLUR_DP_LOW = 16f
+
+    /** AGSL lens geometry (dp). */
+    const val LENS_HEIGHT_DP = 24f
+    const val LENS_AMOUNT_DP = 24f
+
+    /** Backdrop saturation boost applied by the lens/colour controls. */
+    const val SATURATION = 1.5f
+
+    /** Effect-resolution scale per tier (1.0 = full resolution). */
+    const val EFFECT_RESOLUTION_HIGH = 0.5f
+    const val EFFECT_RESOLUTION_MEDIUM = 0.33f
+    const val EFFECT_RESOLUTION_LOW = 0.25f
+
+    /** Rim highlight: 1dp wide, 55% at the top-left fading to 12% at the bottom-right. */
+    const val RIM_WIDTH_DP = 1f
+    const val RIM_ALPHA_TOP_LEFT = 0.55f
+    const val RIM_ALPHA_BOTTOM_RIGHT = 0.12f
+
+    /**
+     * Dock tint: Midnight Indigo lifted toward Vanilla Cream (a very light cream touch over a dark
+     * indigo base). Deliberately dark so the dock's cream icons/labels stay readable at every
+     * transparency, including an opaque dock (see AGENT_NOTES: spec said "very light"; the safest
+     * readable option is kept and the deviation is recorded).
+     */
+    val TINT_COLOR_DOCK = blend(Cream, Indigo, 0.06f)
+
+    /** Panel tint: Midnight Indigo. */
+    val TINT_COLOR_PANEL = Indigo
+
+    /** Fixed backdrop blur radius (dp) for a resolved performance tier. */
+    fun blurDpFor(tier: VisualPerformanceTier): Float = when (tier) {
+        VisualPerformanceTier.HIGH -> BLUR_DP_HIGH
+        VisualPerformanceTier.MEDIUM -> BLUR_DP_MEDIUM
+        VisualPerformanceTier.LOW -> BLUR_DP_LOW
+    }
 }
 
 /** Opaque composite of [foreground] over [background] at [alpha], for Material colour slots. */

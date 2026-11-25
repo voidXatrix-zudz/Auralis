@@ -83,18 +83,17 @@ private object Keys {
     val dockGlassOpacity = intPreferencesKey("dock_glass_opacity")
     /** Legacy pre-rename key ("Dock transparency"). Read once for migration, then removed on write. */
     val dockGlassTransparencyLegacy = intPreferencesKey("dock_glass_transparency")
-    val dockGlassBlur = intPreferencesKey("dock_glass_blur")
+    /** Removed control ("Blur strength"): the key is deleted on the next write and never read. */
+    val dockGlassBlurLegacy = intPreferencesKey("dock_glass_blur")
     val glassClarity = intPreferencesKey("glass_clarity")
     val glassOutlines = booleanPreferencesKey("glass_outlines")
-    /** DEBUG-only experiment flags (see AppSettings). Persisted so a toggle survives restarts. */
-    val dockLensExperimental = booleanPreferencesKey("dock_lens_experimental")
-    val dockHazeDefaultScale = booleanPreferencesKey("dock_haze_default_scale")
     val autoScan = booleanPreferencesKey("auto_scan_enabled")
     val includeSubfolders = booleanPreferencesKey("include_subfolders")
     val playerBackground = stringPreferencesKey("player_background")
     val lastUpdateCheckAt = longPreferencesKey("last_update_check_at")
     val skippedUpdateTag = stringPreferencesKey("skipped_update_tag")
     val youtubeIntegration = booleanPreferencesKey("youtube_integration")
+    val youtubePersonalizedHome = booleanPreferencesKey("youtube_personalized_home")
     val youtubeConnectPromptSnoozeUntil = longPreferencesKey("youtube_connect_prompt_snooze_until")
     val youtubeSyncHistory = booleanPreferencesKey("youtube_sync_history")
     val youtubeSyncLikes = booleanPreferencesKey("youtube_sync_likes")
@@ -110,6 +109,10 @@ private object Keys {
     val fetchArtistPhotos = booleanPreferencesKey("fetch_artist_photos")
     val useDeezerForArtistPhotos = booleanPreferencesKey("use_deezer_artist_photos")
     val lastFmApiKey = stringPreferencesKey("lastfm_api_key_enc")
+    val betterLyricsApiKey = stringPreferencesKey("betterlyrics_api_key_enc")
+    val musixmatchToken = stringPreferencesKey("musixmatch_token_enc")
+    val paxsenixApiKey = stringPreferencesKey("paxsenix_api_key_enc")
+    val geniusApiKey = stringPreferencesKey("genius_api_key_enc")
     val wifiStreamQuality = intPreferencesKey("wifi_stream_quality")
     val mobileStreamQuality = intPreferencesKey("mobile_stream_quality")
     val dataSaverEnabled = booleanPreferencesKey("data_saver_enabled")
@@ -118,6 +121,8 @@ private object Keys {
     val reduceBlurAndEffects = booleanPreferencesKey("reduce_blur_effects")
     val downloadLyricsWithSongs = booleanPreferencesKey("download_lyrics_with_songs")
     val cacheSizeMb = intPreferencesKey("cache_size_mb")
+    /** First-run onboarding: true once the welcome screen has been dismissed, so it never returns. */
+    val welcomeSeen = booleanPreferencesKey("welcome_seen")
     // Part M: rolling stream-resolver stats (latency + success/failure counts).
     val resolverNpAvg = longPreferencesKey("resolver_newpipe_avg_ms")
     val resolverNpSuccess = intPreferencesKey("resolver_newpipe_success")
@@ -269,17 +274,15 @@ class SettingsRepository(private val context: Context) {
                     ?: this[Keys.dockGlassTransparencyLegacy]?.let { dockTransparencyToOpacity(it) }
                     ?: d.dockGlassOpacity
                 ).coerceIn(0, 100),
-            dockGlassBlur = (this[Keys.dockGlassBlur] ?: d.dockGlassBlur).coerceIn(0, 100),
             glassClarity = (this[Keys.glassClarity] ?: d.glassClarity).coerceIn(0, 100),
             glassOutlines = this[Keys.glassOutlines] ?: d.glassOutlines,
-            dockLensExperimental = this[Keys.dockLensExperimental] ?: d.dockLensExperimental,
-            dockHazeDefaultScale = this[Keys.dockHazeDefaultScale] ?: d.dockHazeDefaultScale,
             autoScanEnabled = this[Keys.autoScan] ?: d.autoScanEnabled,
             includeSubfolders = this[Keys.includeSubfolders] ?: d.includeSubfolders,
             playerBackground = enumOr(this[Keys.playerBackground], d.playerBackground),
             lastUpdateCheckAt = (this[Keys.lastUpdateCheckAt] ?: d.lastUpdateCheckAt).coerceAtLeast(0L),
             skippedUpdateTag = this[Keys.skippedUpdateTag] ?: d.skippedUpdateTag,
             youtubeIntegration = this[Keys.youtubeIntegration] ?: d.youtubeIntegration,
+            personalizedHome = this[Keys.youtubePersonalizedHome] ?: d.personalizedHome,
             youtubeConnectPromptSnoozeUntil = this[Keys.youtubeConnectPromptSnoozeUntil] ?: d.youtubeConnectPromptSnoozeUntil,
             youtubeSyncHistory = this[Keys.youtubeSyncHistory] ?: d.youtubeSyncHistory,
             youtubeSyncLikes = this[Keys.youtubeSyncLikes] ?: d.youtubeSyncLikes,
@@ -291,6 +294,10 @@ class SettingsRepository(private val context: Context) {
             lyricsProvidersEnabled = decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled),
             metadataProvidersEnabled = decodeSet(this[Keys.metadataProvidersEnabled], d.metadataProvidersEnabled),
             preferSyncedLyrics = this[Keys.preferSyncedLyrics] ?: d.preferSyncedLyrics,
+            betterLyricsApiKey = decrypt(this[Keys.betterLyricsApiKey]),
+            musixmatchToken = decrypt(this[Keys.musixmatchToken]),
+            paxsenixApiKey = decrypt(this[Keys.paxsenixApiKey]),
+            geniusApiKey = decrypt(this[Keys.geniusApiKey]),
             overwriteExistingTags = this[Keys.overwriteExistingTags] ?: d.overwriteExistingTags,
             fetchArtistPhotos = this[Keys.fetchArtistPhotos] ?: d.fetchArtistPhotos,
             useDeezerForArtistPhotos = this[Keys.useDeezerForArtistPhotos] ?: d.useDeezerForArtistPhotos,
@@ -303,6 +310,7 @@ class SettingsRepository(private val context: Context) {
             reduceBlurAndEffects = this[Keys.reduceBlurAndEffects] ?: d.reduceBlurAndEffects,
             downloadLyricsWithSongs = this[Keys.downloadLyricsWithSongs] ?: d.downloadLyricsWithSongs,
             cacheSizeMb = this[Keys.cacheSizeMb] ?: d.cacheSizeMb,
+            welcomeSeen = this[Keys.welcomeSeen] ?: d.welcomeSeen,
         )
     }
 
@@ -340,17 +348,16 @@ class SettingsRepository(private val context: Context) {
         this[Keys.themeStyle] = s.themeStyle.name
         this[Keys.dockGlassOpacity] = s.dockGlassOpacity
         this.remove(Keys.dockGlassTransparencyLegacy)
-        this[Keys.dockGlassBlur] = s.dockGlassBlur
+        this.remove(Keys.dockGlassBlurLegacy)
         this[Keys.glassClarity] = s.glassClarity
         this[Keys.glassOutlines] = s.glassOutlines
-        this[Keys.dockLensExperimental] = s.dockLensExperimental
-        this[Keys.dockHazeDefaultScale] = s.dockHazeDefaultScale
         this[Keys.autoScan] = s.autoScanEnabled
         this[Keys.includeSubfolders] = s.includeSubfolders
         this[Keys.playerBackground] = s.playerBackground.name
         this[Keys.lastUpdateCheckAt] = s.lastUpdateCheckAt
         this[Keys.skippedUpdateTag] = s.skippedUpdateTag
         this[Keys.youtubeIntegration] = s.youtubeIntegration
+        this[Keys.youtubePersonalizedHome] = s.personalizedHome
         this[Keys.youtubeConnectPromptSnoozeUntil] = s.youtubeConnectPromptSnoozeUntil
         this[Keys.youtubeSyncHistory] = s.youtubeSyncHistory
         this[Keys.youtubeSyncLikes] = s.youtubeSyncLikes
@@ -362,6 +369,10 @@ class SettingsRepository(private val context: Context) {
         this[Keys.lyricsProvidersEnabled] = s.lyricsProvidersEnabled.joinToString(",")
         this[Keys.metadataProvidersEnabled] = s.metadataProvidersEnabled.joinToString(",")
         this[Keys.preferSyncedLyrics] = s.preferSyncedLyrics
+        this[Keys.betterLyricsApiKey] = encrypt(s.betterLyricsApiKey)
+        this[Keys.musixmatchToken] = encrypt(s.musixmatchToken)
+        this[Keys.paxsenixApiKey] = encrypt(s.paxsenixApiKey)
+        this[Keys.geniusApiKey] = encrypt(s.geniusApiKey)
         this[Keys.overwriteExistingTags] = s.overwriteExistingTags
         this[Keys.fetchArtistPhotos] = s.fetchArtistPhotos
         this[Keys.useDeezerForArtistPhotos] = s.useDeezerForArtistPhotos
@@ -374,6 +385,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.reduceBlurAndEffects] = s.reduceBlurAndEffects
         this[Keys.downloadLyricsWithSongs] = s.downloadLyricsWithSongs
         this[Keys.cacheSizeMb] = s.cacheSizeMb
+        this[Keys.welcomeSeen] = s.welcomeSeen
     }
 
     /**

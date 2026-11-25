@@ -9,51 +9,40 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import com.auralis.app.ui.theme.GlassTokens
 import dev.chrisbanes.haze.HazeState
-import kotlin.math.pow
-import kotlin.math.roundToInt
 
 /**
- * The THREE Appearance glass controls, resolved to 0..1 once at the app root.
+ * BRIDGE (Steps 2-3): the old 0..1 view of [GlassConfig] consumed by the Haze pipeline that Steps
+ * 4-6 replace. It is derived from the one source of truth and owns no independent value.
  *
- * This is the single source of truth for every glass surface:
  *  - [dockOpacity] only feeds [GlassKind.Dock] (mini player, nav pill, search circle).
  *  - [glassClarity] only feeds [GlassKind.Surface] (cards, rows, chips, dialogs, Now Playing).
- *  - [blurStrength] feeds every surface, dock included.
  *
- * Components never read DataStore or hardcode an alpha/blur value; they read
- * [LocalGlassSettings] and route through `Modifier.glassSurface(kind, ...)`.
+ * Blur is a fixed [GlassTokens] constant now, so it is not part of this model.
  */
 @Immutable
 data class GlassSettings(
-    /** Dock opacity: 0 = fully see-through, 1 = fully opaque solid. */
+    /** Dock fill: 0 = fully see-through, 1 = fully opaque. Derived from `dockTransparency`. */
     val dockOpacity: Float = GlassMapping.DEFAULT_DOCK_OPACITY,
     val glassClarity: Float = GlassMapping.DEFAULT_GLASS_CLARITY,
-    val blurStrength: Float = GlassMapping.DEFAULT_BLUR_STRENGTH,
 ) {
     companion object {
-        /** Builds the model from the persisted 0..100 int preferences. */
-        fun fromPercent(
-            dockOpacityPercent: Int,
-            glassClarityPercent: Int,
-            blurPercent: Int,
-        ) = GlassSettings(
-            dockOpacity = GlassMapping.percent(dockOpacityPercent),
-            glassClarity = GlassMapping.percent(glassClarityPercent),
-            blurStrength = GlassMapping.percent(blurPercent),
+        fun from(config: GlassConfig) = GlassSettings(
+            dockOpacity = config.dockTransparency.coerceIn(0, 100) / 100f,
+            glassClarity = config.glassClarity.coerceIn(0, 100) / 100f,
         )
     }
 }
 
-/** The persisted, committed controls. Provided at the root. */
+/** BRIDGE: derived at the root from [LocalGlassConfig]. No component may write it. */
 val LocalGlassSettings = compositionLocalOf { GlassSettings() }
 
 /**
  * Transient copy used while a slider is being dragged. The Appearance screen writes here on every
- * tick so the whole app reacts live, then persists once on `onValueChangeFinished`. Null means
- * "use the persisted [LocalGlassSettings]".
+ * tick so the whole app reacts live, then persists once on `onValueChangeFinished` through
+ * [GlassConfigRepository]. Null means "use the persisted [LocalGlassConfig]".
  */
 class GlassDragState {
-    var value by mutableStateOf<GlassSettings?>(null)
+    var value by mutableStateOf<GlassConfig?>(null)
 }
 
 val LocalGlassDrag = staticCompositionLocalOf { GlassDragState() }
@@ -68,25 +57,18 @@ val LocalHazeState = staticCompositionLocalOf<HazeState?> { null }
 enum class GlassKind { Dock, Surface }
 
 /**
- * Central mapping from the three 0..1 controls to concrete alphas/radii.
+ * BRIDGE mapping for the Haze pipeline that Steps 4-6 replace.
  *
  * Direction, per the controls' intent:
  *  - higher dock opacity   -> denser dock fill (0 = clear, 1 = opaque solid);
- *  - higher glass clarity  -> lower surface fill alpha (0.40 -> 0.04);
- *  - higher blur strength  -> larger backdrop radius (0dp -> 80dp), never tier-scaled.
+ *  - higher glass clarity  -> lower surface fill alpha (0.40 -> 0.04).
+ *
+ * Blur is a fixed [GlassTokens] constant, so this object no longer maps a blur strength.
  */
 object GlassMapping {
-    // Defaults shown by the Reset action (and used for fresh installs).
-    const val DEFAULT_DOCK_OPACITY = 0.50f
-    const val DEFAULT_GLASS_CLARITY = 0.50f
-    const val DEFAULT_BLUR_STRENGTH = 0.55f
-
-    const val DEFAULT_DOCK_OPACITY_PERCENT = 50
-    const val DEFAULT_GLASS_CLARITY_PERCENT = 50
-    const val DEFAULT_BLUR_PERCENT = 55
-
-    /** Full-scale backdrop radius: 0% -> 0dp, 100% -> 80dp. Never scaled by the performance tier. */
-    const val MAX_BLUR_DP = 80f
+    // Defaults shown by the Reset action (and used for fresh installs). They mirror GlassConfig.
+    const val DEFAULT_DOCK_OPACITY = GlassConfig.DEFAULT_DOCK_TRANSPARENCY / 100f
+    const val DEFAULT_GLASS_CLARITY = GlassConfig.DEFAULT_GLASS_CLARITY / 100f
 
     private const val SURFACE_FILL_MAX = 0.40f
     private const val SURFACE_FILL_MIN = 0.04f
@@ -120,6 +102,22 @@ object GlassMapping {
     const val DIALOG_SCRIM = 0.55f
 
     /**
+     * Menus/dialogs/sheets: black tint alpha over the blurred window backdrop.
+     * Higher Glass clarity -> clearer (0.62 floor), lower clarity -> denser (0.82). The floor is
+     * deliberate: cream text must never mix with the content behind a menu.
+     */
+    fun windowTintAlpha(clarity: Float): Float = lerp(0.82f, 0.62f, clarity)
+
+    /** No window blur (API < 31, blur off or Low tier): dense black, never transparent. */
+    const val WINDOW_NO_BLUR_TINT = 0.94f
+
+    /** Dim drawn above the app while a glass menu is open (the menu window cannot cover it). */
+    const val MENU_BACKDROP_SCRIM = 0.34f
+
+    /** Dim behind a glass bottom sheet. */
+    const val SHEET_SCRIM = 0.46f
+
+    /**
      * Small controls nested inside a panel keep a faint fill so crystal clarity does not erase
      * their shape. Much lower than [NO_BLUR_MIN_FILL] so Glass clarity stays effective on them.
      */
@@ -127,10 +125,6 @@ object GlassMapping {
 
     private const val BORDER_STRONG = 0.20f
     private const val BORDER_FAINT = 0.08f
-
-    fun percent(value: Int): Float = value.coerceIn(0, 100) / 100f
-
-    fun percentToInt(value: Float): Int = (value.coerceIn(0f, 1f) * 100).roundToInt()
 
     /**
      * The fully-opaque dock colour: pure-black canvas lifted ~6% toward cream so 100% opacity reads
@@ -160,13 +154,6 @@ object GlassMapping {
         return lerpColor(GlassTokens.Cream, DOCK_SOLID, f).copy(alpha = lerp(0.10f, 1f, f))
     }
 
-    /**
-     * Backdrop saturation boost, 1.0 at 0% blur -> 1.60 at full blur. Only the (experimental) AGSL
-     * lens applies it; the default dock path has no saturation pass because Haze 1.6.7 exposes no
-     * colour filter of its own.
-     */
-    fun dockSaturation(blurFraction: Float): Float = 1.0f + 0.60f * blurFraction.coerceIn(0f, 1f)
-
     /** Additive brightness lift applied to the blurred layer (Haze tint, no AGSL required). */
     const val DOCK_BRIGHTNESS = 0.04f
 
@@ -188,24 +175,6 @@ object GlassMapping {
 
     /** Hairline alpha follows the same direction and stays subtle. */
     fun borderAlpha(value: Float): Float = lerp(BORDER_STRONG, BORDER_FAINT, value)
-
-    /**
-     * 0..1 strength -> 0..80dp via `80 * s^1.15`, rounded to the nearest 0.5 dp. Deliberately NOT
-     * scaled by the performance tier: the tier changes cost (Haze input scale) or turns blur off,
-     * it never changes the radius.
-     */
-    fun blurDp(strength: Float): Float {
-        val s = strength.coerceIn(0f, 1f)
-        val raw = MAX_BLUR_DP * s.pow(1.15f)
-        return (raw.coerceIn(0f, MAX_BLUR_DP) * 2f).roundToInt() / 2f
-    }
-
-    /**
-     * Compatibility overload for call sites that still pass a performance scale. The tier no longer
-     * changes the radius (it only changes Haze cost or turns blur off), so [scale] is ignored.
-     */
-    @Suppress("UNUSED_PARAMETER")
-    fun blurDp(strength: Float, scale: Float): Float = blurDp(strength)
 
     private fun lerpColor(start: Color, end: Color, fraction: Float): Color {
         val t = fraction.coerceIn(0f, 1f)

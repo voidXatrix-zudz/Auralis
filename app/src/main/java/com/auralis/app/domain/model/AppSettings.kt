@@ -40,24 +40,12 @@ data class AppSettings(
     val resumeOnOutputReconnect: Boolean = false,
     val carKeepScreenOn: Boolean = true,
     val themeStyle: ThemeStyle = ThemeStyle.NORMAL,
-    /** Glass dock tuning (Glassmorphism only): dock opacity 0-100%, default 50%. */
-    val dockGlassOpacity: Int = 50,
-    /** Glass blur strength 0-100% mapping to 0-80dp radius, default 55%. */
-    val dockGlassBlur: Int = 55,
-    /** Glassmorphism "Glass clarity": 0 = frosted/opaque, 100 = clear. Default 50. */
-    val glassClarity: Int = 50,
+    /** Glassmorphism "Dock transparency": 0 = fully see-through, 100 = opaque. Default 35 (STEP 8.2). */
+    val dockGlassOpacity: Int = 35,
+    /** Glassmorphism "Glass clarity": 0 = frosted/opaque, 100 = clear. Default 60 (STEP 8.2). */
+    val glassClarity: Int = 60,
     /** Draw the 1dp specular hairline on glass surfaces. */
     val glassOutlines: Boolean = true,
-    /**
-     * DEBUG-only experiment: run the AGSL lens (refraction) pass on the dock. Off by default; the
-     * shipped dock path has no refraction. Shown only in debug builds.
-     */
-    val dockLensExperimental: Boolean = false,
-    /**
-     * DEBUG-only experiment: let Haze choose its own input scale instead of the dock's fixed cost
-     * scale. Shown only in debug builds.
-     */
-    val dockHazeDefaultScale: Boolean = false,
     /** Watch MediaStore/folders for new, changed and removed songs and update the library automatically. */
     val autoScanEnabled: Boolean = true,
     /** Include songs from subfolders of each chosen music folder. */
@@ -70,6 +58,11 @@ data class AppSettings(
     val skippedUpdateTag: String = "",
     /** Opt-in YouTube Music integration (account, Home feed, liked songs). Off by default. */
     val youtubeIntegration: Boolean = false,
+    /**
+     * Show the account's own personalized YouTube Music rows on Home. On by default: when off (or
+     * when not connected) Home is the plain local library Home, never a generic charts feed.
+     */
+    val personalizedHome: Boolean = true,
     /** Epoch millis until which the post-sign-in "Connect YouTube Music" prompt stays hidden. */
     val youtubeConnectPromptSnoozeUntil: Long = 0L,
     /** Sync in-app plays to the YouTube Music account history. Default on once signed in. */
@@ -91,13 +84,20 @@ data class AppSettings(
     val lyricsProviderOrder: List<String> = DEFAULT_LYRICS_PROVIDER_ORDER,
     /** Enabled lyrics providers. Defaults chosen for reliability; the rest are opt-in. */
     val lyricsProvidersEnabled: Set<String> = setOf(
-        "LRCLIB", "BiniLyrics", "BetterLyrics", "LyricsPlus", "KuGou",
-        "SimpMusic", "YouTubeMusic", "LyricsOvh",
+        "LrcRed", "LRCLIB", "BetterLyrics", "KuGou", "YouTubeMusic",
     ),
     /** Enabled metadata providers. */
     val metadataProvidersEnabled: Set<String> = setOf("MusicBrainz", "Deezer"),
     /** When on, keep trying remaining providers for a synced result before accepting unsynced. */
     val preferSyncedLyrics: Boolean = true,
+    /** Optional Better Lyrics API key (syllable TTML + Portato providers). Stored encrypted. */
+    val betterLyricsApiKey: String = "",
+    /** Optional Musixmatch user token; the provider is skipped silently when blank. Stored encrypted. */
+    val musixmatchToken: String = "",
+    /** Optional PaxSenix key (reserved; PaxSenix providers are registered disabled). Stored encrypted. */
+    val paxsenixApiKey: String = "",
+    /** Optional Genius access token (the public search path works without one). Stored encrypted. */
+    val geniusApiKey: String = "",
     /** When on, Auto-fix tags may overwrite existing (non-empty) tag fields. */
     val overwriteExistingTags: Boolean = false,
     /** Show artist photos throughout the UI (Part L). */
@@ -122,12 +122,15 @@ data class AppSettings(
     val downloadLyricsWithSongs: Boolean = true,
     /** Cache size budget in MB (0 = unlimited). Used by the Storage radio list. */
     val cacheSizeMb: Int = 512,
+    /** True once the one-time first-run welcome screen has been dismissed (shown before the login gate). */
+    val welcomeSeen: Boolean = false,
 ) {
     companion object {
         /** Default lyrics provider lookup order: word-synced first, then line-synced, then plain. */
         val DEFAULT_LYRICS_PROVIDER_ORDER: List<String> = listOf(
-            "BiniLyrics", "BetterLyrics", "LyricsPlus", "KuGou", "LRCLIB",
-            "SimpMusic", "NetEase", "YouTubeMusic", "LyricsOvh",
+            "LrcRed", "BiniLyrics", "BetterLyrics", "BetterLyricsPortato", "LyricsPlus", "Unison",
+            "KuGou", "LRCLIB", "YouTubeMusic", "YouTubeCaptions", "SimpMusic", "NetEase",
+            "Musixmatch", "Genius", "PaxSenix", "PaxSenixSpotify", "PaxSenixMusixmatch", "LyricsOvh",
         )
     }
 }

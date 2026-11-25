@@ -32,7 +32,6 @@ import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -60,6 +59,7 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.glass.GlassIconButton
+import com.auralis.app.ui.glass.GlassMaterialAlertDialog
 import com.auralis.app.ui.glass.GlassPanel
 import com.auralis.app.ui.glass.GlassSearchField
 import com.auralis.app.ui.nav.Destination
@@ -88,6 +88,7 @@ data class SettingsActions(
     val onRemoveAllDownloads: () -> Unit,
     val onAutoFixTags: () -> Unit,
     val onMoveLyricsProvider: (String, Int) -> Unit,
+    val onResetLyricsProviders: () -> Unit,
     val onLyricsSettingsChanged: () -> Unit,
     val updateChecking: Boolean,
     val updateStatus: String?,
@@ -116,6 +117,10 @@ data class SettingsActions(
     /** Outbound reports plus inbound `FEmusic_history` pulls, for the "History sync" status line. */
     val playbackReporting: com.auralis.app.data.youtube.PlaybackReportingState =
         com.auralis.app.data.youtube.PlaybackReportingState(),
+    /** STEP 7: the three glass controls write through GlassConfigRepository only. */
+    val onDockTransparencyChange: (Int) -> Unit = {},
+    val onGlassClarityChange: (Int) -> Unit = {},
+    val onGlassOutlinesChange: (Boolean) -> Unit = {},
 )
 
 // Shared, theme-aware primitives (Normal + Glass).
@@ -245,7 +250,7 @@ internal fun <T> ChoiceDialog(
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    GlassMaterialAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {

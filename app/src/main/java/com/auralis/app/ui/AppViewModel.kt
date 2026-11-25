@@ -28,6 +28,7 @@ import com.auralis.app.data.settings.toTrack as checkpointToTrack
 import com.auralis.app.data.update.UpdateUiState
 import com.auralis.app.data.auth.ClerkAccount
 import com.auralis.app.data.auth.EmailCodeChallenge
+import com.auralis.app.data.auth.GoogleSignInState
 import com.auralis.app.data.auth.toAccount
 import com.auralis.app.data.youtube.YOUTUBE_TRACK_PREFIX
 import com.auralis.app.data.youtube.YtCard
@@ -42,6 +43,9 @@ import com.auralis.app.data.youtube.HomeShelfBlock
 import com.auralis.app.data.youtube.buildSignedInLayout
 import com.auralis.app.data.youtube.classifyShelf
 import com.auralis.app.data.youtube.looksLikeMoodShelf
+import com.auralis.app.data.youtube.curateHomeShelves
+import com.auralis.app.data.youtube.looksLikeRecentsShelf
+import com.auralis.app.data.youtube.safeShelfLabel
 import com.auralis.app.data.youtube.clearYouTubeWebSessionCookies
 import com.auralis.app.data.youtube.hasSigningCookie
 import com.auralis.app.data.youtube.filterMusicTracksCounting
@@ -55,6 +59,8 @@ import com.auralis.app.data.youtube.playbackStart
 import com.auralis.app.data.youtube.routeLibraryPlay
 import com.auralis.app.data.youtube.toTrack
 import com.auralis.app.playback.HISTORY_MIN_MS
+import com.auralis.app.playback.PlaybackContext
+import com.auralis.app.playback.PlaybackContextKind
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.playback.PlaybackHistoryTracker
 import com.auralis.app.ui.screens.YouTubeCapturedSession
@@ -74,12 +80,14 @@ import com.auralis.app.logging.YouTubeSessionLog
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.nav.NavState
 import com.auralis.app.ui.nav.Tab
+import com.auralis.app.ui.glass.GlassConfigRepository
 import com.auralis.app.ui.performance.PerformanceController
 import com.auralis.app.ui.explore.ExploreMoods
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -89,6 +97,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+
+/** How long the login gate may show "Preparing your session…" before it becomes a visible error. */
+private const val CLERK_INIT_TIMEOUT_MS = 20_000L
+/** After returning from the browser, how long an unresolved sign-in may linger before it is cleared. */
+private const val CLERK_RESUME_GRACE_MS = 12_000L
+private const val TAG_CLERK = "Clerk"
 
 /** Progress is rounded to this bucket before the checkpoint is rewritten, so writes stay rare. */
 private const val CHECKPOINT_POSITION_STEP_MS = 5_000L
@@ -136,6 +150,8 @@ data class RestoredPlayback(
     val durationMs: Long,
     val shuffle: Boolean,
     val repeatMode: Int,
+    /** The playlist/album/list this queue was started from, if it is still known. */
+    val context: PlaybackContext? = null,
 ) {
     val track: Track? get() = queue.getOrNull(index)
 }
@@ -192,6 +208,14 @@ data class HomeUiState(
     val refreshing: Boolean = false,
     /** Non-null when the signed-in recommendations could not be loaded; the page offers a retry. */
     val homeError: String? = null,
+    /**
+     * True when Home is showing the local fallback because YouTube Music is not connected. The screen
+     * renders the "Connect YouTube Music to see your own recommendations" card above the rows and
+     * never the public charts.
+     */
+    val needsYouTubeConnect: Boolean = false,
+    /** True when [needsYouTubeConnect] is really "the stored session was rejected, reconnect". */
+    val connectExpired: Boolean = false,
     val collectionTitle: String? = null,
     val collectionTracks: List<Track> = emptyList(),
     val collectionLoading: Boolean = false,
@@ -213,6 +237,8 @@ data class AuthUiState(
     val email: String = "",
     val busy: Boolean = false,
     val error: String? = null,
+    /** True once "Preparing your session..." exceeded its budget; the screen offers a retry. */
+    val initTimedOut: Boolean = false,
     /** True when a keyless build's user chose to skip the "sign-in isn't configured" notice. */
     val authBypassed: Boolean = false,
 )
@@ -265,6 +291,25 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val performanceProfile = performanceController.profile
     val performanceMode = performanceController.mode
     val performanceReason = performanceController.reason
+    /**
+     * STEP 2: the ONE glass config. Combines the stored transparency/clarity/outlines with the
+     * resolved performance tier; collected once in AuralisRoot and provided via LocalGlassConfig.
+     */
+    private val glassConfigRepository = GlassConfigRepository(
+        settingsRepository = container.settings,
+        settings = settings,
+        tier = performanceController.tier,
+        scope = viewModelScope,
+    )
+    val glassConfig = glassConfigRepository.config
+
+    /** STEP 7: the Appearance controls write glass through this repository only. */
+    fun setDockTransparency(value: Int) = glassConfigRepository.setDockTransparency(value)
+    fun setGlassClarity(value: Int) = glassConfigRepository.setGlassClarity(value)
+    fun setGlassOutlines(enabled: Boolean) = glassConfigRepository.setOutlines(enabled)
+
+    /** Raw device snapshot for the DEBUG diagnostics card. */
+    val performanceConditions = container.performance.conditions
     private val _nav = MutableStateFlow(NavState())
     val nav = _nav.asStateFlow()
     private val _scanning = MutableStateFlow(false)
@@ -343,10 +388,19 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** The in-flight email-code challenge, kept between "send code" and "verify code". */
     private var pendingEmail: EmailCodeChallenge? = null
     /**
+     * Uptime of the last Google sign-in tap, or 0 when none is pending. Used to tell "the browser
+     * round-trip is still in progress" from "we came back with nothing", so a dropped callback can
+     * never leave the login screen spinning forever.
+     */
+    @Volatile private var clerkSignInStartedAt = 0L
+    /**
      * Uptime of the last explicit YouTube sign-in tap, or 0 when none is pending. Only the login
      * dialog sets it, so a restored/silent session can never produce a "Signed in" message.
      */
     @Volatile private var youtubeSignInStartedAt = 0L
+    /** Set when the app went to the background with a sign-in pending, i.e. the browser is open. */
+    private var clerkInitTimeoutJob: Job? = null
+    private var clerkReturnGraceJob: Job? = null
     /** Recently played YouTube songs, mapped to [Track] for Continue Listening and recommendations. */
     val youtubeRecents: StateFlow<List<Track>> = container.database.youtubeDao().observeRecents(20)
         .map { rows -> rows.map { it.toDomain() } }
@@ -515,6 +569,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 _youtubePlaylists.value = emptyList()
                 _youtubeLibraryError.value = "Session expired, log in again"
                 _messages.trySend("Session expired, log in again")
+                // Home, however, must stop showing the rejected account's personal rows: replace
+                // them with the user's own local activity under the Connect card.
+                loadHome(HomeCategory.FOR_YOU, force = true)
             }
         }
 
@@ -809,6 +866,17 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 if (!currentId.startsWith(YOUTUBE_TRACK_PREFIX)) return@collect
                 val current = _remoteTracks.value[currentId] ?: return@collect
                 val videoId = current.remoteId ?: return@collect
+                // Autoplay is the YouTube integration's recommendation stream. It is appended only
+                // after the list the user started from is exhausted, so Next can never jump into a
+                // recommendation while context songs remain.
+                if (!settings.value.youtubeIntegration) return@collect
+                val context = state.context
+                val contextHasAhead = context != null && !context.isRadio &&
+                    state.contextIds.isNotEmpty() && state.currentIndex < state.contextIds.lastIndex
+                if (contextHasAhead) return@collect
+                // With repeat on the queue loops instead of streaming recommendations, so autoplay
+                // similar songs only while repeat is off (a radio context always refills).
+                if (state.repeat != androidx.media3.common.Player.REPEAT_MODE_OFF && context?.isRadio != true) return@collect
                 val remoteAhead = state.upNextIds.count { it.startsWith(YOUTUBE_TRACK_PREFIX) }
                 if (remoteAhead >= MIN_RADIO_AHEAD) return@collect
                 // The play tap is already seeding the automix; let that finish before refilling.
@@ -837,7 +905,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                             .toList()
                         if (additions.isNotEmpty()) {
                             _remoteTracks.update { known -> known + additions.associateBy { it.id } }
-                            container.playback.addToQueue(additions)
+                            container.playback.addAutoplay(additions)
                             AppLog.i("YouTube", "Radio refilled with ${additions.size} tracks")
                         }
                     } catch (cancel: CancellationException) {
@@ -845,6 +913,21 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     } catch (error: Throwable) {
                         AppLog.w("YouTube", "Radio refill failed", error)
                     }
+                }
+            }
+        }
+
+        // One short notice per unplayable song. PlaybackService already skips to the next context
+        // song; this only tells the user why the row vanished, without an error loop.
+        viewModelScope.launch {
+            var lastFailedId: String? = null
+            container.playback.state.collect { state ->
+                val failedId = state.trackId
+                if (state.error == null) {
+                    lastFailedId = null
+                } else if (failedId != null && failedId != lastFailedId) {
+                    lastFailedId = failedId
+                    _messages.trySend("Couldn't play that song — skipping")
                 }
             }
         }
@@ -883,6 +966,17 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         // Sign-in gate: derive the whole auth UI state from Clerk's initialization + user flows.
         // The flows are cold no-ops when Clerk is not configured, so this is always safe to collect.
         if (container.clerkAuth.configured) {
+            // A previous launch may have died inside the OAuth browser. The SDK's pending flow is
+            // in-memory only, so that callback can never complete; say so instead of looking stuck.
+            // Skip this when the current process is still running the flow (e.g. activity recreation).
+            if (container.clerkAuth.googleSignIn.value != GoogleSignInState.Running &&
+                container.clerkAuth.consumeInterruptedSignIn()
+            ) {
+                AppLog.w(TAG_CLERK, "Previous Google sign-in never returned (process stopped in the browser)")
+                _auth.update {
+                    it.copy(error = "Your Google sign-in was interrupted. Tap Continue with Google to try again.")
+                }
+            }
             viewModelScope.launch {
                 combine(
                     container.clerkAuth.isInitialized,
@@ -890,12 +984,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     container.clerkAuth.initializationError,
                 ) { ready, user, error -> Triple(ready, user, error) }
                     .collect { (ready, user, error) ->
+                        val wasSignedIn = _auth.value.signedIn
                         _auth.update { state ->
                             state.copy(
                                 configured = true,
                                 // Stop the spinner once Clerk reports an error, otherwise an offline
                                 // first launch would sit on "Preparing your session..." forever.
-                                initializing = !ready && user == null && error == null,
+                                // A timed-out state also stays out of the spinner until a retry.
+                                initializing = !ready && user == null && error == null && !state.initTimedOut,
+                                // The timeout flag clears itself as soon as Clerk comes up.
+                                initTimedOut = state.initTimedOut && !ready && user == null,
                                 signedIn = user != null,
                                 account = user?.toAccount(),
                                 error = when {
@@ -906,7 +1004,58 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                                 awaitingCode = if (user != null) false else state.awaitingCode,
                             )
                         }
+                        if (!wasSignedIn && _auth.value.signedIn) {
+                            // Only an explicit sign-in in this session gets the confirmation. A
+                            // saved-session restore flips the same flag on every cold start and must
+                            // stay silent.
+                            val activeSignIn = clerkSignInStartedAt != 0L
+                            clerkSignInStartedAt = 0L
+                            clerkReturnGraceJob?.cancel()
+                            clerkInitTimeoutJob?.cancel()
+                            container.clerkAuth.clearSignInMarker()
+                            AppLog.i(TAG_CLERK, "Session active: leaving the sign-in gate")
+                            if (activeSignIn) _messages.trySend("Signed in")
+                        }
                     }
+            }
+            // A silent stall in initialization must never leave the gate on "Preparing your
+            // session…" forever; after the timeout the loading screen offers a retry.
+            armClerkInitTimeout()
+            // Surface Clerk's own auth transitions in the in-app Logs screen (PII-free labels).
+            viewModelScope.launch {
+                container.clerkAuth.eventLabels.collect { AppLog.d(TAG_CLERK, "auth event: $it") }
+            }
+            // Mirror the app-scoped browser sign-in into the UI. A recycled ViewModel picks the
+            // running state back up instead of starting over or staying disabled.
+            viewModelScope.launch {
+                container.clerkAuth.googleSignIn.collect { state ->
+                    when (state) {
+                        GoogleSignInState.Idle -> Unit
+                        GoogleSignInState.Running -> {
+                            // A recreated ViewModel has no start time of its own.
+                            if (clerkSignInStartedAt == 0L) {
+                                clerkSignInStartedAt = SystemClock.elapsedRealtime()
+                            }
+                            _auth.update { it.copy(busy = true) }
+                        }
+                        GoogleSignInState.Completed -> {
+                            clerkSignInStartedAt = 0L
+                            container.clerkAuth.clearSignInMarker()
+                            _auth.update { it.copy(busy = false) }
+                            container.clerkAuth.acknowledgeSignInState()
+                        }
+                        is GoogleSignInState.Failed -> {
+                            clerkSignInStartedAt = 0L
+                            AppLog.w(TAG_CLERK, "Browser sign-in ended: ${state.message}")
+                            if (_auth.value.signedIn) {
+                                _auth.update { it.copy(busy = false) }
+                            } else {
+                                _auth.update { it.copy(busy = false, error = state.message) }
+                            }
+                            container.clerkAuth.acknowledgeSignInState()
+                        }
+                    }
+                }
             }
         } else {
             // Keyless build: nothing to collect. Stay signed out so the gate shows the configuration
@@ -925,14 +1074,102 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Starts Google sign-in through Clerk (browser OAuth; returns via the app's deep link). */
     fun signInWithGoogle() {
         if (_auth.value.busy) return
+        AppLog.i(TAG_CLERK, "Sign-in requested; opening Google OAuth")
+        clerkSignInStartedAt = SystemClock.elapsedRealtime()
         _auth.update { it.copy(busy = true, error = null) }
+        // The await itself is owned by the repository's application scope, so recreating this
+        // Activity while Chrome is open cannot cancel the flow before the session is activated.
+        container.clerkAuth.startGoogleSignIn()
+    }
+
+    /**
+     * Re-runs Clerk initialization after the loading screen hit its timeout. Only reachable from
+     * that error state, so it can never reset a working SDK.
+     */
+    fun retryClerkInit() {
+        AppLog.i(TAG_CLERK, "Retry requested for Clerk initialization")
+        _auth.update { it.copy(initializing = true, initTimedOut = false, error = null) }
+        val started = container.clerkAuth.reinitialize()
+        if (!started && !container.clerkAuth.isReady()) {
+            AppLog.w(TAG_CLERK, "Clerk declined to reinitialize; showing the error state")
+            _auth.update {
+                it.copy(
+                    initializing = false,
+                    initTimedOut = true,
+                    error = "Sign-in is still unavailable. Check your connection and try again.",
+                )
+            }
+            return
+        }
+        armClerkInitTimeout()
+    }
+
+    /** After [CLERK_INIT_TIMEOUT_MS], turns a silent loading screen into an actionable error. */
+    private fun armClerkInitTimeout() {
+        clerkInitTimeoutJob?.cancel()
+        clerkInitTimeoutJob = viewModelScope.launch {
+            delay(CLERK_INIT_TIMEOUT_MS)
+            val state = _auth.value
+            if (state.signedIn || !state.initializing || container.clerkAuth.isReady()) return@launch
+            AppLog.w(
+                TAG_CLERK,
+                "Clerk initialization did not finish in ${CLERK_INIT_TIMEOUT_MS} ms; showing retry",
+            )
+            _auth.update {
+                it.copy(
+                    initializing = false,
+                    initTimedOut = true,
+                    error = "Couldn't prepare your session. Check your connection and try again.",
+                )
+            }
+        }
+    }
+
+    /**
+     * Called from `MainActivity.onResume`. When the app comes back from the OAuth browser, wait a
+     * short grace period for the SDK to activate the session; if nothing arrives, clear the spinner
+     * with an explanation instead of hanging.
+     */
+    private fun scheduleClerkReturnCheck() {
+        val startedAt = clerkSignInStartedAt
+        if (startedAt == 0L || _auth.value.signedIn) return
+        AppLog.i(TAG_CLERK, "Back in the app with Google sign-in pending; waiting for the callback")
+        clerkReturnGraceJob?.cancel()
+        clerkReturnGraceJob = viewModelScope.launch {
+            delay(CLERK_RESUME_GRACE_MS)
+            if (clerkSignInStartedAt != startedAt || _auth.value.signedIn) return@launch
+            AppLog.w(
+                TAG_CLERK,
+                "No session ${CLERK_RESUME_GRACE_MS} ms after returning; clearing the sign-in spinner",
+            )
+            clerkSignInStartedAt = 0L
+            container.clerkAuth.clearSignInMarker()
+            _auth.update {
+                it.copy(
+                    busy = false,
+                    error = "Google sign-in didn't return to the app. Please try again.",
+                )
+            }
+        }
+    }
+
+    /**
+     * Hands a Clerk deep link that reached [MainActivity] to the SDK (normally the SDK's own
+     * receiver handles it). Covers the relaunch/new-intent path and logs the outcome either way.
+     */
+    fun onAuthCallbackIntent(uri: Uri?) {
+        if (uri == null) return
+        AppLog.i(TAG_CLERK, "Auth callback intent received scheme=${uri.scheme} host=${uri.host}")
+        if (!container.clerkAuth.configured) return
         viewModelScope.launch {
-            container.clerkAuth.signInWithGoogle()
-                .onSuccess { AppLog.i("Clerk", "Google sign-in completed") }
-                .onFailure { error ->
-                    _auth.update { it.copy(error = error.localizedMessage ?: "Google sign-in failed") }
-                }
-            _auth.update { it.copy(busy = false) }
+            val handled = container.clerkAuth.handleCallback(uri)
+            if (handled) {
+                clerkSignInStartedAt = 0L
+                container.clerkAuth.clearSignInMarker()
+                AppLog.i(TAG_CLERK, "Callback consumed; waiting for the session to activate")
+            } else {
+                AppLog.w(TAG_CLERK, "Callback did not match a pending flow (stale or completed elsewhere)")
+            }
         }
     }
 
@@ -965,6 +1202,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         if (clean.isBlank()) return
         if (_auth.value.busy) return
         _auth.update { it.copy(busy = true, error = null) }
+        // The success path flips `signedIn`; mark this as an explicit sign-in so the confirmation
+        // message still appears once (see the flip handler).
+        clerkSignInStartedAt = SystemClock.elapsedRealtime()
         viewModelScope.launch {
             container.clerkAuth.verifyEmailCode(challenge, clean)
                 .onSuccess {
@@ -990,6 +1230,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      * unconfigured, so it never bypasses a real gate; the rest of the app stays fully usable.
      */
     fun continueWithoutAccount() { _auth.update { it.copy(authBypassed = true) } }
+
+    /**
+     * Records that the one-time first-run welcome screen was completed, so it never shows again.
+     * Persisted through the settings store, which also gates the screen back in AuralisRoot.
+     */
+    fun completeWelcome() { updateSettings { it.copy(welcomeSeen = true) } }
 
     /** Signs out of Clerk. The sign-in screen returns, so the user can pick another account. */
     fun signOutClerk() {
@@ -1215,10 +1461,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val tracks = _ytPlaylist.value.tracks
         if (tracks.isEmpty()) return
         _remoteTracks.update { known -> known + tracks.associateBy { it.id } }
+        val context = PlaybackContext.playlist(
+            id = _ytPlaylist.value.id?.hashCode()?.toLong() ?: 0L,
+            name = _ytPlaylist.value.title.ifBlank { "YouTube playlist" },
+        )
         if (shuffle) {
-            container.playback.play(tracks.shuffled(), 0)
+            container.playback.play(tracks.shuffled(), 0, context)
         } else {
-            container.playback.play(tracks, 0)
+            container.playback.play(tracks, 0, context)
         }
         prefetchRemoteTracks(tracks.drop(1))
     }
@@ -1226,7 +1476,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** A row tap on the playlist detail page queues the whole filtered playlist at that position. */
     fun playYouTubePlaylistTrack(track: Track) {
         val list = _ytPlaylist.value.tracks
-        playYouTubeTrackFrom(track, list)
+        playYouTubeTrackFrom(
+            track,
+            list,
+            PlaybackContext.playlist(
+                id = _ytPlaylist.value.id?.hashCode()?.toLong() ?: 0L,
+                name = _ytPlaylist.value.title.ifBlank { "YouTube playlist" },
+            ),
+        )
     }
 
     /** The small play button on a playlist card: fetch (cache-first) and start the first song. */
@@ -1239,7 +1496,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 return@launch
             }
             _remoteTracks.update { known -> known + tracks.associateBy { it.id } }
-            container.playback.play(tracks, 0)
+            container.playback.play(
+                tracks,
+                0,
+                PlaybackContext.playlist(playlist.id.hashCode().toLong(), playlist.title),
+            )
             prefetchRemoteTracks(tracks.drop(1))
         }
     }
@@ -1288,9 +1549,18 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun loadHome(category: HomeCategory = _home.value.category, force: Boolean = false) {
         if (settings.value.youtubeIntegration.not()) return
-        // Signed in: the account's real `FEmusic_home` shelves are the For You feed.
-        if (category == HomeCategory.FOR_YOU && youTubeSignedIn()) {
-            loadSignedInHome(force)
+        // "Personalized Home" off: Home is the plain local Home, which does not use this feed.
+        if (settings.value.personalizedHome.not()) return
+        // Default Home (For You): the account's own `FEmusic_home` shelves when connected, otherwise a
+        // clean local fallback with a Connect card — never the public charts (the old logged-out bug).
+        if (category == HomeCategory.FOR_YOU) {
+            if (isYouTubeAuthenticated()) loadSignedInHome(force) else loadLocalHome(force)
+            return
+        }
+        // An explicit category chip only makes sense with a real session; signed out, show the same
+        // local fallback instead of worldwide charts.
+        if (!isYouTubeAuthenticated()) {
+            loadLocalHome(force)
             return
         }
         val unchanged = _home.value.category == category
@@ -1328,12 +1598,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * Signed-in For You, laid out like the reference: Top Picks large cards, Recents song rows,
-     * Find Your Mood tiles, then the remaining shelves classified by their own content (song rows,
-     * square album/playlist cards, wide music-video cards, circular artist cards).
+     * Signed-in For You: Top Picks large cards, the account's own "Listen again" recents, Find Your
+     * Mood tiles, "Your most played", then the remaining personalized shelves in YouTube's order.
      *
-     * A failed fetch is an error state with a retry, never an empty feed. Quick Picks load below the
-     * message so the page still has something to play while the account call is broken.
+     * The raw shelves are curated first ([curateHomeShelves]): non-music shelves, teasers under three
+     * items, artless/titleless cards and duplicated songs never reach the UI, and each shelf is capped.
+     * A failed fetch is an error state with a retry, never an empty feed.
      */
     private fun loadSignedInHome(force: Boolean) {
         val unchanged = _home.value.category == HomeCategory.FOR_YOU
@@ -1347,42 +1617,68 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 loadState = HomeLoadState.Loading,
                 refreshing = true,
                 homeError = null,
+                needsYouTubeConnect = false,
+                connectExpired = false,
                 rows = if (unchanged) previous.rows else emptyMap(),
             )
         }
         homeJob?.cancel()
         homeJob = viewModelScope.launch {
-            val signedIn = youTubeSignedIn()
+            val authenticated = isYouTubeAuthenticated()
             val shelvesJob = async { container.youtube.homeShelves(force) }
             val historyJob = async {
                 runCatching { container.youtube.historySongs() }.getOrDefault(emptyList())
             }
             val shelvesResult = shelvesJob.await()
-            val history = historyJob.await().take(HOME_ROW_SIZE).map { it.toTrack() }
+            // Recents fallback comes from the merged mirror first (it now includes plays from other
+            // devices via STEP 8); the fetched history page is only a first-run fallback.
+            var history = mergedHistory.value
+                .filter { it.videoId != null }
+                .map { it.track }
+                .take(HOME_ROW_SIZE)
+            if (history.isEmpty()) {
+                history = historyJob.await().take(HOME_ROW_SIZE).map { it.toTrack() }
+            }
             val strict = settings.value.youtubeSongsOnly
 
             val rows = LinkedHashMap<String, HomeRow>()
             when (shelvesResult) {
                 is YouTubeLoadResult.Success -> {
-                    val shelves = shelvesResult.value
+                    val raw = shelvesResult.value
+                    val curated = curateHomeShelves(raw)
+                    // The account's own "Listen again"/recents shelf IS the Recents row; it must not
+                    // also render as a generic shelf below.
+                    val recentsShelf = curated.firstOrNull(::looksLikeRecentsShelf)
+                    val forLayout = if (recentsShelf != null) {
+                        curated.filterNot { it === recentsShelf }
+                    } else {
+                        curated
+                    }
                     // Some accounts return no mood/genre shelf. The anonymous Home already derived
                     // the same tiles, so reuse them instead of dropping "Find Your Mood".
-                    val fallbackMoods = if (shelves.none(::looksLikeMoodShelf)) {
+                    val fallbackMoods = if (forLayout.none(::looksLikeMoodShelf)) {
                         runCatching { container.youtube.homeFeed().moods }.getOrDefault(emptyList())
                     } else {
                         emptyList()
                     }
-                    val layout = buildSignedInLayout(shelves, strict, fallbackMoods)
+                    val layout = buildSignedInLayout(forLayout, strict, fallbackMoods)
 
                     layout.topPicks?.let { rows[SECTION_TOP_PICKS] = it.toHomeRow(SECTION_TOP_PICKS) }
 
-                    if (history.isNotEmpty()) {
+                    // Recents: the account's real recents shelf when YouTube sent one, else history.
+                    val recentCards = recentsShelf?.items.orEmpty().filter { !it.videoId.isNullOrBlank() }
+                    val recents = recentCards
+                        .map { it.toTrack() }
+                        .ifEmpty { history }
+                        .distinctBy { it.id }
+                        .take(HOME_ROW_SIZE)
+                    if (recents.isNotEmpty()) {
                         // Every row track is registered so a tap resolves through the normal path.
-                        _remoteTracks.update { known -> known + history.associateBy { it.id } }
+                        _remoteTracks.update { known -> known + recents.associateBy { it.id } }
                         rows[SECTION_RECENTS] = HomeRow(
                             id = SECTION_RECENTS,
-                            title = "Recents",
-                            tracks = history,
+                            title = "Listen again",
+                            tracks = recents,
                             style = HomeRowStyle.TRACKS,
                         )
                     }
@@ -1391,25 +1687,41 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                         rows[SECTION_MOODS] = it.toHomeRow(SECTION_MOODS).copy(showAll = true)
                     }
 
+                    mostPlayedRow()?.let { rows[SECTION_MOST_PLAYED] = it }
+
                     layout.shelves.forEachIndexed { index, block ->
                         val id = "$SECTION_YT_SHELF$index"
                         rows[id] = block.toHomeRow(id)
                     }
 
+                    val source = if (container.youtube.lastHomeFromCache) "cache" else "network"
                     AppLog.i(
                         "YouTube",
-                        "Home: status=OK signed=$signedIn shelves=${shelves.size} " +
-                            "rows=${rows.size} topPicks=${layout.topPicks?.cards?.size ?: 0} " +
-                            "moods=${layout.moods?.cards?.size ?: 0} " +
-                            "titles=${shelves.take(3).joinToString { it.title }}",
+                        "Home: status=OK authenticated=$authenticated " +
+                            "sapisid=${container.youtubeAuth.snapshot()?.sapisid != null} " +
+                            "source=$source sections=${curated.size}/${raw.size} " +
+                            "skipped=${raw.size - curated.size} " +
+                            "items=${curated.sumOf { it.items.size }} rows=${rows.size} " +
+                            "titles=${curated.take(6).joinToString { safeShelfLabel(it.title) }}",
                     )
+                    if (!authenticated) {
+                        AppLog.w("YouTube", "Home: feed looks generic (authenticated=false)")
+                    } else if (recentsShelf == null) {
+                        AppLog.w(
+                            "YouTube",
+                            "Home: feed may be generic (no Listen again shelf; " +
+                                "authenticated=true, sections=${curated.size})",
+                        )
+                    }
                 }
                 is YouTubeLoadResult.Failure -> {
                     AppLog.w(
                         "YouTube",
-                        "Home: status=FAIL signed=$signedIn code=${shelvesResult.code} " +
-                            "reason=${shelvesResult.reason}",
+                        "Home: status=FAIL authenticated=$authenticated code=${shelvesResult.code} " +
+                            "reason=${shelvesResult.reason} source=${if (container.youtube.lastHomeFromCache) "cache" else "network"}",
                     )
+                    // A rejected session must offer a reconnect, never silently fall back to charts.
+                    if (shelvesResult.code == 401 || shelvesResult.code == 403) offerYouTubeReconnect()
                 }
             }
 
@@ -1441,9 +1753,106 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     refreshing = false,
                     loadState = if (failed) HomeLoadState.Failed else HomeLoadState.Loaded,
                     homeError = if (failed) "Couldn't load your recommendations" else null,
+                    needsYouTubeConnect = false,
+                    connectExpired = container.youtubeAuth.snapshot()?.expired == true,
                 )
             }
         }
+    }
+
+    /**
+     * Logged-out / unauthenticated For You. Shows ONLY the user's own local activity — recent plays,
+     * their most played songs and Quick Picks seeded from that activity — plus the Connect card the
+     * screen draws on top. The public "top hits"/charts feed is deliberately never loaded here, which
+     * is what made a logged-out Home look like a stranger's recommendations.
+     */
+    private fun loadLocalHome(force: Boolean) {
+        val unchanged = _home.value.category == HomeCategory.FOR_YOU
+        val hasContent = _home.value.rows.values.any { it.cards.isNotEmpty() || it.tracks.isNotEmpty() }
+        if (!force && unchanged && hasContent && !_home.value.needsYouTubeConnect) return
+
+        val generation = ++homeLoadGeneration
+        _home.update { previous ->
+            previous.copy(
+                category = HomeCategory.FOR_YOU,
+                loadState = HomeLoadState.Loading,
+                refreshing = true,
+                homeError = null,
+                needsYouTubeConnect = true,
+                connectExpired = container.youtubeAuth.snapshot()?.expired == true,
+                rows = if (unchanged) previous.rows else emptyMap(),
+            )
+        }
+        homeJob?.cancel()
+        homeJob = viewModelScope.launch {
+            val rows = LinkedHashMap<String, HomeRow>()
+
+            val recent = youtubeRecents.value.filter { it.isRemote }.take(HOME_ROW_SIZE)
+            if (recent.isNotEmpty()) {
+                _remoteTracks.update { known -> known + recent.associateBy { it.id } }
+                rows[SECTION_RECENTS] = HomeRow(
+                    id = SECTION_RECENTS,
+                    title = "Recent",
+                    tracks = recent,
+                    style = HomeRowStyle.TRACKS,
+                )
+            }
+            mostPlayedRow()?.let { rows[SECTION_MOST_PLAYED] = it }
+
+            // Quick Picks from the user's own seeds only: no "popular songs" fallback when logged out.
+            val quick = runCatching { loadQuickPicks(allowPopular = false) }.getOrNull() ?: HomeSection()
+            if (quick.tracks.isNotEmpty()) {
+                _remoteTracks.update { known -> known + quick.tracks.associateBy { it.id } }
+                rows[SECTION_QUICK_PICKS] = HomeRow(
+                    id = SECTION_QUICK_PICKS,
+                    title = "Quick Picks",
+                    tracks = quick.tracks,
+                    style = HomeRowStyle.TRACKS,
+                    seedVideoId = quick.seedVideoId,
+                    hasMore = quick.hasMore,
+                )
+            }
+
+            AppLog.i(
+                "YouTube",
+                "Home: status=local authenticated=false sapisid=" +
+                    "${container.youtubeAuth.snapshot()?.sapisid != null} rows=${rows.size} " +
+                    "generic=true (no account recommendations)",
+            )
+            _home.update { previous ->
+                if (generation != homeLoadGeneration) return@update previous
+                previous.copy(
+                    rows = rows,
+                    refreshing = false,
+                    loadState = HomeLoadState.Loaded,
+                    homeError = null,
+                    needsYouTubeConnect = true,
+                    connectExpired = container.youtubeAuth.snapshot()?.expired == true,
+                )
+            }
+        }
+    }
+
+    /**
+     * "Your most played": the top YouTube songs by play count across history. Local library tracks
+     * are excluded — Home plays through the YouTube path, so a local id would not resolve. Returns
+     * null unless there are at least [MIN_MOST_PLAYED] distinct songs.
+     */
+    private fun mostPlayedRow(): HomeRow? {
+        val top = mergedHistory.value
+            .filter { it.videoId != null }
+            .sortedByDescending { it.playCount }
+            .distinctBy { it.track.id }
+            .take(MOST_PLAYED_LIMIT)
+        if (top.size < MIN_MOST_PLAYED) return null
+        val tracks = top.map { it.track }
+        _remoteTracks.update { known -> known + tracks.associateBy { it.id } }
+        return HomeRow(
+            id = SECTION_MOST_PLAYED,
+            title = "Your most played",
+            tracks = tracks,
+            style = HomeRowStyle.TRACKS,
+        )
     }
 
     /** One classified shelf block as a Home row; track rows also join the playable remote map. */
@@ -1651,8 +2060,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Plays a mood song inside the mood's own queue. */
     fun playExploreTrack(track: Track) {
-        _remoteTracks.update { known -> known + (track.id to track) }
-        play(track, _explore.value.tracks)
+        playList(
+            track,
+            _explore.value.tracks,
+            PlaybackContext(PlaybackContextKind.ALBUM, "explore", "Explore"),
+        )
     }
 
     private suspend fun runHomeRow(spec: HomeSectionSpec, generation: Int) {
@@ -1740,7 +2152,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         )
     }
 
-    private suspend fun loadQuickPicks(): HomeSection {
+    private suspend fun loadQuickPicks(allowPopular: Boolean = true): HomeSection {
         val out = LinkedHashMap<String, Track>()
         val seedVideo = frequentlyPlayedVideoIds().firstOrNull() ?: recentVideoIds().firstOrNull()
         seedVideo?.let { id ->
@@ -1752,7 +2164,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 .forEach { out.putIfAbsent(it.videoId, it.toTrack()) }
             if (out.size >= HOME_ROW_SIZE) break
         }
-        if (out.isEmpty()) out.putAll(fallbackPopular())
+        // Logged out, "popular songs" would be a stranger's charts, not a recommendation.
+        if (out.isEmpty() && allowPopular) out.putAll(fallbackPopular())
         return HomeSection(
             tracks = out.values.take(HOME_ROW_SIZE),
             seedVideoId = seedVideo,
@@ -2134,7 +2547,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         )
         val track = song.toTrack()
         _remoteTracks.update { known -> known + (track.id to track) }
-        play(track, listOf(track))
+        playList(track, listOf(track), PlaybackContext.radio("Home"))
     }
 
     /** Instant Room mirror + best-effort account call; rolled back with a toast if the account rejects it. */
@@ -2170,23 +2583,28 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      * Plays one YouTube song on its own. Used where the caller has no surrounding list (Home cards,
      * History, search results).
      */
-    fun playYouTubeTrack(track: Track) = playYouTubeTrackFrom(track, listOf(track))
+    fun playYouTubeTrack(track: Track) =
+        playYouTubeTrackFrom(track, listOf(track), PlaybackContext.radio("Home"))
 
     /**
-     * Plays a YouTube song chosen from a mixed list (Liked Songs, playlist detail). Every streamable
-     * entry in [list] is registered so the player can resolve it, and the queue starts at the
-     * tapped song. Local entries are left out: the stream resolver only understands YouTube ids.
+     * Plays a YouTube song chosen from a mixed list (Liked Songs, playlist detail, History). Every
+     * entry in [list] is queued, including local files; the player resolves only the YouTube ones
+     * lazily. The queue starts at the tapped song and is tagged with [context] so Next stays inside
+     * that list instead of wandering into recommendations.
      */
-    fun playYouTubeTrackFrom(track: Track, list: List<Track>) {
+    fun playYouTubeTrackFrom(
+        track: Track,
+        list: List<Track>,
+        context: PlaybackContext = PlaybackContext.radio("Search"),
+    ) {
         // Start the end-to-end latency clock; PlaybackService logs resolved/ready/audible against it.
         com.auralis.app.playback.PlaybackTiming.markTap()
-        val remote = list.filter { it.isYouTubeTrack() }
         // `playbackStart` never substitutes the list's first song for a missing tap; the tapped song
         // plays on its own instead. That was the old index-0 bug on a stale/mismatched list.
-        val start = playbackStart(track, remote)
+        val start = playbackStart(track, list)
         if (!start.found) AppLog.w("Playback", "Tapped YouTube song was missing from the queue; playing it alone")
-        _remoteTracks.update { known -> known + start.queue.associateBy { it.id } }
-        container.playback.play(start.queue, start.index)
+        _remoteTracks.update { known -> known + start.queue.filter { it.isRemote }.associateBy { it.id } }
+        container.playback.play(start.queue, start.index, context)
         _youtubeResolvingId.value = track.id
         prefetchRemoteTracks(start.queue.drop(start.index + 1).take(REMOTE_PREFETCH_COUNT))
         viewModelScope.launch {
@@ -2266,10 +2684,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      * is a local file and stays on the existing local path. Used for sections whose rows are all
      * local, where a YouTube id can still appear through a saved queue entry.
      */
-    fun playLibraryTrack(track: Track, list: List<Track>) = routeLibraryPlay(
+    fun playLibraryTrack(
+        track: Track,
+        list: List<Track>,
+        context: PlaybackContext = PlaybackContext.Local,
+    ) = routeLibraryPlay(
         track,
-        playLocal = { play(it, tracks.value) },
-        playYouTube = { playYouTubeTrackFrom(it, list) },
+        playLocal = { playList(it, list, context) },
+        playYouTube = { playYouTubeTrackFrom(it, list, context) },
     )
 
     fun downloadTrack(track: Track) {
@@ -2295,11 +2717,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun playHistoryEntry(entry: HistoryEntry) {
         val list = mergedHistory.value.map { it.track }
-        if (entry.track.isYouTubeTrack()) {
-            playYouTubeTrackFrom(entry.track, list)
-        } else {
-            play(entry.track, list.filter { !it.isYouTubeTrack() })
-        }
+        routeLibraryPlay(
+            entry.track,
+            playLocal = { playList(it, list, PlaybackContext.History) },
+            playYouTube = { playYouTubeTrackFrom(it, list, PlaybackContext.History) },
+        )
     }
 
     /** "Clear history" on the History screen: local plays and the YouTube mirror both go. */
@@ -2367,6 +2789,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         container.liveSync.onAppForeground()
         // Re-read the account's recent history (respects the repository's five-minute cache).
         syncYouTubeHistory()
+        // If an OAuth browser trip was in progress, this is the return; make sure it can't hang.
+        if (container.clerkAuth.configured) scheduleClerkReturnCheck()
     }
 
     /** Called from MainActivity.onStop: the in-process lanes step aside for the background tier. */
@@ -2410,12 +2834,21 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      * track, the tapped song is played on its own: falling back to index 0 (the old behaviour)
      * quietly played a different song, which is exactly what the Liked Songs rows showed.
      */
-    fun play(track: Track, list: List<Track> = tracks.value) {
+    fun play(track: Track, list: List<Track> = tracks.value) =
+        playList(track, list, PlaybackContext.Local)
+
+    /**
+     * Starts [list] as the whole queue, tagged with the context it came from. Mixed local + YouTube
+     * lists are one queue: the service resolves remote items lazily and the radio engine appends
+     * only after this context is exhausted.
+     */
+    fun playList(track: Track, list: List<Track>, context: PlaybackContext) {
         val start = playbackStart(track, list)
         if (!start.found) {
             AppLog.w("Playback", "Tapped track was not in the supplied queue; playing it alone")
         }
-        container.playback.play(start.queue, start.index)
+        _remoteTracks.update { known -> known + start.queue.filter { it.isRemote }.associateBy { it.id } }
+        container.playback.play(start.queue, start.index, context)
     }
 
     /**
@@ -2442,7 +2875,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         // The first automix fetch is the seeding call; do not let the refill watcher duplicate it.
         refillJob?.cancel()
         radioSeedingTrackId = track.id
-        container.playback.play(listOf(track), 0)
+        container.playback.play(listOf(track), 0, PlaybackContext.radio("Radio"))
         _youtubeResolvingId.value = track.id
 
         // Warm the exact URL the player will open; the resolver de-duplicates the in-flight work.
@@ -2473,7 +2906,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     .toList()
                 if (additions.isEmpty()) return@launch
                 _remoteTracks.update { known -> known + additions.associateBy { it.id } }
-                container.playback.addToQueue(additions)
+                container.playback.addAutoplay(additions)
                 AppLog.i("YouTube", "Queued ${additions.size} radio tracks")
                 prefetchRemoteStream(additions.firstOrNull()?.id)
             } catch (cancel: CancellationException) {
@@ -2629,7 +3062,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val ordered = playlistItems(playlistId).map { it.track }
         if (ordered.isEmpty()) return
         _remoteTracks.update { known -> known + ordered.filter { it.isRemote }.associateBy { it.id } }
-        play(ordered[startIndex.coerceIn(0, ordered.lastIndex)], ordered)
+        val name = playlists.value.firstOrNull { it.id == playlistId }?.name.orEmpty()
+        playList(
+            ordered[startIndex.coerceIn(0, ordered.lastIndex)],
+            ordered,
+            PlaybackContext.playlist(playlistId, name),
+        )
     }
 
     /** Plays a playlist in a random order (Part R ⋮ menu). */
@@ -2637,9 +3075,30 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val ordered = playlistItems(playlistId).map { it.track }
         if (ordered.isEmpty()) return
         _remoteTracks.update { known -> known + ordered.filter { it.isRemote }.associateBy { it.id } }
-        play(ordered.random(), ordered)
+        val name = playlists.value.firstOrNull { it.id == playlistId }?.name.orEmpty()
+        playList(ordered.random(), ordered, PlaybackContext.playlist(playlistId, name))
         if (!container.playback.state.value.shuffle) toggleShuffle()
     }
+
+    /** Album card/row: queues the album in its own order, starting at the first song. */
+    fun playAlbum(album: List<Track>) {
+        val first = album.firstOrNull() ?: return
+        val name = first.album.ifBlank { "Album" }
+        playList(first, album, PlaybackContext.album(name, name))
+    }
+
+    /** Liked Songs: YouTube likes first, then local favourites, matching the Library tile. */
+    fun playLiked(track: Track) {
+        val local = tracks.value.filter { it.id in favorites.value }
+        val mixed = (youtubeLikedTracks.value + local).distinctBy { it.id }
+        playList(track, mixed, PlaybackContext.Liked)
+    }
+
+    /** Downloaded songs: the download list in its own order, never the whole library. */
+    fun playDownloaded(track: Track) = playList(track, downloads.value, PlaybackContext.Downloaded)
+
+    /** Local Files: the full local library, which is the list that screen shows. */
+    fun playLocalLibrary(track: Track) = playList(track, tracks.value, PlaybackContext.Local)
     fun toggleFavorite(track: Track) {
         if (track.isRemote) { _messages.trySend("Favorites are for library songs only"); return }
         viewModelScope.launch { runCatching { container.database.favoriteDao().toggle(track.id, System.currentTimeMillis()) }.onFailure { report("Couldn't update favorite", it) } }
@@ -2687,11 +3146,68 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 dao.insertEntries(listOf(PlaylistEntryEntity(playlistId=playlistId,trackId=track.id,position=position)))
             }
             dao.touch(playlistId,System.currentTimeMillis())
-        }.onSuccess { _messages.trySend("Added to playlist") }.onFailure { report("Couldn't add song to playlist", it) }
+        }.onSuccess {
+                _messages.trySend("Added to playlist")
+                // Live queue: if this playlist is what is playing, show the new song immediately
+                // without restarting the current track.
+                syncActivePlaylistQueue(
+                    playlistId,
+                    (playlistItems(playlistId).map { it.track } + track).distinctBy { it.id },
+                )
+            }.onFailure { report("Couldn't add song to playlist", it) }
             // Only streamed songs exist on YouTube; local-only songs are skipped.
             if (track.isRemote) syncPlaylistAdd(playlistId, track)
         }
     }
+
+    /**
+     * Adds [track] to a YouTube Music account playlist that has no local mirror row. This is an
+     * account-only edit: only streamed songs exist on YouTube, so a local file is rejected instead
+     * of being written to Room and never reaching the account. A transient failure is queued in the
+     * same retry table as a mirrored playlist edit.
+     */
+    fun addToAccountPlaylist(playlist: YtPlaylist, track: Track) {
+        if (!track.isRemote) {
+            _messages.trySend("Only YouTube songs can be added to an account playlist")
+            return
+        }
+        val videoId = track.remoteId?.takeIf { it.isNotBlank() }
+            ?: if (track.id.startsWith(YOUTUBE_TRACK_PREFIX)) {
+                track.id.removePrefix(YOUTUBE_TRACK_PREFIX).takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+        if (videoId == null) {
+            _messages.trySend("This song has no YouTube video id")
+            return
+        }
+        if (!settings.value.youtubeIntegration || !youTubeSignedIn()) {
+            _messages.trySend("Log in to YouTube Music to add to this playlist")
+            return
+        }
+        // `YtPlaylist.id` is normally a browse id with the "VL" prefix. The repository keys its
+        // browse cache by the bare playlist id, so strip the prefix here as well as in InnerTube;
+        // otherwise a freshly added song would keep showing a stale cached page.
+        val remotePlaylistId = playlist.id.trim().removePrefix("VL")
+        if (remotePlaylistId.isBlank()) return
+        viewModelScope.launch {
+            val added = runCatching { container.youtube.addPlaylistVideo(remotePlaylistId, videoId) }
+                .getOrDefault(false)
+            if (added) {
+                _messages.trySend("Added to ${playlist.title}")
+            } else {
+                enqueueSync(
+                    "ADD_VIDEO",
+                    playlistId = 0L,
+                    remoteId = remotePlaylistId,
+                    videoId = videoId,
+                    title = null,
+                )
+                _messages.trySend("Queued: will add to ${playlist.title} when YouTube is reachable")
+            }
+        }
+    }
+
     fun removePlaylistItem(playlistId: Long, item: PlaylistItem) {
         viewModelScope.launch { runCatching {
             val dao = container.database.playlistDao()
@@ -2702,6 +3218,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 dao.removeEntry(playlistId, item.track.id)
             }
             dao.touch(playlistId, System.currentTimeMillis())
+        }.onSuccess {
+            syncActivePlaylistQueue(
+                playlistId,
+                playlistItems(playlistId).filterNot { it.track.id == item.track.id }.map { it.track },
+            )
         }.onFailure { report("Couldn't remove song from playlist", it) }
             if (item.remote) syncPlaylistRemove(playlistId, item)
         }
@@ -2718,12 +3239,34 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             reordered.forEachIndexed { position, entry ->
                 if (entry.remote) dao.setYtPosition(entry.entryId, position) else dao.setPosition(entry.entryId, position)
             }
+            syncActivePlaylistQueue(playlistId, reordered.map { it.track })
         }.onFailure { report("Couldn't reorder the playlist", it) } }
+    }
+
+    /**
+     * Keeps the live queue in step with an edit to the playlist it was started from. Only the
+     * context block is replaced; the current song, its position and the autoplay tail survive.
+     */
+    private fun syncActivePlaylistQueue(playlistId: Long, tracks: List<Track>) {
+        val context = container.playback.state.value.context ?: return
+        if (context.kind != PlaybackContextKind.PLAYLIST || context.id != playlistId.toString()) return
+        if (tracks.isEmpty()) return
+        _remoteTracks.update { known -> known + tracks.filter { it.isRemote }.associateBy { it.id } }
+        container.playback.syncContext(tracks)
     }
 
     // ---- YouTube Music account sync (Part E) ------------------------------------------------
 
-    private fun youTubeSignedIn(): Boolean = container.youtubeAuth.snapshot()?.signedIn == true
+    /**
+     * The single source of truth for "this device holds a usable YouTube Music login". True only when
+     * the stored cookie carries a signing secret (`SAPISID` / `__Secure-3PAPISID`) and the session has
+     * not been rejected. The ordered account sync proves it with a live `account_menu` call and marks
+     * the session expired on 401/403, so Home/history/likes all rely on this one signal instead of
+     * each re-deriving "signed in" from the cookie text.
+     */
+    fun isYouTubeAuthenticated(): Boolean = container.youtubeAuth.snapshot()?.signedIn == true
+
+    private fun youTubeSignedIn(): Boolean = isYouTubeAuthenticated()
 
     /**
      * Mirrors a freshly created local playlist to the account. Only does work when playlist sync is
@@ -3237,16 +3780,37 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Reorders one lyrics provider by [delta] positions inside the persisted lookup order. */
+    /**
+     * Reorders one lyrics provider by [delta] positions inside the persisted lookup order. The move
+     * is applied inside the DataStore transaction (reading the freshest stored order), so rapid
+     * drag steps cannot clobber each other the way a read-modify-write from UI state would.
+     */
     fun moveLyricsProvider(id: String, delta: Int) {
-        val order = settings.value.lyricsProviderOrder.toMutableList()
-        val index = order.indexOf(id)
-        if (index < 0) return
-        val target = (index + delta).coerceIn(0, order.lastIndex)
-        if (target == index) return
-        order.removeAt(index)
-        order.add(target, id)
-        updateSettings { it.copy(lyricsProviderOrder = order) }
+        viewModelScope.launch {
+            runCatching {
+                container.settings.update { current ->
+                    val order = current.lyricsProviderOrder.toMutableList()
+                    val index = order.indexOf(id)
+                    if (index < 0) return@update current
+                    val target = (index + delta).coerceIn(0, order.lastIndex)
+                    if (target == index) return@update current
+                    order.removeAt(index)
+                    order.add(target, id)
+                    current.copy(lyricsProviderOrder = order)
+                }
+            }.onFailure { report("Couldn't reorder lyrics providers", it) }
+            runCatching { container.lyrics.clearNegativeCache() }
+        }
+    }
+
+    /** Restores the default lyrics provider order and enabled set (Settings > Lyrics). */
+    fun resetLyricsProviders() {
+        updateSettings {
+            it.copy(
+                lyricsProviderOrder = AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER,
+                lyricsProvidersEnabled = AppSettings().lyricsProvidersEnabled,
+            )
+        }
         onLyricsSettingsChanged()
     }
 
@@ -3431,6 +3995,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             remoteId = current?.remoteId,
             queueJson = PlaybackCheckpointCodec.encode(checkpointQueue(state.queueIds, state.currentIndex, known)),
             savedAt = System.currentTimeMillis(),
+            contextKind = state.context?.kind?.name,
+            contextId = state.context?.id,
+            contextName = state.context?.name,
         )
     }
 
@@ -3505,9 +4072,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 if (queue.isEmpty()) return@launch
                 val index = queue.indexOfFirst { it.id == targetId }.takeIf { it >= 0 } ?: 0
                 if (container.playback.state.value.connected) {
-                    container.playback.restore(queue, index, position, wasPlaying = true, restored.shuffle, restored.repeatMode)
+                    container.playback.restore(queue, index, position, wasPlaying = true, restored.shuffle, restored.repeatMode, restored.context)
                 } else {
-                    container.playback.play(queue, index)
+                    container.playback.play(queue, index, restored.context)
                 }
             } finally {
                 resumeInFlight = false
@@ -3570,6 +4137,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             durationMs = snapshot.durationMs.takeIf { it > 0L } ?: tracks.getOrNull(index)?.durationMs ?: 0L,
             shuffle = snapshot.shuffle,
             repeatMode = snapshot.repeatMode,
+            context = snapshot.contextKind?.let { kind ->
+                runCatching { PlaybackContextKind.valueOf(kind) }.getOrNull()
+                    ?.let { PlaybackContext(it, snapshot.contextId.orEmpty(), snapshot.contextName.orEmpty()) }
+            },
         )
     }
 
@@ -3641,6 +4212,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         const val SECTION_TOP_PICKS = "top_picks"
         /** `FEmusic_history` song rows. */
         const val SECTION_RECENTS = "recents"
+        /** "Your most played" — the account's top songs by local play count. */
+        const val SECTION_MOST_PLAYED = "most_played"
+        /** "Your most played" shows at most this many songs. */
+        const val MOST_PLAYED_LIMIT = 10
+        /** …and only when there are at least this many distinct songs, so it is never near-empty. */
+        const val MIN_MOST_PLAYED = 5
         /** `FEmusic_history` is re-read on this cadence while the app is open (matches the cache TTL). */
         const val HISTORY_SYNC_INTERVAL_MS = 5L * 60L * 1000L
         /** Mood/genre tiles; "Show all" opens Explore. */

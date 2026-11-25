@@ -11,12 +11,16 @@ import com.auralis.app.ui.components.AuralisBackdrop
 import com.auralis.app.ui.glass.GlassTopBar
 import com.auralis.app.ui.glass.GlassAlertDialog
 import com.auralis.app.ui.glass.GlassAvatarButton
+import com.auralis.app.ui.glass.GlassBlurPolicy
 import com.auralis.app.ui.glass.LocalDockGlassStyle
+import com.auralis.app.ui.glass.LocalGlassBlurAllowed
 import com.auralis.app.ui.glass.GlassOverlayScrim
 import com.auralis.app.ui.glass.GlassOverlayState
 import com.auralis.app.ui.glass.LocalGlassOverlay
+import com.auralis.app.ui.glass.GlassConfig
 import com.auralis.app.ui.glass.GlassDragState
 import com.auralis.app.ui.glass.GlassSettings
+import com.auralis.app.ui.glass.LocalGlassConfig
 import com.auralis.app.ui.glass.LocalGlassDrag
 import com.auralis.app.ui.glass.LocalGlassSettings
 import com.auralis.app.ui.glass.LocalHazeState
@@ -52,8 +56,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import com.auralis.app.ui.theme.AuralisMotion
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -109,6 +116,7 @@ import com.auralis.app.ui.components.AuralisLogo
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.nav.Destination
 import com.auralis.app.ui.nav.Tab
+import com.auralis.app.ui.nav.isSettingsDestination
 import com.auralis.app.ui.screens.AboutScreen
 import com.auralis.app.ui.settings.SettingsActions
 import com.auralis.app.ui.settings.SettingsHubScreen
@@ -145,6 +153,7 @@ import com.auralis.app.ui.theme.AuralisAppTheme
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.domain.model.ThemeMode
 import com.auralis.app.ui.performance.LocalPerformanceMode
+import com.auralis.app.ui.performance.LocalDeviceConditions
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
 import com.auralis.app.ui.performance.PerformanceProfile
@@ -227,6 +236,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val profile by viewModel.performanceProfile.collectAsStateWithLifecycle()
     val performanceMode by viewModel.performanceMode.collectAsStateWithLifecycle()
     val performanceReason by viewModel.performanceReason.collectAsStateWithLifecycle()
+    // STEP 2/3: the ONE glass config. The repository combines the stored transparency/clarity/
+    // outlines with the resolved performance tier; provided below via LocalGlassConfig.
+    val glassConfig by viewModel.glassConfig.collectAsStateWithLifecycle()
+    val deviceConditions by viewModel.performanceConditions.collectAsStateWithLifecycle()
     // GitHub release state; drives the global dialog, the Settings row and the dock badge.
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     // YouTube source state: remote search results + the song currently being resolved.
@@ -303,6 +316,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
             durationMs = restored.durationMs,
             queueIds = restored.queue.map { it.id },
             upNextIds = restored.queue.drop(restored.index + 1).map { it.id },
+            contextIds = restored.queue.map { it.id },
+            autoplayIds = emptyList(),
+            context = restored.context,
             currentIndex = restored.index,
             shuffle = restored.shuffle,
             repeat = restored.repeatMode,
@@ -327,30 +343,29 @@ fun AuralisRoot(viewModel: AppViewModel) {
     // was composed, so a slow first composition (Home feed, large Library, Glass blur capture)
     // left the window showing only the bare backdrop for that whole time.
 
-    // The three Appearance controls, in one place. Committed values come from DataStore; while a
-    // slider is dragged the Appearance screen writes a transient GlassDragState so the whole app
-    // updates live, and only the drag end is persisted.
-    val persistedGlass = remember(
-        settings.dockGlassOpacity,
-        settings.glassClarity,
-        settings.dockGlassBlur,
-    ) {
-        GlassSettings.fromPercent(
-            settings.dockGlassOpacity,
-            settings.glassClarity,
-            settings.dockGlassBlur,
-        )
-    }
+    // The three Appearance controls, in ONE place. The committed values come from the
+    // GlassConfigRepository (DataStore) via [glassConfig]; while a slider is dragged the Appearance
+    // screen writes a transient GlassDragState so the whole app updates live, and only the drag end
+    // is persisted through the repository.
     val glassDrag = remember { GlassDragState() }
     // Once DataStore catches up with the committed drag, drop the transient copy. The effect reads
     // the drag state only when it runs, so AuralisRoot does not subscribe to every slider tick.
-    LaunchedEffect(persistedGlass) {
-        if (glassDrag.value == persistedGlass) glassDrag.value = null
+    LaunchedEffect(glassConfig) {
+        if (glassDrag.value == glassConfig) glassDrag.value = null
     }
 
     AuralisTheme(themeStyle = settings.themeStyle, darkTheme = dark, accentName = settings.accent, visualPerformance = profile.tier) {
         LyricsFontPreloader()
         SystemBarsAppearance(dark || settings.themeStyle == ThemeStyle.GLASSMORPHIC)
+
+        // First run only: a short welcome screen ahead of the sign-in gate. Gated on the persisted
+        // flag so it appears exactly once per install, and on "not already signed in" so an existing
+        // user who updates the app can never be shown it again. Completing it records the visit and
+        // the login screen takes over on the next frame.
+        if (!settings.welcomeSeen && !auth.signedIn) {
+            com.auralis.app.ui.screens.WelcomeScreen(onGetStarted = viewModel::completeWelcome)
+            return@AuralisTheme
+        }
 
         // Sign-in gate. When a Clerk publishable key was configured at build time, this shows the
         // login screen until a session exists. A keyless build shows a clear "sign-in isn't
@@ -456,6 +471,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
             onToggleLiveSync = viewModel::setLiveSyncEnabled,
             onSyncLiveNow = viewModel::syncLiveNow,
             playbackReporting = playbackReporting,
+            onDockTransparencyChange = viewModel::setDockTransparency,
+            onGlassClarityChange = viewModel::setGlassClarity,
+            onGlassOutlinesChange = viewModel::setGlassOutlines,
         )
 
         BackHandler(enabled = nowPlayingOpen || nav.stack.isNotEmpty()) { if (nowPlayingOpen) nowPlayingOpen = false else viewModel.back() }
@@ -475,15 +493,17 @@ fun AuralisRoot(viewModel: AppViewModel) {
             effectiveProfile.isLow -> 0.6f
             else -> 1f
         }
-        // Every glass surface samples this one captured layer. It stays registered even at blur 0
-        // so dragging the slider up starts blurring immediately, without remounting the content.
-        // No SDK gate: Haze 1.6 uses RenderEffect on Android 12+ and RenderScript on Android 11
-        // and below, so the dock can blur on every supported API level.
+        // Every glass surface samples this one captured layer. It is registered based on whether
+        // the platform/user *allows* capture at all (Android 12+, not "Reduce blur and effects",
+        // not manual Low mode) and deliberately NOT on the Blur-strength slider, so at 0% the layer
+        // still exists and dragging the slider up blurs the dock in the same frame, without
+        // remounting the content. [GlassBlurPolicy.allowed] (which adds "strength > 0") is what
+        // each surface uses to decide whether to actually draw the blur.
         val glassHazeAllowed = settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
-            effectiveProfile.blurEnabled
+            GlassBlurPolicy.sourceAllowed(settings)
         GlassSettingsProvider(
             drag = glassDrag,
-            persisted = persistedGlass,
+            persisted = glassConfig,
             settings = settings,
             profile = profile,
             performanceReason = performanceReason,
@@ -496,6 +516,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             LocalPerformanceProfile provides effectiveProfile,
             LocalPerformanceMode provides performanceMode,
             LocalPerformanceReason provides performanceReason,
+            LocalDeviceConditions provides deviceConditions,
             // Glass content draws edge-to-edge under the dock and reserves this inside its lists.
             LocalDockBottomInset provides if (dockStyle == DockStyle.GLASS) DockMetrics.GlassExpandedHeight + DockMetrics.GlassBottomMargin else 0.dp,
             LocalDownloadActions provides DownloadActions(downloadedIds, viewModel::downloadTrack, viewModel::deleteDownload),
@@ -548,6 +569,11 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onClearQueue = viewModel::clearQueue,
                     onStartSleepTimer = viewModel::startSleepTimer,
                     onCancelSleepTimer = viewModel::cancelSleepTimer,
+                    playlists = playlists,
+                    youtubePlaylists = youtubePlaylists,
+                    onAddToPlaylist = viewModel::addToPlaylist,
+                    onAddToAccountPlaylist = viewModel::addToAccountPlaylist,
+                    onRefreshPlaylists = viewModel::refreshYouTubeLibrary,
                     onOpenEqualizer = { nowPlayingOpen = false; viewModel.push(Destination.Equalizer) },
                     onOpenWrapped = { nowPlayingOpen = false; viewModel.push(Destination.Wrapped) },
                     onOpenBackup = { nowPlayingOpen = false; viewModel.push(Destination.Backup) },
@@ -569,7 +595,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     ) {
                         Crossfade(
                             targetState = settings.playerBackground,
-                            animationSpec = tween(360),
+                            animationSpec = AuralisMotion.tweenCreamy(AuralisMotion.Slow),
                             modifier = Modifier
                                 .fillMaxSize()
                                 .then(
@@ -609,10 +635,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                 )
                                 .navigationBarsPadding(),
                         ) {
-                            // Glass Settings owns its own collapsing header + back chevron.
-                            val glassSettings = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC &&
-                                nav.top == Destination.Settings
-                            if (!glassSettings && !(nav.top == null && nav.tab == Tab.HOME)) {
+                            // The Settings hub and every Settings sub-page own their own title row
+                            // with a back chevron, so the shared TopBar must not draw a second one.
+                            val ownsHeader = nav.top?.isSettingsDestination == true
+                            if (!ownsHeader && !(nav.top == null && nav.tab == Tab.HOME)) {
                                 TopBar(
                                     // The back affordance follows the requested destination; the
                                     // old screen is only a short crossfade behind the incoming one.
@@ -632,15 +658,30 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     if (transitionScale == 0f) {
                                         EnterTransition.None togetherWith ExitTransition.None
                                     } else {
-                                        val outMs = (90 * transitionScale).toInt()
-                                        val inMs = (140 * transitionScale).toInt()
-                                        (fadeIn(tween(inMs, delayMillis = outMs)) +
-                                            scaleIn(
-                                                tween(inMs, delayMillis = outMs),
-                                                initialScale = 0.985f,
-                                            )) togetherWith
-                                            (fadeOut(tween(outMs)) +
-                                                scaleOut(tween(outMs), targetScale = 0.985f))
+                                        // Creamy fade-through, now with a gentle rise: the outgoing
+                                        // screen sinks and dissolves first (so translucent glass never
+                                        // ghosts it), then the incoming screen floats up into place. The
+                                        // long ease-out curve is what makes the hand-off feel soft.
+                                        val outMs = (140 * transitionScale).toInt()
+                                        val inMs = (320 * transitionScale).toInt()
+                                        (fadeIn(
+                                            tween(inMs, delayMillis = outMs, easing = AuralisMotion.Creamy),
+                                        ) + slideInVertically(
+                                            animationSpec = tween(inMs, delayMillis = outMs, easing = AuralisMotion.Creamy),
+                                            initialOffsetY = { (it * 0.045f).toInt() },
+                                        ) + scaleIn(
+                                            tween(inMs, delayMillis = outMs, easing = AuralisMotion.Creamy),
+                                            initialScale = 0.972f,
+                                        )) togetherWith
+                                            (fadeOut(tween(outMs, easing = AuralisMotion.Creamy)) +
+                                                slideOutVertically(
+                                                    animationSpec = tween(outMs, easing = AuralisMotion.Creamy),
+                                                    targetOffsetY = { (-it * 0.025f).toInt() },
+                                                ) +
+                                                scaleOut(
+                                                    tween(outMs, easing = AuralisMotion.Creamy),
+                                                    targetScale = 0.985f,
+                                                ))
                                     }.using(SizeTransform(clip = false))
                                 },
                                 contentKey = { it },
@@ -826,7 +867,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                                 { viewModel.playLibraryTrack(it, tracks) }, likeTrack, viewModel::createPlaylist, viewModel::addToPlaylist,
                                                 onQueue = viewModel::enqueue,
                                                 onPlayNext = viewModel::playNext,
-                                                onPlayAlbum = { album -> album.firstOrNull()?.let { viewModel.play(it, album) } },
+                                                onPlayAlbum = viewModel::playAlbum,
                                                 onQueueAlbum = viewModel::enqueueAll,
                                                 onQueuePlaylist = viewModel::enqueuePlaylist,
                                                 scanning = scanning,
@@ -865,9 +906,12 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                                 libraryReady = settingsLoaded,
                                                 hasAudioPermission = audioPermissionGranted,
                                                 onRequestAudioPermission = requestAudioPermission,
-                                                onPlayYouTubeTrackFrom = viewModel::playYouTubeTrackFrom,
+                                                onPlayYouTubeTrackFrom = { track, list -> viewModel.playYouTubeTrackFrom(track, list) },
                                                 liveSyncState = liveSyncUi.state,
                                                 liveSyncPulse = liveSyncUi.newItemsPulse,
+                                                onPlayLiked = viewModel::playLiked,
+                                                onPlayLocal = { track -> viewModel.playLibraryTrack(track, tracks) },
+                                                onPlayDownloaded = viewModel::playDownloaded,
                                             )
                                             Tab.EQUALIZER -> EqualizerScreen(settings, viewModel::updateSettings)
                                             Tab.SETTINGS -> SettingsHubScreen(
@@ -1011,30 +1055,36 @@ fun AuralisRoot(viewModel: AppViewModel) {
 @Composable
 private fun GlassSettingsProvider(
     drag: GlassDragState,
-    persisted: GlassSettings,
+    persisted: GlassConfig,
     settings: AppSettings,
     profile: PerformanceProfile,
     performanceReason: String?,
     content: @Composable () -> Unit,
 ) {
-    val glass = drag.value ?: persisted
+    val config = drag.value ?: persisted
+    val glass = remember(config) { GlassSettings.from(config) }
     // Dock fill/blur for the dock + Appearance preview. Surface fills are derived separately by
     // GlassKind inside glassSurface, so Glass clarity can never move the dock.
     val dockGlass = remember(settings, glass, profile, performanceReason) {
         resolveDockGlass(settings, glass, profile, performanceReason)
     }
-    val optics = remember(glass.glassClarity, settings.glassOutlines, dockGlass) {
+    // The ONE blur decision for every glass surface (STEP 2.6: blur is a fixed constant, so the
+    // removed "Blur strength" slider no longer participates).
+    val blurAllowed = GlassBlurPolicy.allowed(settings)
+    val optics = remember(config.glassClarity, settings.glassOutlines, dockGlass) {
         GlassOptics(
-            clarity = glass.glassClarity,
+            clarity = config.glassClarity.coerceIn(0, 100) / 100f,
             outlines = dockGlass.outlines,
             fillAlpha = dockGlass.fillAlpha,
             blurDp = dockGlass.blurDp,
-            saturation = 1.12f + 0.25f * glass.glassClarity,
+            saturation = 1.12f + 0.25f * (config.glassClarity.coerceIn(0, 100) / 100f),
         )
     }
     CompositionLocalProvider(
+        LocalGlassConfig provides config,
         LocalGlassSettings provides glass,
         LocalDockGlassStyle provides dockGlass,
+        LocalGlassBlurAllowed provides blurAllowed,
         LocalGlassOptics provides optics,
         content = content,
     )

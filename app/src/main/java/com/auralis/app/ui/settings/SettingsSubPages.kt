@@ -5,6 +5,7 @@ import android.os.Environment
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,8 +23,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FolderOpen
@@ -31,6 +34,7 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -39,13 +43,13 @@ import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Wifi
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,25 +63,37 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auralis.app.BuildConfig
 import com.auralis.app.data.lyrics.LyricsProviderCatalog
+import com.auralis.app.ui.glass.GlassMaterialAlertDialog
+import com.auralis.app.data.lyrics.LyricsProviderInfo
+import com.auralis.app.data.lyrics.ProviderAvailability
+import com.auralis.app.data.lyrics.ProviderCredential
 import com.auralis.app.data.metadata.MetadataProviderCatalog
 import com.auralis.app.data.youtube.LiveSyncState
 import com.auralis.app.data.youtube.PlaybackReportOutcome
@@ -95,16 +111,21 @@ import com.auralis.app.ui.components.PlayerBackgroundSelector
 import com.auralis.app.ui.components.ThemeStyleSelector
 import com.auralis.app.ui.components.DockStyle
 import com.auralis.app.ui.glass.DockGlassStyle
+import com.auralis.app.ui.glass.GlassConfig
 import com.auralis.app.ui.glass.GlassKind
 import com.auralis.app.ui.glass.GlassMapping
 import com.auralis.app.ui.glass.GlassSettings
 import com.auralis.app.ui.glass.LocalDockGlassStyle
+import com.auralis.app.ui.glass.LocalGlassBlurAllowed
+import com.auralis.app.ui.glass.LocalGlassConfig
 import com.auralis.app.ui.glass.LocalGlassDrag
 import com.auralis.app.ui.glass.LocalGlassSettings
 import com.auralis.app.ui.glass.dockGlassMaterial
 import com.auralis.app.ui.glass.glassSurface
 import com.auralis.app.ui.glass.resolveDockGlass
 import com.auralis.app.ui.nav.Destination
+import com.auralis.app.ui.performance.LocalDeviceConditions
+import com.auralis.app.ui.performance.LocalPerformanceMode
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.performance.LocalPerformanceReason
 import com.auralis.app.ui.performance.VisualPerformanceTier
@@ -303,41 +324,76 @@ private fun SliderSetting(
 @Composable
 private fun MetadataLyricsSettingsPage(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
     SettingsPage("Metadata & Lyrics", onBack) {
-        item { SettingsSectionLabel("Lyrics providers · order = lookup order") }
+        item { SettingsSectionLabel("Lyrics providers · drag to reorder") }
         item {
             SettingsGroupCard {
                 val order = settings.lyricsProviderOrder
-                order.forEachIndexed { index, id ->
-                    val info = LyricsProviderCatalog.ALL.firstOrNull { it.id == id } ?: return@forEachIndexed
-                    if (index > 0) SettingsDivider()
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(info.label, style = MaterialTheme.typography.titleSmall)
-                            Text(info.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val rowHeightPx = with(LocalDensity.current) { 56.dp.toPx() }
+                Column(Modifier.fillMaxWidth()) {
+                    order.forEachIndexed { index, id ->
+                        val info = LyricsProviderCatalog.ALL.firstOrNull { it.id == id } ?: return@forEachIndexed
+                        if (index > 0) SettingsDivider()
+                        key(id) {
+                            ProviderOrderRow(
+                                info = info,
+                                enabled = id in settings.lyricsProvidersEnabled,
+                                index = index,
+                                lastIndex = order.lastIndex,
+                                rowHeightPx = rowHeightPx,
+                                onToggle = {
+                                    val next = if (id in settings.lyricsProvidersEnabled) {
+                                        settings.lyricsProvidersEnabled - id
+                                    } else {
+                                        settings.lyricsProvidersEnabled + id
+                                    }
+                                    actions.onUpdate { it.copy(lyricsProvidersEnabled = next) }
+                                    actions.onLyricsSettingsChanged()
+                                },
+                                onMove = { delta -> actions.onMoveLyricsProvider(id, delta) },
+                            )
                         }
-                        IconButton(onClick = { actions.onMoveLyricsProvider(id, -1) }, enabled = index > 0) {
-                            Icon(Icons.Rounded.KeyboardArrowUp, "Move up")
-                        }
-                        IconButton(onClick = { actions.onMoveLyricsProvider(id, 1) }, enabled = index < order.lastIndex) {
-                            Icon(Icons.Rounded.KeyboardArrowDown, "Move down")
-                        }
-                        Switch(
-                            checked = id in settings.lyricsProvidersEnabled,
-                            onCheckedChange = { on ->
-                                val next = if (on) settings.lyricsProvidersEnabled + id else settings.lyricsProvidersEnabled - id
-                                actions.onUpdate { it.copy(lyricsProvidersEnabled = next) }
-                                actions.onLyricsSettingsChanged()
-                            },
-                            colors = auralisSwitchColors(),
-                        )
                     }
                 }
             }
         }
-        item { SettingsHelperText("Marked providers are community or unofficial sources. If every provider is off, the lyrics page shows “Lyrics are off”.") }
         item {
             SettingsGroupCard {
-                SettingsSwitchRow(Icons.Rounded.Lyrics, "Prefer synced lyrics", "Keep looking for a timestamped result before accepting plain text", settings.preferSyncedLyrics) { on -> actions.onUpdate { it.copy(preferSyncedLyrics = on) } }
+                LyricsProviderCatalog.ALL.mapNotNull { it.credential }.distinct().forEachIndexed { index, credential ->
+                    if (index > 0) SettingsDivider()
+                    ProviderCredentialRow(
+                        credential = credential,
+                        current = when (credential) {
+                            ProviderCredential.BETTERLYRICS -> settings.betterLyricsApiKey
+                            ProviderCredential.MUSIXMATCH -> settings.musixmatchToken
+                            ProviderCredential.PAXSENIX -> settings.paxsenixApiKey
+                            ProviderCredential.GENIUS -> settings.geniusApiKey
+                        },
+                        onSave = { value ->
+                            actions.onUpdate {
+                                when (credential) {
+                                    ProviderCredential.BETTERLYRICS -> it.copy(betterLyricsApiKey = value)
+                                    ProviderCredential.MUSIXMATCH -> it.copy(musixmatchToken = value)
+                                    ProviderCredential.PAXSENIX -> it.copy(paxsenixApiKey = value)
+                                    ProviderCredential.GENIUS -> it.copy(geniusApiKey = value)
+                                }
+                            }
+                            actions.onLyricsSettingsChanged()
+                        },
+                    )
+                }
+                SettingsDivider()
+                SettingsRow(
+                    Icons.Rounded.Refresh,
+                    "Reset to default",
+                    summary = "Restore the default order and enabled providers",
+                    onClick = actions.onResetLyricsProviders,
+                )
+            }
+        }
+        item { SettingsHelperText("Plain-text fallbacks (Genius) always run last. Providers marked “needs key” are skipped silently until their key is set. PaxSenix entries are registered disabled because no verified public endpoint was available.") }
+        item {
+            SettingsGroupCard {
+                SettingsSwitchRow(Icons.Rounded.Lyrics, "Prioritize syllable lyrics", "Word-synced > line-synced > plain text when providers compete", settings.preferSyncedLyrics) { on -> actions.onUpdate { it.copy(preferSyncedLyrics = on) } }
                 SettingsDivider()
                 SettingsSwitchRow(Icons.Rounded.LibraryMusic, "Overwrite existing tags", "Auto-fix tags may replace non-empty fields", settings.overwriteExistingTags) { on -> actions.onUpdate { it.copy(overwriteExistingTags = on) } }
                 SettingsDivider()
@@ -387,10 +443,152 @@ private fun MetadataLyricsSettingsPage(settings: AppSettings, actions: SettingsA
     }
 }
 
+/**
+ * One draggable lyrics-provider row. Long-press the handle and drag vertically to move the provider
+ * in the lookup order; [onMove] is called with ±1 each time a row height is crossed. The enable
+ * control is a checkmark so the state reads at a glance and matches the "enabled providers" list.
+ */
+@Composable
+private fun ProviderOrderRow(
+    info: LyricsProviderInfo,
+    enabled: Boolean,
+    index: Int,
+    lastIndex: Int,
+    rowHeightPx: Float,
+    onToggle: () -> Unit,
+    onMove: (Int) -> Unit,
+) {
+    // rememberUpdatedState keeps the pointer coroutine reading the current values even though it is
+    // never restarted (its key is the stable provider id), so a reorder cannot cancel the drag.
+    val latestIndex by rememberUpdatedState(index)
+    val latestLastIndex by rememberUpdatedState(lastIndex)
+    val latestMove by rememberUpdatedState(onMove)
+    var remainder by remember(info.id) { mutableFloatStateOf(0f) }
+    var target by remember(info.id) { mutableIntStateOf(index) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.DragHandle,
+            contentDescription = "Drag to reorder ${info.label}",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .size(28.dp)
+                .pointerInput(info.id) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = {
+                            remainder = 0f
+                            target = latestIndex
+                        },
+                        onDragEnd = { remainder = 0f },
+                        onDragCancel = { remainder = 0f },
+                    ) { change, amount ->
+                        change.consume()
+                        remainder += amount.y
+                        while (remainder >= rowHeightPx && target < latestLastIndex) {
+                            target += 1
+                            latestMove(1)
+                            remainder -= rowHeightPx
+                        }
+                        while (remainder <= -rowHeightPx && target > 0) {
+                            target -= 1
+                            latestMove(-1)
+                            remainder += rowHeightPx
+                        }
+                    }
+                },
+        )
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Text(info.label, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                info.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (info.availability != ProviderAvailability.READY) {
+            Text(
+                if (info.availability == ProviderAvailability.NEEDS_KEY) "Needs key" else "Unavailable",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+        }
+        IconButton(onClick = onToggle) {
+            Icon(
+                if (enabled) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                contentDescription = if (enabled) "Disable ${info.label}" else "Enable ${info.label}",
+                tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** A tappable row that opens a dialog to set or clear one provider credential. */
+@Composable
+private fun ProviderCredentialRow(credential: ProviderCredential, current: String, onSave: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    SettingsValueRow(
+        icon = Icons.Rounded.Key,
+        title = credential.settingLabel,
+        value = if (current.isBlank()) "Not set" else "Set",
+        summary = credentialHint(credential),
+    ) { open = true }
+    if (open) {
+        CredentialDialog(
+            title = credential.settingLabel,
+            helper = credentialHint(credential),
+            current = current,
+            onSave = onSave,
+            onDismiss = { open = false },
+        )
+    }
+}
+
+private fun credentialHint(credential: ProviderCredential): String = when (credential) {
+    ProviderCredential.BETTERLYRICS -> "Optional. The public API currently works without a key; set one only if it starts answering 401."
+    ProviderCredential.MUSIXMATCH -> "Musixmatch user token. The provider is skipped silently when blank."
+    ProviderCredential.PAXSENIX -> "Reserved. The PaxSenix providers are registered disabled."
+    ProviderCredential.GENIUS -> "Optional. Genius public search works without a token."
+}
+
+@Composable
+private fun CredentialDialog(title: String, helper: String, current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var value by remember { mutableStateOf(current) }
+    GlassMaterialAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                Text(helper, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                Text("Stored encrypted on this device.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    label = { Text(title) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(value.trim()); onDismiss() }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = { onSave(""); onDismiss() }) { Text("Clear") } },
+    )
+}
+
 @Composable
 private fun LastFmKeyDialog(current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
     var value by remember { mutableStateOf(current) }
-    AlertDialog(
+    GlassMaterialAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Last.fm API key") },
         text = {
@@ -506,6 +704,17 @@ private fun YouTubeMusicSettingsPage(settings: AppSettings, actions: SettingsAct
             }
         }
         if (settings.youtubeIntegration) {
+            item { SettingsSectionLabel("Home") }
+            item {
+                SettingsGroupCard {
+                    SettingsSwitchRow(
+                        Icons.Rounded.Insights,
+                        "Personalized Home",
+                        "Show your own YouTube Music recommendations on Home",
+                        settings.personalizedHome,
+                    ) { on -> actions.onUpdate { it.copy(personalizedHome = on) } }
+                }
+            }
             item { SettingsSectionLabel("Library filter") }
             item {
                 SettingsGroupCard {
@@ -599,49 +808,27 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
     val isGlass = glass()
     val profile = LocalPerformanceProfile.current
     val performanceReason = LocalPerformanceReason.current
-    // The three controls as one model: the persisted 0..100 ints are the fallback, and a slider drag
-    // writes a transient [GlassDragState] copy that the sliders, readout and preview all read, so a
-    // drag can never leave the preview one frame behind the value it is displaying.
+    // STEP 2: the persisted config is the source of truth; a slider drag writes a transient copy so
+    // the preview and the real surfaces move on the same frame, then commits through the repository.
+    val persistedConfig = LocalGlassConfig.current
     val drag = LocalGlassDrag.current
-    val persistedGlass = remember(
-        settings.dockGlassOpacity,
-        settings.glassClarity,
-        settings.dockGlassBlur,
-    ) {
-        GlassSettings.fromPercent(
-            settings.dockGlassOpacity,
-            settings.glassClarity,
-            settings.dockGlassBlur,
-        )
+    val liveConfig = drag.value ?: persistedConfig
+    val liveGlass = remember(liveConfig) { GlassSettings.from(liveConfig) }
+    fun percent(value: Float): Int = (value.coerceIn(0f, 1f) * 100f).roundToInt()
+    fun preview(transform: (GlassConfig) -> GlassConfig) {
+        drag.value = transform(drag.value ?: persistedConfig)
     }
-    // Live = the transient drag copy while a slider moves. Ticks write ONLY this state, so the
-    // preview and the real dock update without a DataStore write (or a full settings re-emit) per
-    // pixel; the drag end persists the final value once. AuralisRoot clears the copy when the
-    // persisted settings catch up.
-    val liveGlass = drag.value ?: persistedGlass
-    // 0..1 snapped to whole percent, so the transient value is bit-identical to what gets saved.
-    fun snapped(value: Float): Float = (value.coerceIn(0f, 1f) * 100f).roundToInt() / 100f
-    fun preview(transform: (GlassSettings) -> GlassSettings) {
-        drag.value = transform(drag.value ?: persistedGlass)
-    }
-    fun commit() {
-        val next = drag.value ?: persistedGlass
-        actions.onUpdate {
-            it.copy(
-                dockGlassOpacity = GlassMapping.percentToInt(next.dockOpacity),
-                glassClarity = GlassMapping.percentToInt(next.glassClarity),
-                dockGlassBlur = GlassMapping.percentToInt(next.blurStrength),
-            )
-        }
-    }
-    val previewDock = remember(settings, liveGlass, profile, performanceReason) {
+    val previewDock = remember(settings, liveConfig, profile, performanceReason) {
         resolveDockGlass(settings, liveGlass, profile, performanceReason)
     }
+    // The one HazeState the preview's source and every preview surface share. Hoisted out of the
+    // preview so the DEBUG diagnostics card can read the very same state the preview renders with.
+    val previewHaze = remember { HazeState() }
     SettingsPage(
         "Appearance",
         onBack,
         pinnedHeader = if (isGlass) {
-            { AppearancePreviewHeader(liveGlass, previewDock) }
+            { AppearancePreviewHeader(liveGlass, previewDock, previewHaze) }
         } else null,
     ) {
         item { SettingsSectionLabel("Theme style") }
@@ -682,53 +869,38 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
             item {
                 SettingsGroupCard {
                     SliderSetting(
-                        "Glass clarity",
-                        "${(liveGlass.glassClarity * 100).roundToInt()}%",
-                        liveGlass.glassClarity,
+                        "Dock transparency",
+                        "${liveConfig.dockTransparency}%",
+                        liveConfig.dockTransparency / 100f,
                         0f..1f,
                         0,
-                        onChangeFinished = { commit() },
-                    ) { v -> preview { it.copy(glassClarity = snapped(v)) } }
+                        onChangeFinished = {
+                            actions.onDockTransparencyChange(liveConfig.dockTransparency)
+                        },
+                    ) { v -> preview { it.copy(dockTransparency = percent(v)) } }
                     SettingsDivider()
                     SliderSetting(
-                        "Dock opacity",
-                        "${(liveGlass.dockOpacity * 100).roundToInt()}%",
-                        liveGlass.dockOpacity,
+                        "Glass clarity",
+                        "${liveConfig.glassClarity}%",
+                        liveConfig.glassClarity / 100f,
                         0f..1f,
                         0,
-                        onChangeFinished = { commit() },
-                    ) { v -> preview { it.copy(dockOpacity = snapped(v)) } }
+                        onChangeFinished = {
+                            actions.onGlassClarityChange(liveConfig.glassClarity)
+                        },
+                    ) { v -> preview { it.copy(glassClarity = percent(v)) } }
                     SettingsDivider()
                     SettingsSwitchRow(
                         Icons.Rounded.AutoAwesome,
-                        "Live blur",
-                        if (Build.VERSION.SDK_INT >= 31) "Blur the content behind the glass" else "Live blur needs Android 12 or newer",
-                        liveGlass.blurStrength > 0f,
-                    ) { on ->
-                        // Turning blur on restores a usable mid radius instead of jumping to 0 dp.
-                        actions.onUpdate { it.copy(dockGlassBlur = if (on) GlassMapping.DEFAULT_BLUR_PERCENT else 0) }
-                    }
-                    SettingsDivider()
-                    SliderSetting(
-                        "Blur strength",
-                        "${(liveGlass.blurStrength * 100).roundToInt()}% · ${previewDock.blurDp.roundToInt()} dp",
-                        liveGlass.blurStrength,
-                        0f..1f,
-                        0,
-                        onChangeFinished = { commit() },
-                    ) { v -> preview { it.copy(blurStrength = snapped(v)) } }
-                    SettingsDivider()
-                    SettingsSwitchRow(Icons.Rounded.AutoAwesome, "Glass outlines", "1dp specular hairline around glass surfaces", settings.glassOutlines) { on -> actions.onUpdate { it.copy(glassOutlines = on) } }
+                        "Glass outlines",
+                        "1dp specular hairline around glass surfaces",
+                        liveConfig.outlinesEnabled,
+                    ) { on -> actions.onGlassOutlinesChange(on) }
                 }
             }
             if (BuildConfig.DEBUG) {
                 item {
-                    GlassDebugPanel(
-                        settings = settings,
-                        actions = actions,
-                        dock = previewDock,
-                        glassHazeAllowed = isGlass && profile.blurEnabled,
-                    )
+                    GlassDebugPanel(dock = previewDock, haze = previewHaze)
                 }
             }
         }
@@ -740,17 +912,18 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
  * same live drag-aware values as the sliders, so a tick repaints it immediately.
  */
 @Composable
-private fun AppearancePreviewHeader(glass: GlassSettings, dock: DockGlassStyle) {
+private fun AppearancePreviewHeader(glass: GlassSettings, dock: DockGlassStyle, haze: HazeState) {
     Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
         SettingsGroupCard {
             AppearanceGlassPreview(
                 glass = glass,
                 dock = dock,
+                haze = haze,
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
             )
         }
         SettingsHelperText(
-            "Preview · opacity ${(glass.dockOpacity * 100).roundToInt()}% · " +
+            "Preview · transparency ${(glass.dockOpacity * 100).roundToInt()}% · " +
                 "blur ${dock.blurDp.roundToInt()} dp · " +
                 "clarity ${(glass.glassClarity * 100).roundToInt()}%",
         )
@@ -759,24 +932,24 @@ private fun AppearancePreviewHeader(glass: GlassSettings, dock: DockGlassStyle) 
 }
 
 /**
- * DEBUG-only diagnostics for the dock glass path. The four lines answer "why is there no blur?"
- * without a logcat. The caller's `BuildConfig.DEBUG` check removes the whole card in release builds.
+ * DEBUG-only, READ-ONLY diagnostics for the dock glass path. It answers "why is there no blur?"
+ * without a logcat, and doubles as the Live-blur proof: the policy line is the same
+ * [GlassBlurPolicy] the dock renders with. The caller's `BuildConfig.DEBUG` check removes the whole
+ * card in release builds.
  */
 @Composable
 private fun GlassDebugPanel(
-    settings: AppSettings,
-    actions: SettingsActions,
     dock: DockGlassStyle,
-    glassHazeAllowed: Boolean,
+    haze: HazeState,
 ) {
     val profile = LocalPerformanceProfile.current
+    val mode = LocalPerformanceMode.current
+    val conditions = LocalDeviceConditions.current
     var open by remember { mutableStateOf(false) }
     val costFactor = if (profile.tier == VisualPerformanceTier.MEDIUM) 0.8f else 1f
-    val inputScale = if (dock.hazeDefaultScale) {
-        null
-    } else {
-        (GlassMapping.hazeInputScale(dock.blurDp) * costFactor).coerceIn(0.25f, 1f)
-    }
+    val inputScale = (GlassMapping.hazeInputScale(dock.blurDp) * costFactor).coerceIn(0.25f, 1f)
+    // The resolved, live decision (this is what the dock actually renders), not the persisted one.
+    val blurAllowed = dock.blurEnabled
     SettingsGroupCard {
         Row(
             Modifier
@@ -806,36 +979,44 @@ private fun GlassDebugPanel(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 DebugLine(
-                    "SDK ${Build.VERSION.SDK_INT} · tier ${profile.tier.name.lowercase()} · " +
-                        "profile blur ${onOff(profile.blurEnabled)}",
+                    "sdk ${Build.VERSION.SDK_INT} · mode ${mode.name.lowercase()} · " +
+                        "tier ${profile.tier.name.lowercase()}",
                 )
                 DebugLine(
-                    "glassHazeAllowed ${onOff(glassHazeAllowed)} · " +
-                        "dock blur ${"%.0f".format(dock.blurDp)} dp",
+                    "totalRam ${"%.1f".format(conditions.totalRamGb)}GB · " +
+                        "availRam ${"%.1f".format(conditions.availableRamGb)}GB · " +
+                        "cores ${conditions.cores}",
                 )
                 DebugLine(
-                    "haze input scale ${inputScale?.let { "%.2f".format(it) } ?: "default"} · " +
-                        "lens ${onOff(dock.lensExperimental)}",
+                    "memoryClass ${conditions.memoryClassMb}MB · " +
+                        "batterySaver ${onOff(conditions.batterySaver)} · " +
+                        "thermal ${conditions.thermalStatus}",
+                )
+                DebugLine(
+                    "blur policy ${onOff(blurAllowed)} · " +
+                        "dock blur ${"%.0f".format(dock.blurDp)}dp · " +
+                        "haze scale ${"%.2f".format(inputScale)}",
                 )
                 DebugLine(
                     "fill ${"%.2f".format(dock.fillAlpha)} · " +
                         "opacity ${(dock.opacity * 100).roundToInt()}%",
                 )
+                // Haze probe. Reads the preview's OWN source/effect state (public HazeState API).
+                // "src 0" = no source area registered, so Haze draws nothing anywhere. "src 1"
+                // with a non-zero "layer" means Haze holds the captured pixels, so any missing
+                // blur is platform-side (RenderEffect), not the wiring.
+                val src = haze.areas.firstOrNull()
+                val withLayer = haze.areas.count { it.contentLayer != null }
+                DebugLine(
+                    "haze src ${haze.areas.size} · withLayer $withLayer · " +
+                        "z ${"%.0f".format(src?.zIndex ?: 0f)}",
+                )
+                DebugLine(
+                    "src ${dim(src?.size?.width)}×${dim(src?.size?.height)} · " +
+                        "layer ${src?.contentLayer?.size?.width ?: -1}×" +
+                        "${src?.contentLayer?.size?.height ?: -1}",
+                )
             }
-            SettingsDivider()
-            SettingsSwitchRow(
-                Icons.Rounded.AutoAwesome,
-                "Dock lens (experimental)",
-                "Run the AGSL lens on the dock; forces an offscreen layer first",
-                settings.dockLensExperimental,
-            ) { on -> actions.onUpdate { it.copy(dockLensExperimental = on) } }
-            SettingsDivider()
-            SettingsSwitchRow(
-                Icons.Rounded.Speed,
-                "Haze input scale: Default",
-                "Let Haze choose its own input scale instead of the fixed cost scale",
-                settings.dockHazeDefaultScale,
-            ) { on -> actions.onUpdate { it.copy(dockHazeDefaultScale = on) } }
         }
     }
 }
@@ -852,6 +1033,10 @@ private fun DebugLine(text: String) {
 
 private fun onOff(value: Boolean): String = if (value) "ON" else "OFF"
 
+/** NaN-safe dimension for the Haze probe (an unplaced area reports an unspecified size). */
+private fun dim(value: Float?): Int =
+    if (value == null || value.isNaN()) -1 else value.roundToInt()
+
 /**
  * The Appearance preview. It is not a mock: the bar and the circle both run the production
  * [dockGlassMaterial], and the small tile runs the production [glassSurface] surface path, so
@@ -863,9 +1048,9 @@ private fun onOff(value: Boolean): String = if (value) "ON" else "OFF"
 private fun AppearanceGlassPreview(
     glass: GlassSettings,
     dock: DockGlassStyle,
+    haze: HazeState,
     modifier: Modifier = Modifier,
 ) {
-    val haze = remember { HazeState() }
     Box(
         modifier
             .height(152.dp)
@@ -926,9 +1111,45 @@ private fun AppearanceGlassPreview(
                     .padding(horizontal = 18.dp),
             )
         }
+        // DEBUG probe: a copy of the stripes blurred by the PLATFORM (Compose blur → a
+        // RenderEffect), never by Haze. If this smears while the dock pill stays sharp, the
+        // platform can blur and the fault is in the Haze wiring; if this is sharp too, the
+        // device itself is not rendering backdrop blur.
+        if (BuildConfig.DEBUG) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 14.dp, top = 12.dp)
+                    .size(74.dp, 34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .blur(20.dp)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(Color(0xFF2F4BFF), Color(0xFF7A1FFF), Color(0xFFFF7A18)),
+                        ),
+                    )
+                    .drawBehind {
+                        val stripe = 12.dp.toPx()
+                        var x = 0f
+                        var index = 0
+                        while (x < size.width) {
+                            drawRect(
+                                color = if (index % 2 == 0) Color.White.copy(alpha = 0.6f)
+                                else Color.Black.copy(alpha = 0.6f),
+                                topLeft = Offset(x, 0f),
+                                size = Size(stripe, size.height),
+                            )
+                            x += stripe
+                            index++
+                        }
+                    },
+            )
+        }
         CompositionLocalProvider(
             LocalGlassSettings provides glass,
             LocalDockGlassStyle provides dock,
+            // The preview must blur iff the real dock blurs, so it reads the same resolved policy.
+            LocalGlassBlurAllowed provides dock.blurEnabled,
         ) {
             // Non-dock surface path: Glass clarity drives this fill and hairline.
             Row(
@@ -971,7 +1192,6 @@ private fun AppearanceGlassPreview(
                         CircleShape,
                         hazeState = haze,
                         cornerRadius = 17.dp,
-                        refraction = false,
                         blurBackdrop = false,
                     ),
                 contentAlignment = Alignment.Center,
@@ -1056,7 +1276,7 @@ private fun StorageSettingsPage(settings: AppSettings, sources: List<MusicSource
         }
     }
     if (confirmRemove) {
-        AlertDialog(
+        GlassMaterialAlertDialog(
             onDismissRequest = { confirmRemove = false },
             title = { Text("Remove all downloads?") },
             text = { Text("Every downloaded song and its sidecar covers will be deleted from this device. This cannot be undone.") },

@@ -139,7 +139,7 @@ class BackupRepository(
                     doubleTapSeekSeconds = imported.doubleTapSeekSeconds, crossfadeSeconds = imported.crossfadeSeconds,
                     resumeOnOutputReconnect = imported.resumeOnOutputReconnect, carKeepScreenOn = imported.carKeepScreenOn,
                     themeStyle = imported.themeStyle,
-                    dockGlassOpacity = imported.dockGlassOpacity, dockGlassBlur = imported.dockGlassBlur,
+                    dockGlassOpacity = imported.dockGlassOpacity,
                     autoScanEnabled = imported.autoScanEnabled,
                     includeSubfolders = imported.includeSubfolders,
                     playerBackground = imported.playerBackground,
@@ -286,7 +286,6 @@ class BackupRepository(
         put("carKeepScreenOn", settings.carKeepScreenOn)
         put("themeStyle", settings.themeStyle.name)
         put("dockGlassOpacity", settings.dockGlassOpacity)
-        put("dockGlassBlur", settings.dockGlassBlur)
         put("autoScanEnabled", settings.autoScanEnabled)
         put("includeSubfolders", settings.includeSubfolders)
         put("playerBackground", settings.playerBackground.name)
@@ -339,7 +338,6 @@ class BackupRepository(
             } else {
                 defaults.dockGlassOpacity
             },
-            dockGlassBlur = json.optInt("dockGlassBlur", defaults.dockGlassBlur).coerceIn(0, 100),
             autoScanEnabled = json.optBoolean("autoScanEnabled", defaults.autoScanEnabled),
             includeSubfolders = json.optBoolean("includeSubfolders", defaults.includeSubfolders),
             playerBackground = json.optString("playerBackground").let { name ->
