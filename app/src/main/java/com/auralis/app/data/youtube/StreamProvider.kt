@@ -17,6 +17,6 @@ interface StreamProvider {
     /** True when the provider is currently able to serve requests (engine ready, feature enabled). */
     suspend fun isAvailable(): Boolean
 
-    /** A directly playable audio URL for [videoId], or `null` when none could be produced. */
-    suspend fun resolveAudio(videoId: String, quality: StreamQuality): String?
+    /** A directly playable audio stream for [videoId], or `null` when none could be produced. */
+    suspend fun resolveAudio(videoId: String, quality: StreamQuality): ResolvedStream?
 }

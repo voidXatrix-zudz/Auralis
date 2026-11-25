@@ -709,3 +709,173 @@ Two independent gaps, both now closed:
 - User builds and drags Dock transparency 0 -> 100 -> 0 watching the real dock; leaves mid-drag;
   restarts and confirms persistence. If the dock still lags, the remaining suspect is the recorded
   layer composite, not the tint (check the DEBUG diagnostics card first).
+
+# ANCHORED SHUFFLE + NOTIFICATION SHUFFLE BUTTON (2026-11-25, active)
+
+## TASK
+Two parts.
+(A) Make shuffle correct everywhere: turning it on keeps the current song playing ("anchored"),
+walks every song exactly once, never ends early while songs remain, and turning it off instantly
+resumes the saved list order.
+(B) Add a shuffle button to the media notification as the rightmost action, so the expanded row reads
+Heart | Previous | Play/Pause | Next | Shuffle.
+
+## WHY HEAD WAS WRONG
+HEAD toggled Media3's `Player.shuffleModeEnabled`, which uses
+`ShuffleOrder.DefaultShuffleOrder(count)` - a permutation that does NOT start at the current song, so
+songs already played could replay and, with Repeat Off, the queue ended early. The owner's in-tree WIP
+had instead physically reordered the timeline (context block only), which drifted the notification
+state from the app.
+
+## DESIGN (ONE source of truth)
+`Player.shuffleModeEnabled` is the single source of truth for the app AND the notification. When it
+flips, the service listens and installs an ANCHORED `ShuffleOrder.DefaultShuffleOrder(int[], long)`
+built by `anchoredShuffle(...)`: current song first, context block next in random order, autoplay tail
+last. `Next`/`Previous` follow that order through the normal `Timeline` next/previous index, so the
+existing context/autoplay skip policy is preserved. A new `setMediaItems` resets the order, so the
+controller re-sends an anchor command after every queue hand-over while shuffle is on.
+
+## MEDIA3 1.7.1 FACTS CONFIRMED FROM ITS OWN BYTECODE (no new libs)
+- `CommandButton.ICON_SHUFFLE_ON`/`ICON_SHUFFLE_OFF` (and `ICON_SHUFFLE_STAR`) exist; no drawable added.
+- `CommandButton.Builder(iconResId)` defaults the slot via `getDefaultSlot(playerCommand, icon)`; the
+  heart and shuffle icons are not in the play/prev/next lists, so both get `SLOT_OVERFLOW = 6`.
+- `DefaultMediaNotificationProvider.getMediaButtons` builds
+  `[prev-or-SLOT_BACK, play/pause, next-or-SLOT_FORWARD, <slot-6 preferences in order>]`. With
+  `[likeButton, shuffleButton]` that is `[prev, play, next, like, shuffle]`; the existing "move like to
+  index 0" override yields the required `[like, prev, play, next, shuffle]`. Compact view is unchanged
+  (slot 6 buttons are not compact).
+- `BasePlayer.getNextMediaItemIndex()` = `currentTimeline.getNextWindowIndex(current, repeatForNav,
+  shuffleEnabled)`, and on ExoPlayer that timeline is `PlaylistTimeline` ->
+  `AbstractConcatenatedTimeline`, whose `getNextWindowIndex` consults the installed `ShuffleOrder`.
+  So the anchored order IS what Next/Previous walk, and the same call in `manualNextTarget` is correct.
+- `ExoPlayerImpl.setShuffleOrder` asserts `shuffleOrder.getLength() == mediaItemCount`; the anchor is
+  built with exactly `mediaItemCount` entries, and it re-masks the current position, so playback is
+  not interrupted by re-anchoring.
+
+## DONE (files)
+- `playback/ShuffleOrders.kt` (new): `anchoredShuffle(count, currentIndex, seed)` - pure, JVM-testable.
+- `test/.../playback/ShuffleOrdersTest.kt` (new): empty/1/2 sizes, permutation completeness, current
+  first, out-of-range current, seed stability/difference.
+- `playback/PlaybackController.kt`: removed the physical-reorder WIP (`shuffleEnabled`,
+  `savedContextOrder`, `applyShuffle`, `restoreContextOrder`, `shuffledContext`, `reseatItems`,
+  `rememberContextInsert`); `toggleShuffle()`/`setShuffleEnabled()` drive `shuffleModeEnabled`;
+  `requestAnchoredShuffle()` sends `ACTION_ANCHOR_SHUFFLE` after `start()`, `restore()`, `syncContext()`
+  and `playQueueItem()`; `pendingShuffle` carries the intent across a not-yet-connected service;
+  `publish()` reads `p.shuffleModeEnabled`.
+- `playback/PlaybackService.kt`: `ACTION_SHUFFLE` + `shuffleCommand`; `shuffleButton(on)`;
+  `refreshMediaButtons()` (heart + shuffle) replaces `refreshLikeButton`; `onShuffleModeEnabledChanged`
+  re-anchors and refreshes; `applyAnchoredShuffle()` with a re-entrancy guard using
+  `ShuffleOrder.DefaultShuffleOrder`; `onConnect`/`onCustomCommand` handle shuffle/anchor/not-supported;
+  `manualNextTarget()` shuffle branch; `skipPrevious()` fallback now stays on the current song.
+- `ui/AppViewModel.kt`: `shufflePlaylist` and `playYouTubePlaylist(shuffle=true)` switch shuffle ON
+  deterministically (no `.shuffled()` list, no "toggle if off"); `toggleShuffle()` shows a short
+  "Shuffle on/off" confirmation; `resumeRestored` keeps the shuffle intent when the service is not up.
+- `res/values/strings.xml`: `notification_shuffle_on` / `notification_shuffle_off`.
+
+## DO
+- Keep `Player.shuffleModeEnabled` as the only shuffle flag; anchor with the ONE pure function.
+- Re-anchor with the explicit command after every `setMediaItems` while shuffle is on.
+- Keep the context block before the autoplay tail in the anchor order.
+
+## DON'T
+- Do not physically reorder the timeline for shuffle again (drifts app vs notification).
+- Do not change `TransportPlayer` skip semantics (previous restarts after 3 s, user skip always plays),
+  crossfade, Android Auto/Bluetooth behaviour, the heart button, or the notification icon/artwork/
+  title/artist/progress.
+- Do not bump Media3 or add drawables; do not touch dock/glass/themes/lyrics/downloads.
+
+## SELF-REVIEW
+- `anchoredShuffle` returns `currentIndex` first and a full permutation (verified by unit test), so
+  no repeats and no early end; Repeat All wraps to the anchor, Repeat Off ends on the last song.
+- Turning shuffle off does not reorder anything (the timeline keeps the list order), so the saved
+  order resumes immediately - no restore step needed.
+- The anchor command is idempotent for controllers that cannot use it (service returns
+  `ERROR_NOT_SUPPORTED` only for unknown actions; anchor is always accepted) and is a no-op when
+  shuffle is off, so it is safe to send unconditionally.
+- Notification slot/order proven from the 1.7.1 bytecode (above), not assumed.
+
+## NEXT (phone tests - user builds)
+1. Shuffle ON from Now Playing, then tap Next through the list: every song plays once, the current
+   song never restarts, and with Repeat Off the queue ends only after the last song.
+2. Turn shuffle OFF mid-playback: the remaining queue is the saved list order again (not reshuffled).
+3. Playlist/YouTube "Shuffle" from a screen: the randomly chosen first song keeps playing and the rest
+   of that list follows it exactly once.
+4. With the notification expanded, tap its Shuffle button (rightmost): playback continues on the
+   current song, the button glyph/state flips, and the app's Now Playing shuffle tint matches.
+
+# TWO-WAY SEARCH HISTORY (2026-11-25, active)
+
+## TASK
+Keep AURALIS "Recent searches" and the YouTube Music account's search history in two-way sync:
+pull the account's terms into Recent, record AURALIS searches on the account, and mirror a delete
+(one term / clear all) back to the account so a deleted term cannot be re-imported.
+
+## WHERE YOUTUBE KEEPS SEARCH HISTORY (verified from ytmusicapi source + its live test)
+- `music/get_search_suggestions` with an **empty `input`** returns the recent searches as
+  `historySuggestionRenderer` entries; typed completions are `searchSuggestionRenderer`.
+- A history entry's delete token is
+  `serviceEndpoint.feedbackEndpoint.feedbackToken`; text comes from
+  `suggestion.runs[*].text` (fallback `navigationEndpoint.searchEndpoint.query`).
+- Deletion = `POST music.youtube.com/youtubei/v1/feedback` with
+  `{"context": ..., "feedbackTokens": [token]}`; `feedbackResponses[0].isProcessed` says whether
+  it was processed. Tokens are NOT stored in Room: a delete fetches them fresh.
+- A **signed** `search` call is what appends to that history (there is no "list history" browse page).
+
+## DESIGN
+- Pull: `InnerTubeClient.searchHistory()` (signed, empty input) -> `YtSearchSuggestion` list ->
+  `YouTubeSearchHistorySync.sync()` merges into the existing `search_history` table. Union, never a
+  wipe: a local-only term stays, a known term keeps its own casing/timestamp, imported terms keep
+  the page's newest-first order. Pure rule = `mergeSearchHistory(...)`, unit-tested.
+- Push: the interactive search pipeline is now **anonymous** (it fires every 300 ms typing pause,
+  so signing it filled the account with prefixes "wee"/"week"/"weekn"). One signed search per
+  committed term is issued by `YouTubeRepository.recordSearch()`, called from
+  `AppViewModel.recordSearch` (submit, recent tap, result tap, Home taste chip) and de-duplicated
+  for 5 min.
+- Delete: `deleteSearch`/`clearSearchHistory` clear Room, remember the terms in
+  `recentSearchDeletes` (2 min TTL) so a racing pull cannot re-import them, then call
+  `YouTubeRepository.removeSearchHistoryTerm` / `clearSearchHistory` (fresh tokens -> `feedback`).
+- Trigger: `syncYouTubeSearchHistory()` on resume and every 5 min while foreground, gated by
+  `settings.youtubeIntegration` + a signed-in session (no new toggle). Single-flight.
+- `recordSearch` runs the signed push only when that same gate is on; offline/refused is logged and
+  the local row still stands.
+
+## DONE (files)
+- `data/youtube/YtSearchSuggestion.kt` (new): text / fromHistory / feedbackToken.
+- `data/youtube/YouTubeSearchHistorySync.kt` (new): `sync()` + pure `mergeSearchHistory` + result type.
+- `data/youtube/InnerTubeClient.kt`: `FEEDBACK_URL`, `searchHistory()`, `searchHistoryResult()`,
+  `removeSearchHistoryTerms()`, `parseSearchHistorySuggestions()`, `MAX_SEARCH_HISTORY = 20`,
+  `searchRoot(..., anonymous)` / `searchSongs(..., anonymous)`.
+- `data/youtube/YouTubeRepository.kt`: `searchHistorySuggestions()`, `removeSearchHistoryTerm()`,
+  `clearSearchHistory()`, `recordSearch()`; `search()` is anonymous by default (cache unchanged).
+- `data/db/Daos.kt`: `SearchHistoryDao.getAll()` + `upsertAll()` (batch merge).
+- `ui/AppViewModel.kt`: `youtubeSearchHistorySync` + single-flight job, `syncYouTubeSearchHistory()`,
+  `searchHistorySyncWanted()`, `recentSearchDeletes`, `pushSearchToAccount()` +
+  `SEARCH_RECORD_DEBOUNCE_MS`, account-delete/clear in `deleteSearch`/`clearSearchHistory`,
+  `recordSearch` push, `searchFromHome` records, resume + 5-min loop call the pull.
+- Tests: `YouTubeSearchHistorySyncTest` (9) + `YouTubeSearchHistoryParseTest` (2); full suite green.
+
+## DO
+- Keep the autocomplete `suggestions()` and the interactive `search()` anonymous; only
+  `recordSearch()` may be signed (that is the recording act).
+- Fetch tokens fresh for every delete; never persist `feedbackToken` in Room.
+- Keep the local list a union (never delete a local-only term during a pull) and keep the
+  `recentSearchDeletes` window so a delete settles before the next pull.
+- A pull that changes nothing must write nothing: Room would re-emit the same list every five
+  minutes and recompose Search for no reason (`sync()` filters unchanged rows).
+
+## DON'T
+- Do not sign the debounced pipeline again (prefix spam + deleted terms reappearing as prefixes).
+- Do not make the pull a wipe-and-replace: it would drop offline/other-device terms.
+- Do not add a settings toggle for search sync unless the owner asks (it follows the integration
+  switch + signed-in session).
+- Do not change the shuffle work, notification layout, Media3 version, or the search UI.
+
+## NEXT (phone tests - user builds)
+1. Sign in, search a few terms on another device (or in YouTube Music), open Search in AURALIS:
+   those terms appear in Recent within a resume / 5 minutes.
+2. Search in AURALIS (type + Enter, or type + tap a result): the term appears in YouTube Music's
+   search box history, and only that term - not every prefix typed on the way.
+3. Delete one Recent term in AURALIS, then re-open Search / wait 5 min: it does not come back, and
+   it is gone from YouTube Music's search history too.
+4. "Clear" all Recent in AURALIS: the list stays empty after a refresh and YouTube Music's search
+   history is empty as well.

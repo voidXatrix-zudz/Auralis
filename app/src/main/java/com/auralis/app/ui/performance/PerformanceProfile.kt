@@ -10,14 +10,20 @@ import androidx.compose.runtime.Immutable
  * the source of truth at render time.
  *
  * Rule: animation durations, curves and spring constants are identical in every profile. A lower
- * profile removes expensive extras (backdrop blur, shaders, secondary glow, looping decoration),
- * it never changes the feel of navigation or the dock morph.
+ * profile removes expensive extras (secondary blur, shaders, secondary glow, looping decoration),
+ * it never changes the feel of navigation or the dock morph, and it never turns the glass backdrop
+ * blur off (see [com.auralis.app.ui.glass.GlassBlurPolicy]).
  */
 @Immutable
 data class PerformanceProfile(
     val tier: VisualPerformanceTier,
     // --- Glass material -----------------------------------------------------
-    /** Live backdrop blur is allowed at all. */
+    /**
+     * Secondary blur effects that are NOT the glass material itself (the full-screen player
+     * background capture, the lyrics focus blur). The GLASS material must never read this: whether
+     * the dock, mini-player, cards and preview blur is decided ONLY by
+     * [com.auralis.app.ui.glass.GlassBlurPolicy]. Automatic can never disable glass blur.
+     */
     val blurEnabled: Boolean,
     /** Multiplier on the user's chosen dock blur radius: 1.0 / 0.6 / 0.0. */
     val blurScale: Float,

@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.alpha
@@ -95,13 +96,15 @@ fun NowPlayingBlendBackground(
                     },
             )
         }
-        // 4. Blurred artwork wash. Built once per track; never re-blurred per frame.
+        // 4. Blurred artwork wash. Built once per track; never re-blurred per frame. Nudged down a
+        // little so more of the lower portion of the blurred art shows; blur/opacity/crop unchanged.
+        val blurShift = Modifier.fillMaxSize().graphicsLayer { translationY = 16.dp.toPx() }
         if (art != null && profile.backgroundBlurEnabled && !low) {
             if (Build.VERSION.SDK_INT >= 31) {
                 Image(
                     bitmap = art,
                     contentDescription = null,
-                    modifier = Modifier.fillMaxSize().alpha(0.30f).blur(60.dp),
+                    modifier = blurShift.alpha(0.30f).blur(60.dp),
                     contentScale = ContentScale.Crop,
                     filterQuality = FilterQuality.Low,
                 )
@@ -110,7 +113,7 @@ fun NowPlayingBlendBackground(
                 Image(
                     bitmap = art,
                     contentDescription = null,
-                    modifier = Modifier.fillMaxSize().alpha(0.30f),
+                    modifier = blurShift.alpha(0.30f),
                     contentScale = ContentScale.Crop,
                     filterQuality = FilterQuality.High,
                 )

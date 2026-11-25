@@ -1,11 +1,11 @@
 package com.auralis.app.ui.components
 
 import com.auralis.app.domain.model.ThemeStyle
+import com.auralis.app.ui.theme.AuralisMotion
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassNavBar
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -58,8 +58,6 @@ fun FloatingNavBar(
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) { GlassNavBar(selected, onSelect, modifier); return }
     val primary = MaterialTheme.colorScheme.primary
     val muted = Auralis.extras.mutedForeground
-    // Same colour transition timing on every performance profile.
-    val colorDuration = 300
     val pill = RoundedCornerShape(50)
 
     Row(
@@ -75,12 +73,12 @@ fun FloatingNavBar(
             val active = item.tab == selected
             val background by animateColorAsState(
                 targetValue = if (active) primary.copy(alpha = 0.15f) else Color.Transparent,
-                animationSpec = tween(colorDuration),
+                animationSpec = AuralisMotion.springColor,
                 label = "navBackground",
             )
             val content by animateColorAsState(
                 targetValue = if (active) primary else muted,
-                animationSpec = tween(colorDuration),
+                animationSpec = AuralisMotion.springColor,
                 label = "navContent",
             )
             Column(

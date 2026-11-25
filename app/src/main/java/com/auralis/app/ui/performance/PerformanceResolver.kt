@@ -26,13 +26,18 @@ data class DeviceConditions(
  * Maps a user mode + device conditions to a concrete [PerformanceProfile].
  *
  * Automatic behaviour:
- *  - Base tier from hardware (low-RAM flag, RAM, heap class, cores, SDK).
+ *  - Base tier from hardware: only a genuine low-RAM device or a device with under 3 GB of total
+ *    RAM lands on LOW. A low core count or a small heap class can only cap the tier at MEDIUM,
+ *    never force LOW, because the tier is about render COST, not about turning features off.
  *  - Battery Saver or thermal status MODERATE+ steps the tier down exactly one level.
  *  - The step-down is held for [AdaptiveTierResolver.restoreDelayMs] after conditions clear,
  *    which is the hysteresis that prevents flapping when a charger is plugged/unplugged or the
  *    device hovers around a thermal threshold.
  *
  * Manual modes (HIGH/MEDIUM/LOW) are always honoured exactly.
+ *
+ * The tier NEVER turns Live blur on or off: that decision lives in
+ * [com.auralis.app.ui.glass.GlassBlurPolicy]. Automatic in particular can never disable blur.
  */
 class AdaptiveTierResolver(
     val restoreDelayMs: Long = 30_000L,
@@ -75,15 +80,13 @@ class AdaptiveTierResolver(
         const val THERMAL_MODERATE = 2
 
         fun baseTier(conditions: DeviceConditions): VisualPerformanceTier {
-            val weak = conditions.isLowRamDevice ||
-                conditions.totalRamGb < 3.5 ||
-                conditions.availableRamGb < 0.75 ||
-                conditions.cores <= 4 ||
-                conditions.memoryClassMb < 192
-            if (weak) return VisualPerformanceTier.LOW
+            // LOW is reserved for devices that genuinely cannot keep up. A low core count or a
+            // small heap class only *caps* the tier at MEDIUM: they must never turn glass features
+            // off (see GlassBlurPolicy), so they cannot force LOW either.
+            val lowRam = conditions.isLowRamDevice || conditions.totalRamGb < 3.0
+            if (lowRam) return VisualPerformanceTier.LOW
 
             val strong = conditions.totalRamGb >= 6.0 &&
-                conditions.availableRamGb >= 1.5 &&
                 conditions.cores >= 8 &&
                 conditions.memoryClassMb >= 256 &&
                 conditions.sdkInt >= 31
@@ -93,9 +96,14 @@ class AdaptiveTierResolver(
         fun isConstrained(conditions: DeviceConditions): Boolean =
             conditions.batterySaver || conditions.thermalStatus >= THERMAL_MODERATE
 
+        /**
+         * one-step-down for Automatic when Battery Saver / thermal kicks in. It never reaches LOW
+         * from MEDIUM automatically: the automatic ladder is HIGH -> MEDIUM -> (stays) MEDIUM.
+         * LOW is only ever reached from a genuine low-RAM base tier.
+         */
         fun stepDown(tier: VisualPerformanceTier): VisualPerformanceTier = when (tier) {
             VisualPerformanceTier.HIGH -> VisualPerformanceTier.MEDIUM
-            VisualPerformanceTier.MEDIUM, VisualPerformanceTier.LOW -> VisualPerformanceTier.LOW
+            VisualPerformanceTier.MEDIUM, VisualPerformanceTier.LOW -> tier
         }
     }
 }

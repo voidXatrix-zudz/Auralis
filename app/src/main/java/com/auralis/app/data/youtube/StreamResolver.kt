@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.schabi.newpipe.extractor.NewPipe
@@ -63,6 +64,12 @@ enum class ResolverKind(val label: String) {
  */
 private class NewPipeUnavailableException(cause: Throwable) : RuntimeException(cause)
 
+/** Matches the `expire=<unix seconds>` query parameter of a signed googlevideo URL. */
+internal val STREAM_URL_EXPIRE = Regex("[?&]expire=(\\d+)")
+
+/** Never hand a resolved URL to Media3 when it expires within this window. */
+internal const val STREAM_EXPIRY_MIN_REMAINING_MS = 30_000L
+
 /**
  * Picks the stream closest to a [StreamQuality] target: the highest bitrate at or below the target,
  * or the highest available when nothing is at or below it ("Best" therefore means highest).
@@ -73,6 +80,49 @@ internal fun <T> pickByQuality(items: List<T>, quality: StreamQuality, bitrateOf
     val sorted = items.sortedBy { bitrateOf(it).coerceAtLeast(0) }
     val atOrBelow = sorted.filter { bitrateOf(it) in 1..quality.approxKbps }
     return atOrBelow.maxByOrNull { bitrateOf(it) } ?: sorted.first()
+}
+
+/** Unix seconds from a signed googlevideo URL's `expire` query parameter, or null when absent. */
+internal fun parseExpirySeconds(url: String): Long? =
+    STREAM_URL_EXPIRE.find(url)?.groupValues?.getOrNull(1)?.toLongOrNull()
+
+/**
+ * Lightweight playability check for a resolved stream URL, run before a provider is allowed to win.
+ * Returns null when the URL is safe to hand to Media3, or a short, URL-free reason otherwise.
+ *
+ * This never opens the URL; it only rejects the failure modes we can detect locally: a missing or
+ * malformed URL, a non-HTTPS scheme, a missing host, and a signature that has already expired (or is
+ * within [STREAM_EXPIRY_MIN_REMAINING_MS] of doing so).
+ */
+internal fun validateStreamUrl(
+    url: String?,
+    nowMs: Long = System.currentTimeMillis(),
+    minRemainingMs: Long = STREAM_EXPIRY_MIN_REMAINING_MS,
+): String? {
+    if (url.isNullOrBlank()) return "empty url"
+    val parsed = url.toHttpUrlOrNull() ?: return "malformed url"
+    if (!parsed.isHttps) return "not https"
+    if (parsed.host.isBlank()) return "no host"
+    val expire = parseExpirySeconds(url)
+    if (expire != null && expire * 1000L - nowMs <= minRemainingMs) return "expired"
+    return null
+}
+
+/**
+ * Cache lifetime for one resolved URL: capped by its own `expire` minus a safety margin. Returns 0
+ * when the URL is already at (or past) the margin, meaning it must not be cached at all — an expired
+ * URL must never be served from the cache.
+ */
+internal fun streamCacheTtlMs(
+    url: String,
+    nowMs: Long,
+    defaultTtlMs: Long,
+    safetyMarginMs: Long,
+): Long {
+    val expire = parseExpirySeconds(url) ?: return defaultTtlMs
+    val remaining = expire * 1000L - nowMs - safetyMarginMs
+    if (remaining <= 0L) return 0L
+    return remaining.coerceAtMost(defaultTtlMs)
 }
 
 /**
@@ -103,7 +153,7 @@ class StreamResolver(
 ) {
     private val downloader = NewPipeDownloader(http)
     private val cache = ConcurrentHashMap<String, CachedStream>()
-    private val inFlight = HashMap<String, Deferred<String>>()
+    private val inFlight = HashMap<String, Deferred<ResolvedStream>>()
     private val inFlightLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -149,16 +199,22 @@ class StreamResolver(
         quality: StreamQuality = StreamQuality.BEST,
         force: ResolverKind? = null,
         bypassCache: Boolean = false,
-    ): String = withContext(Dispatchers.IO) {
+    ): ResolvedStream = withContext(Dispatchers.IO) {
         val key = cacheKey(videoId, quality)
         if (bypassCache) {
-            // Playback fallback: the cached URL just failed, so re-resolve (and replace) it.
+            // Playback fallback: the cached URL just failed, so drop it before re-resolving so a new
+            // provider result (or a total failure) can never leave the dead URL behind.
+            cache.remove(key)
+            AppLog.i(TAG, "Re-resolving after a stream error (cache bypassed)")
             extractWithRetry(videoId, quality, force)
         } else {
             cache[key]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let {
                 // Instant repeat tap: no provider needs to run, so log the reason honestly.
                 AppLog.i(TAG, "Race: cache hit in 0 ms ✔ (no resolver needed)")
-                return@withContext it.url
+                // Re-publish so a process that resolved before the registry knew the id still shows
+                // the right format in Now Playing (the registry may have evicted the entry).
+                ResolvedStreams.publish(videoId, it.stream)
+                return@withContext it.stream
             }
             inFlightFor(videoId, quality, force).await()
         }
@@ -175,11 +231,11 @@ class StreamResolver(
         quality: StreamQuality = StreamQuality.BEST,
         force: ResolverKind? = null,
         bypassCache: Boolean = false,
-    ): String = runBlocking { resolve(videoId, quality, force, bypassCache) }
+    ): ResolvedStream = runBlocking { resolve(videoId, quality, force, bypassCache) }
 
     private fun cacheKey(videoId: String, quality: StreamQuality): String = "$videoId@${quality.name}"
 
-    private fun inFlightFor(videoId: String, quality: StreamQuality, force: ResolverKind?): Deferred<String> = synchronized(inFlightLock) {
+    private fun inFlightFor(videoId: String, quality: StreamQuality, force: ResolverKind?): Deferred<ResolvedStream> = synchronized(inFlightLock) {
         val key = inFlightKey(videoId, quality, force)
         inFlight[key]?.let { return it }
         val job = scope.async { extractWithRetry(videoId, quality, force) }
@@ -219,16 +275,27 @@ class StreamResolver(
         videoId: String,
         quality: StreamQuality,
         force: ResolverKind?,
-    ): String = withContext(Dispatchers.IO) {
+    ): ResolvedStream = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
         val key = cacheKey(videoId, quality)
-        val resolution = race(videoId, quality, candidates(force), force)
-        cache[key] = CachedStream(resolution.url, System.currentTimeMillis() + cacheTtlFor(resolution.url))
+        val stream = race(videoId, quality, candidates(force), force)
+        val ttl = cacheTtlFor(stream.url)
+        if (ttl > 0L) {
+            cache[key] = CachedStream(stream, System.currentTimeMillis() + ttl)
+        } else {
+            // Already at its expiry margin: this request may still use it, but it must never be
+            // served from the cache again.
+            cache.remove(key)
+            AppLog.d(TAG, "Winning URL is too close to expiry to cache")
+        }
+        // Hand the winning stream to the UI (Now Playing label + Audio Info) before returning, so a
+        // resolve that ran purely to prefetch still leaves an accurate format behind.
+        ResolvedStreams.publish(videoId, stream)
         // Keep the audio host warm: PlaybackService uses the same OkHttp client, so this 2-byte range
         // request leaves a pooled connection ready for the first real read.
-        scope.launch { warmConnection(resolution.url) }
+        scope.launch { warmConnection(stream.url) }
         val elapsed = System.currentTimeMillis() - startedAt
-        StreamResolverStatus.lastResolver = resolution.kind.label
+        StreamResolverStatus.lastResolver = (stream.resolver ?: ResolverKind.NEWPIPE).label
         StreamResolverStatus.lastResolveMs = elapsed
         StreamResolverStatus.youTubeJs = when {
             youtubeJs == null -> "not configured"
@@ -236,10 +303,8 @@ class StreamResolver(
             youtubeJs.isWarm() -> "ready"
             else -> "warming up"
         }
-        resolution.url
+        stream
     }
-
-    private data class Resolution(val kind: ResolverKind, val url: String)
 
     /** One provider's race outcome as rendered in the log line. */
     private class Trace {
@@ -274,15 +339,15 @@ class StreamResolver(
         quality: StreamQuality,
         candidates: List<ResolverKind>,
         force: ResolverKind?,
-    ): Resolution = coroutineScope {
+    ): ResolvedStream = coroutineScope {
         if (candidates.size == 1) {
             val kind = candidates.first()
             val t0 = System.currentTimeMillis()
             return@coroutineScope try {
-                val url = attempt(kind, videoId, quality)
+                val stream = attempt(kind, videoId, quality)
                 val trace = Trace().apply { done(System.currentTimeMillis() - t0) }
                 AppLog.i(TAG, raceLine(candidates, mapOf(kind to trace), winner = kind))
-                Resolution(kind, url)
+                stream
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (error: Throwable) {
@@ -293,7 +358,7 @@ class StreamResolver(
 
         val traces = LinkedHashMap<ResolverKind, Trace>()
         candidates.forEach { traces[it] = Trace() }
-        val outcome = CompletableDeferred<Resolution>()
+        val outcome = CompletableDeferred<ResolvedStream>()
         val lastError = AtomicReference<Throwable?>(null)
         val remaining = AtomicInteger(candidates.size)
         val jobs = ArrayList<Job>(candidates.size)
@@ -308,9 +373,9 @@ class StreamResolver(
                 }
                 val t0 = System.currentTimeMillis()
                 try {
-                    val url = attempt(kind, videoId, quality)
+                    val stream = attempt(kind, videoId, quality)
                     traces[kind]!!.done(System.currentTimeMillis() - t0)
-                    outcome.complete(Resolution(kind, url))
+                    outcome.complete(stream)
                 } catch (cancel: CancellationException) {
                     traces[kind]!!.notStarted("other resolver won")
                     throw cancel
@@ -331,8 +396,9 @@ class StreamResolver(
         try {
             val winner = withTimeout(OVERALL_TIMEOUT_MS) { outcome.await() }
             traces.values.forEach { if (it.ms < 0 && it.note == null) it.notStarted("other resolver won") }
-            rememberWinner(winner.kind)
-            AppLog.i(TAG, raceLine(candidates, traces, winner.kind))
+            val winnerKind = winner.resolver ?: ResolverKind.NEWPIPE
+            rememberWinner(winnerKind)
+            AppLog.i(TAG, raceLine(candidates, traces, winnerKind))
             winner
         } catch (timeout: TimeoutCancellationException) {
             AppLog.w(TAG, "Stream resolution timed out after $OVERALL_TIMEOUT_MS ms")
@@ -394,19 +460,28 @@ class StreamResolver(
     }
 
     /** One provider attempt, recorded against its rolling stats. */
-    private suspend fun attempt(kind: ResolverKind, videoId: String, quality: StreamQuality): String =
+    private suspend fun attempt(kind: ResolverKind, videoId: String, quality: StreamQuality): ResolvedStream =
         withContext(Dispatchers.IO) {
             val t0 = System.currentTimeMillis()
             try {
-                val url = when (kind) {
+                val stream = when (kind) {
                     ResolverKind.NEWPIPE -> extract(videoId, quality)
-                    ResolverKind.INNERTUBE -> innerTubeAudioUrl(videoId, quality)
+                    ResolverKind.INNERTUBE -> innerTubeStream(videoId, quality)
                         ?: throw IllegalStateException("InnerTube returned no audio stream")
                     ResolverKind.YOUTUBEJS -> youtubeJs?.resolveAudio(videoId, quality)
                         ?: throw IllegalStateException("YouTube.js returned no audio stream")
                 }
+                // Validate before this provider may win: a dead/expired/unsafe URL is a failure, so
+                // the race keeps going and another provider gets its turn.
+                val invalid = validateStreamUrl(stream.url)
+                if (invalid != null) {
+                    record(kind, System.currentTimeMillis() - t0, succeeded = false)
+                    AppLog.w(TAG, "${kind.label} returned an unusable URL ($invalid)")
+                    throw IllegalStateException("Unusable stream URL: $invalid")
+                }
                 record(kind, System.currentTimeMillis() - t0, succeeded = true)
-                url
+                // The winning kind is authoritative regardless of what the provider labelled it.
+                stream.copy(resolver = kind)
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (error: Throwable) {
@@ -449,15 +524,11 @@ class StreamResolver(
      * Signed googlevideo URLs carry an `expire` (unix seconds) deadline. Capping the cache at that
      * deadline minus a minute stops us from handing ExoPlayer a URL that is about to 403.
      */
-    private fun cacheTtlFor(url: String): Long {
-        val expire = URL_EXPIRE.find(url)?.groupValues?.getOrNull(1)?.toLongOrNull()
-            ?: return CACHE_TTL_MS
-        val remaining = expire * 1000L - System.currentTimeMillis() - SAFETY_MARGIN_MS
-        return remaining.coerceIn(30_000L, CACHE_TTL_MS)
-    }
+    private fun cacheTtlFor(url: String): Long =
+        streamCacheTtlMs(url, System.currentTimeMillis(), CACHE_TTL_MS, SAFETY_MARGIN_MS)
 
     /** NewPipe extraction. Runs off the caller's thread; throws [NewPipeUnavailableException] on linkage errors. */
-    private fun extract(videoId: String, quality: StreamQuality): String {
+    private fun extract(videoId: String, quality: StreamQuality): ResolvedStream {
         ensureInitialized()
         val info = try {
             StreamInfo.getInfo(ServiceList.YouTube, "$WATCH_URL$videoId")
@@ -469,18 +540,52 @@ class StreamResolver(
             // Progressive HTTP URLs only; DASH/manifest entries cannot be handed to Media3 as-is.
             it.content.startsWith("http", ignoreCase = true)
         }
-        val chosen = pickByQuality(progressive, quality) { it.averageBitrate }
-        return chosen?.content?.takeIf { it.isNotBlank() }
+        // Prefer Opus when the provider offers it (same rule as the InnerTube path); fall back to
+        // whatever audio-only formats exist so a missing Opus track never fails playback.
+        val opus = progressive.filter { stream ->
+            listOfNotNull(stream.codec, stream.format?.name, stream.format?.mimeType)
+                .joinToString(" ")
+                .contains("opus", ignoreCase = true)
+        }
+        val chosen = pickByQuality(opus.ifEmpty { progressive }, quality) { it.averageBitrate }
             ?: throw IllegalStateException("This song has no audio-only stream available")
+        val url = chosen.content.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("This song has no audio-only stream available")
+        // The stream's own MediaFormat is the container; its codec string names the encoder. Both are
+        // reliable here, unlike anything derived from the URL.
+        val format = chosen.format
+        return ResolvedStream(
+            url = url,
+            format = normalizeAudioFormat(
+                mimeType = format?.mimeType,
+                codec = chosen.codec,
+                extension = format?.suffix,
+            ),
+            mimeType = format?.mimeType,
+            codec = chosen.codec,
+            extension = format?.suffix,
+            bitrate = chosen.averageBitrate.takeIf { it > 0 },
+            resolver = ResolverKind.NEWPIPE,
+        )
     }
 
     /** InnerTube fallback: Opus preferred, closest to the requested quality. */
-    private suspend fun innerTubeAudioUrl(videoId: String, quality: StreamQuality): String? {
+    private suspend fun innerTubeStream(videoId: String, quality: StreamQuality): ResolvedStream? {
         val formats = innerTubePlayer.audioFormats(videoId)
         if (formats.isEmpty()) return null
         val opus = formats.filter { it.isOpus }
         val pool = opus.ifEmpty { formats }
-        return pickByQuality(pool, quality) { it.bitrate }?.url
+        val chosen = pickByQuality(pool, quality) { it.bitrate } ?: return null
+        // InnerTube only exposes a mime type ("audio/webm; codecs=opus"); the codec string lives
+        // inside it, so keep the mime verbatim and derive the short codec label from it.
+        return ResolvedStream(
+            url = chosen.url,
+            format = normalizeAudioFormat(mimeType = chosen.mimeType, hint = if (chosen.isOpus) "opus" else null),
+            mimeType = chosen.mimeType,
+            codec = shortCodecLabel(null, chosen.mimeType),
+            bitrate = chosen.bitrate.takeIf { it > 0 },
+            resolver = ResolverKind.INNERTUBE,
+        )
     }
 
     private fun extractBest(videoId: String): ResolvedAudio {
@@ -571,7 +676,7 @@ class StreamResolver(
         }
     }
 
-    private data class CachedStream(val url: String, val expiresAt: Long)
+    private data class CachedStream(val stream: ResolvedStream, val expiresAt: Long)
 
     private companion object {
         const val TAG = "YouTube"
@@ -591,7 +696,6 @@ class StreamResolver(
         const val OVERALL_TIMEOUT_MS = 6_000L
         const val CACHE_TTL_MS = 55 * 60 * 1000L
         const val SAFETY_MARGIN_MS = 60_000L
-        val URL_EXPIRE = Regex("[?&]expire=(\\d+)")
         val lock = Any()
 
         @Volatile

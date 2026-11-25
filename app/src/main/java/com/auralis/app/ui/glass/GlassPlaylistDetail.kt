@@ -18,7 +18,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -108,7 +107,7 @@ fun GlassPlaylistDetailScreen(
         }
     }
     if (renaming) {
-        AlertDialog(
+        GlassMaterialAlertDialog(
             onDismissRequest = { renaming = false },
             title = { Text("Rename playlist") },
             text = { OutlinedTextField(name, { name = it }, singleLine = true) },

@@ -42,8 +42,8 @@ android {
         targetSdk = 35
         // Single source of truth for app versioning. Bump BOTH for every release:
         // versionCode must always increase; versionName is what the updater compares.
-        versionCode = 2
-        versionName = "1.2.0"
+        versionCode = 3
+        versionName = "1.5.0"
 
         // Blank when no key was supplied; ClerkAuthRepository skips auth in that case.
         buildConfigField("String", "CLERK_PUBLISHABLE_KEY", "\"$clerkPublishableKey\"")

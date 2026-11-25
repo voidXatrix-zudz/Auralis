@@ -223,7 +223,6 @@ fun LyricsContent(
     bottomPaddingFraction: Float = anchorFraction,
 ) {
     val lines = lyrics?.synced.orEmpty()
-    val plain = lyrics?.plain
     val effectivePosition = (positionMs + lyricsOffsetMs).coerceAtLeast(0L)
     // Per-frame player position, read only by the active word-timed line so the rest of the list
     // never recomposes on a frame. Advances while playing, freezes on pause, re-bases on every
@@ -412,10 +411,6 @@ fun LyricsContent(
                         }
                     }
                 }
-                !plain.isNullOrBlank() -> UnsyncedLyrics(
-                    plain = plain,
-                    accent = accent,
-                )
                 else -> EmptyLyricsState(
                     accent = accent,
                     onTryAnother = onTryAnotherSource,
@@ -567,7 +562,7 @@ private fun LyricLineRow(
             lineHeight = (sizeSp + 9).sp,
             letterSpacing = 0.2.sp,
             shadow = if (accentGlow) {
-                Shadow(color = accent.copy(alpha = 0.55f * highlight), blurRadius = 16f)
+                Shadow(color = accent.copy(alpha = 0.68f * highlight), blurRadius = 22f)
             } else {
                 null
             },
@@ -784,46 +779,6 @@ private fun InstrumentalGap(visible: Boolean, accent: Color, animated: Boolean) 
 }
 
 @Composable
-private fun UnsyncedLyrics(plain: String, accent: Color) {
-    val colors = MaterialTheme.colorScheme
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
-    AnimatedVisibility(visible = visible, enter = fadeIn(tween(420)), exit = fadeOut()) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 22.dp)) {
-            Surface(
-                color = colors.surface.copy(alpha = 0.42f),
-                shape = CircleShape,
-                border = BorderStroke(1.dp, colors.onSurface.copy(alpha = 0.10f)),
-            ) {
-                Text(
-                    "NOT SYNCED",
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = accent,
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                val plainLines = plain.lineSequence().filter { it.isNotBlank() }.toList()
-                itemsIndexed(plainLines) { _, line ->
-                    val family = remember(line) { LyricsTypography.familyFor(line) }
-                    Text(
-                        line.trim(),
-                        style = MaterialTheme.typography.bodyLarge.copy(fontFamily = family),
-                        color = colors.onSurface.copy(alpha = 0.82f),
-                        lineHeight = 26.sp,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun EmptyLyricsState(
     accent: Color,
     onTryAnother: () -> Unit,
@@ -844,7 +799,7 @@ private fun EmptyLyricsState(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Icon(Icons.Rounded.Lyrics, null, tint = accent, modifier = Modifier.size(34.dp))
-            Text("No lyrics found", style = MaterialTheme.typography.titleMedium)
+            Text("Lyrics not found", style = MaterialTheme.typography.titleMedium)
             Text(
                 "No provider had lyrics for this song. Try another source, retry, or add them yourself.",
                 color = colors.onSurfaceVariant,

@@ -13,9 +13,16 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.auralis.app.R
@@ -25,7 +32,9 @@ import com.auralis.app.data.youtube.YtPlaylist
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.LocalDockBottomInset
+import com.auralis.app.ui.glass.rememberReduceMotion
 import com.auralis.app.ui.screens.LibraryPlaylistRow
+import com.auralis.app.ui.theme.AuralisMotion
 
 /** Draws one mapped Home section with the shared row components. */
 @Composable
@@ -115,6 +124,39 @@ private fun CardRow(content: LazyListScope.() -> Unit) {
 }
 
 private fun cardKey(card: YtCard): String = card.videoId ?: card.browseId ?: card.title
+
+/**
+ * One-shot entrance for a Home section: the row rises a few dp and fades in, staggered by its
+ * position in the feed so the page assembles itself top-to-bottom. Because each section is a keyed
+ * LazyColumn item, it plays again whenever that row is scrolled back into view — cheap (a single
+ * float) and it makes the feed feel alive as you move through it. Snaps when reduced motion is on.
+ */
+@Composable
+private fun HomeReveal(index: Int, content: @Composable () -> Unit) {
+    val reduceMotion = rememberReduceMotion()
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val progress by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = if (reduceMotion) {
+            snap()
+        } else {
+            AuralisMotion.tweenCreamy(
+                durationMillis = AuralisMotion.Slow,
+                delayMillis = index.coerceAtMost(6) * 60,
+            )
+        },
+        label = "homeReveal",
+    )
+    Box(
+        Modifier.graphicsLayer {
+            alpha = progress
+            translationY = (1f - progress) * 28f
+        },
+    ) {
+        content()
+    }
+}
 
 /**
  * Home for the local library (YouTube integration off). Shared by the Normal branch in
@@ -228,22 +270,24 @@ fun LocalHomeFeed(
                     )
                 }
             } else {
-                rows.forEach { row ->
+                rows.forEachIndexed { index, row ->
                     item(key = "row:${row.key}") {
-                        HomeRowBlock(
-                            row = row,
-                            style = style,
-                            favorites = favorites,
-                            currentId = currentId,
-                            playlists = playlists,
-                            onPlay = onPlay,
-                            onFavorite = onFavorite,
-                            onPlayNext = onPlayNext,
-                            onAddToPlaylist = onAddToPlaylist,
-                            onOpenCard = {},
-                            onShowAll = onOpenExplore,
-                            onLoadMore = {},
-                        )
+                        HomeReveal(index) {
+                            HomeRowBlock(
+                                row = row,
+                                style = style,
+                                favorites = favorites,
+                                currentId = currentId,
+                                playlists = playlists,
+                                onPlay = onPlay,
+                                onFavorite = onFavorite,
+                                onPlayNext = onPlayNext,
+                                onAddToPlaylist = onAddToPlaylist,
+                                onOpenCard = {},
+                                onShowAll = onOpenExplore,
+                                onLoadMore = {},
+                            )
+                        }
                     }
                 }
             }

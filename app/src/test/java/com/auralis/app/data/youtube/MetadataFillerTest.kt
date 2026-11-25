@@ -300,4 +300,25 @@ class MetadataFillerTest {
         assertFalse(local.needsMetadataFill)
         assertNull(local.remoteId)
     }
+
+    @Test
+    fun `an unchanged incomplete answer stops the retry window early`() = runTest {
+        // A song whose title arrives but whose artist never does: asking the same endpoint again
+        // cannot add anything, so the filler stops after the second identical answer instead of
+        // burning the whole retry budget.
+        var fetches = 0
+        val settled = mutableListOf<String>()
+        val filler = MetadataFiller(
+            scope = this,
+            fetch = { fetches++; song(artist = "") },
+            onFilled = {},
+            onSettled = { settled += it },
+        )
+
+        filler.request(placeholder())
+        advanceUntilIdle()
+
+        assertEquals(MetadataFiller.STAGNANT_LIMIT + 1, fetches)
+        assertEquals(listOf(placeholder().id), settled)
+    }
 }

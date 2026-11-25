@@ -7,17 +7,29 @@ import android.provider.MediaStore
 import android.util.Log
 import android.util.LruCache
 import androidx.documentfile.provider.DocumentFile
+import com.auralis.app.BuildConfig
 import com.auralis.app.data.db.LyricsDao
 import com.auralis.app.data.db.LyricsEntity
 import com.auralis.app.data.db.ProviderCacheDao
 import com.auralis.app.data.db.ProviderCacheEntity
 import com.auralis.app.data.db.SourceDao
+import com.auralis.app.data.lyrics.providers.BetterLyricsPortatoProvider
+import com.auralis.app.data.lyrics.providers.GeniusProvider
+import com.auralis.app.data.lyrics.providers.LrcRedProvider
+import com.auralis.app.data.lyrics.providers.MusixmatchProvider
+import com.auralis.app.data.lyrics.providers.PaxSenixMusixmatchProvider
+import com.auralis.app.data.lyrics.providers.PaxSenixProvider
+import com.auralis.app.data.lyrics.providers.PaxSenixSpotifyProvider
+import com.auralis.app.data.lyrics.providers.UnisonProvider
+import com.auralis.app.data.lyrics.providers.YouTubeCaptionsProvider
 import com.auralis.app.data.settings.SettingsRepository
 import com.auralis.app.domain.lyrics.LrcParser
+import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.LyricsSync
 import com.auralis.app.domain.model.Track
+import com.auralis.app.logging.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -29,6 +41,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Resolves lyrics for a track using a strict priority:
@@ -53,20 +66,50 @@ class LyricsRepository(
 
     /** Enabled by id; built once. Provider order/enabled state is read per lookup from settings. */
     private val providerHttp = ProviderHttp(http)
-    private val providers: Map<String, LyricsProvider> = listOf(
+
+    /**
+     * Builds the provider set for one lookup. Providers are cheap wrappers around [providerHttp], so
+     * rebuilding per lookup costs nothing and lets a key entered in Settings take effect immediately.
+     */
+    private fun buildProviders(current: AppSettings?): Map<String, LyricsProvider> = listOf(
         LrclibProvider(),
+        LrcRedProvider(providerHttp),
+        BiniLyricsProvider(providerHttp),
+        BetterLyricsProvider(providerHttp, current?.betterLyricsApiKey.orEmpty()),
+        BetterLyricsPortatoProvider(providerHttp, current?.betterLyricsApiKey.orEmpty()),
+        LyricsPlusProvider(providerHttp),
+        UnisonProvider(providerHttp),
+        KuGouProvider(providerHttp),
         SimpMusicProvider(providerHttp),
         NetEaseProvider(providerHttp),
-        KuGouProvider(providerHttp),
-        BetterLyricsProvider(providerHttp),
-        BiniLyricsProvider(providerHttp),
-        LyricsPlusProvider(providerHttp),
         YouTubeMusicLyricsProvider(providerHttp),
+        YouTubeCaptionsProvider(providerHttp),
+        MusixmatchProvider(providerHttp, current?.musixmatchToken.orEmpty()),
+        GeniusProvider(providerHttp, current?.geniusApiKey.orEmpty()),
+        PaxSenixProvider(),
+        PaxSenixSpotifyProvider(),
+        PaxSenixMusixmatchProvider(),
         LyricsOvhProvider(providerHttp),
     ).associateBy { it.id }
 
     /** Non-blocking lookup used by the screen to show prefetched/cached lyrics instantly. */
     fun cached(trackId: String): Lyrics? = parsedCache.get(trackId)
+
+    /** Commits a still-current lookup result to the in-memory winner cache. */
+    fun rememberParsedLyrics(trackId: String, lyrics: Lyrics) {
+        parsedCache.put(trackId, lyrics)
+    }
+
+    /** Commits a manual provider result after the caller confirms it is still the latest choice. */
+    suspend fun rememberSelectedProviderResult(trackId: String, providerId: String, lyrics: Lyrics) = withContext(Dispatchers.IO) {
+        runCatching {
+            providerCacheDao?.upsert(
+                ProviderCacheEntity(KIND_CHOICE, trackId, CHOICE_PROVIDER, providerId, true, System.currentTimeMillis()),
+            )
+        }
+        parsedCache.put(trackId, lyrics)
+        Unit
+    }
 
     /** Warms the next queue item: resolve, parse off the main thread and cache the result. */
     suspend fun prefetch(track: Track) {
@@ -79,53 +122,85 @@ class LyricsRepository(
         allowNetwork: Boolean = true,
         skipProviders: Set<String> = emptySet(),
         ignoreMemoryCache: Boolean = false,
+        ignoreLocalLyrics: Boolean = false,
+        forceProviderFetch: Boolean = false,
+        cacheParsedResults: Boolean = true,
         onUpdate: (suspend (Lyrics) -> Unit)? = null,
     ): Lyrics? = withContext(Dispatchers.IO) {
-        if (!ignoreMemoryCache) parsedCache.get(track.id)?.let { return@withContext it }
+        if (!ignoreMemoryCache) parsedCache.get(track.id)?.let { cached ->
+            // Preserve explicitly saved manual text, but an old automatic plain-text winner no
+            // longer qualifies now that automatic lyrics require timestamps.
+            if (cached.source == LyricsSource.USER || hasTiming(cached)) return@withContext cached
+            parsedCache.remove(track.id)
+        }
         val stored = runCatching { lyricsDao.forTrack(track.id) }.getOrDefault(emptyList())
 
         // 1. Manual lyrics always win and are never replaced by automatic discovery.
-        stored.firstOrNull { it.source == LyricsSource.USER.name }?.let {
-            return@withContext parseAndCache(track.id, it)
+        if (!ignoreLocalLyrics) {
+            stored.firstOrNull { it.source == LyricsSource.USER.name }?.let {
+                return@withContext parseAndCache(track.id, it)
+            }
         }
 
         // 2. Embedded lyrics are preferred over sidecar files. A cached copy avoids re-reading the
         //    audio file on every visit, while a stale/missing cache falls back to the real tag.
-        stored.firstOrNull { it.source == LyricsSource.EMBEDDED.name }?.let {
-            return@withContext parseAndCache(track.id, it)
+        if (!ignoreLocalLyrics) {
+            stored.firstOrNull { it.source == LyricsSource.EMBEDDED.name }?.let {
+                val parsed = parseAndCache(track.id, it)
+                if (hasTiming(parsed)) return@withContext parsed
+            }
         }
         // Remote (streamed) songs have no local file, so only the DB cache and LRCLIB apply.
-        if (allowDiscovery && !track.isRemote) {
+        if (!ignoreLocalLyrics && allowDiscovery && !track.isRemote) {
             val embedded = EmbeddedLyrics.read(context, track)
             if (embedded != null) {
                 cache(track, LyricsSource.EMBEDDED, embedded.text)
-                return@withContext parseRaw(track.id, embedded.text, LyricsSource.EMBEDDED)
+                val parsed = parseRaw(track.id, embedded.text, LyricsSource.EMBEDDED)
+                if (hasTiming(parsed)) return@withContext parsed
             }
         }
 
         // 3. Sidecar LRC.
-        stored.firstOrNull { it.source == LyricsSource.LRC.name }?.let {
-            return@withContext parseAndCache(track.id, it)
+        if (!ignoreLocalLyrics) {
+            stored.firstOrNull { it.source == LyricsSource.LRC.name }?.let {
+                val parsed = parseAndCache(track.id, it)
+                if (hasTiming(parsed)) return@withContext parsed
+            }
         }
-        if (!allowDiscovery) return@withContext null
-        val discovered = if (track.isRemote) null else discover(track)
+        if (!allowDiscovery && !ignoreLocalLyrics) return@withContext null
+        val discovered = if (ignoreLocalLyrics || track.isRemote) null else discover(track)
         if (discovered != null) {
             cache(track, LyricsSource.LRC, discovered.first)
-            return@withContext parseRaw(track.id, discovered.first, LyricsSource.LRC)
+            val parsed = parseRaw(track.id, discovered.first, LyricsSource.LRC)
+            if (hasTiming(parsed)) return@withContext parsed
         }
 
-        // 4. Online providers, queried in parallel (Part Q): every enabled provider starts at once,
-        //    each with a 6 s budget and an overall 6 s cap. The first acceptable synced result is
-        //    shown immediately and silently upgraded within a 2 s window; otherwise the best
-        //    unsynced result wins. A positive cache row is reused, a fresh negative row skips a
-        //    provider, and a failing provider is only logged (never negative-cached).
+        // 4. Online providers are queried in parallel. Word-synced results outrank line-synced
+        //    results; plain provider text is not a lyrics result. A high-confidence word-synced
+        //    answer can be shown immediately, while line sync waits for the word search window.
         if (!allowNetwork) return@withContext null
         val current = runCatching { settings?.settings?.first() }.getOrNull()
-        val order = (current?.lyricsProviderOrder ?: com.auralis.app.domain.model.AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER)
-            .filter { it in (current?.lyricsProvidersEnabled ?: com.auralis.app.domain.model.AppSettings().lyricsProvidersEnabled) }
+        val enabled = current?.lyricsProvidersEnabled ?: AppSettings().lyricsProvidersEnabled
+        val providerMap = buildProviders(current)
+        loadProviderHealth(providerMap.keys)
+        val preferredProvider = runCatching {
+            providerCacheDao?.get(KIND_CHOICE, track.id, CHOICE_PROVIDER)?.payload
+        }.getOrNull()
+        // Plain-text-only sources are excluded: this screen intentionally shows timed lyrics only.
+        val order = (current?.lyricsProviderOrder ?: AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER)
+            .filter { it in enabled }
             .filterNot { it in skipProviders }
-        val preferSynced = current?.preferSyncedLyrics ?: true
-        return@withContext loadOnlineParallel(track, order, preferSynced, onUpdate)
+            .filterNot { providerMap[it]?.plainOnly == true }
+            .sortedWith(compareBy<String> { if (it == preferredProvider) 0 else 1 }
+                // Start word-capable sources first. Lookups still run concurrently for speed;
+                // selection prefers actual word timing, while cross-provider text agreement can
+                // still reject a word-timed outlier before line-level results are considered.
+                .thenBy { if (providerMap[it]?.supportsWordSync == true) 0 else 1 }
+                .thenBy { if (providerMap[it]?.alwaysLast == true) 1 else 0 }
+                .thenByDescending { providerMap[it]?.priority ?: 100 }
+                .thenByDescending { providerHealth[it]?.successRate ?: 0.5 }
+                .thenBy { providerHealth[it]?.averageLatencyMs ?: Long.MAX_VALUE })
+        return@withContext loadOnlineParallel(track, order, onUpdate, providerMap, forceProviderFetch, cacheParsedResults)
     }
 
     /**
@@ -140,8 +215,27 @@ class LyricsRepository(
             allowNetwork = true,
             skipProviders = skip,
             ignoreMemoryCache = true,
+            ignoreLocalLyrics = true,
+            forceProviderFetch = true,
+            cacheParsedResults = false,
         )
-        if (result != null) parsedCache.put(track.id, result)
+        result
+    }
+
+    /** Manual provider selection: only this source is queried, and a successful choice is remembered per track. */
+    suspend fun fetchFromProvider(track: Track, providerId: String): Lyrics? = withContext(Dispatchers.IO) {
+        val current = runCatching { settings?.settings?.first() }.getOrNull()
+        val enabled = current?.lyricsProvidersEnabled ?: AppSettings().lyricsProvidersEnabled
+        if (providerId !in enabled) return@withContext null
+        val providers = buildProviders(current)
+        val query = LyricsQuery(
+            okayTitle(track), track.artist, track.album.takeIf(String::isNotBlank),
+            track.durationMs.takeIf { it > 0 },
+            if (track.isRemote) track.remoteId ?: track.id.removePrefix("yt:") else null,
+        )
+        // The ViewModel commits the selected result only after its request-generation check. This
+        // prevents a cancelled older choice from replacing the parsed cache for the current song.
+        val result = searchProvider(track, providerId, query, providers, cacheParsed = false)
         result
     }
 
@@ -150,20 +244,12 @@ class LyricsRepository(
      * and looks the song up again. Used by the empty lyrics state.
      */
     suspend fun retry(track: Track): Lyrics? = withContext(Dispatchers.IO) {
-        runCatching { providerCacheDao?.deleteKey(KIND_LYRICS, track.id) }
+        runCatching { providerCacheDao?.deleteKey(KIND_LYRICS, providerCacheKey(track)) }
         parsedCache.remove(track.id)
         load(track, ignoreMemoryCache = true)
     }
 
     /** The query fields shared by every provider lookup. */
-    private data class LyricsQuery(
-        val title: String,
-        val artist: String,
-        val album: String?,
-        val durationMs: Long?,
-        val videoId: String?,
-    )
-
     /** A provider outcome on the results channel ([lyrics] is null when it found or returned nothing). */
     private class LyricsHit(val lyrics: Lyrics?)
 
@@ -171,18 +257,19 @@ class LyricsRepository(
      * Queries every enabled [order] provider in parallel and picks the best answer (Part Q).
      *
      * One coroutine per provider starts at once (never for a disabled one); each has a
-     * [PROVIDER_TIMEOUT_MS] budget and the whole lookup is capped at [OVERALL_BUDGET_MS]. Results are
-     * ranked by sync quality first (word > line > plain) and then by confidence (title similarity,
-     * artist overlap, duration agreement). The first acceptable result is emitted through [onUpdate]
-     * immediately; a strictly better sync level always replaces it, and a better-scoring same-tier
-     * result may replace it within [UPGRADE_WINDOW_MS]. Cached positives are reused and fresh
-     * negatives skip a provider; provider failures are only logged.
+     * [PROVIDER_TIMEOUT_MS] budget and the whole lookup is capped at [OVERALL_BUDGET_MS]. Only
+     * timed results are admitted. A high-confidence word-synced result may be shown immediately;
+     * otherwise the completed search prefers word timing, then line timing, with cross-provider
+     * agreement and match confidence breaking ties. Cached positives are reused and fresh negatives
+     * skip a provider; provider failures are only logged.
      */
     private suspend fun loadOnlineParallel(
         track: Track,
         order: List<String>,
-        preferSynced: Boolean,
         onUpdate: (suspend (Lyrics) -> Unit)?,
+        providers: Map<String, LyricsProvider>,
+        forceProviderFetch: Boolean = false,
+        cacheParsedResults: Boolean = true,
     ): Lyrics? {
         if (order.isEmpty()) return null
         val query = LyricsQuery(
@@ -195,81 +282,113 @@ class LyricsRepository(
         return coroutineScope {
             val hits = Channel<LyricsHit>(Channel.UNLIMITED)
             val jobs = order.map { providerId ->
-                launch { hits.send(LyricsHit(searchProvider(track, providerId, query))) }
+                launch {
+                    hits.send(
+                        LyricsHit(
+                            searchProvider(
+                                track,
+                                providerId,
+                                query,
+                                providers,
+                                forceFetch = forceProviderFetch,
+                                cacheParsed = cacheParsedResults,
+                            ),
+                        ),
+                    )
+                }
             }
             launch {
                 jobs.joinAll()
                 hits.close()
             }
 
-            var best: Lyrics? = null
-            var shown: Lyrics? = null
-            var windowStartedAt = 0L
+            val candidates = mutableListOf<Lyrics>()
             val deadline = System.currentTimeMillis() + OVERALL_BUDGET_MS
             while (true) {
                 val remaining = deadline - System.currentTimeMillis()
                 if (remaining <= 0L) break
                 val hit = withTimeoutOrNull(remaining) { hits.receiveCatching().getOrNull() } ?: break
                 val lyrics = hit.lyrics ?: continue
-                if (best == null || isBetterLyrics(lyrics, best!!, preferSynced)) best = lyrics
-
-                val withinUpgrade = windowStartedAt > 0L &&
-                    System.currentTimeMillis() - windowStartedAt <= UPGRADE_WINDOW_MS
-                // A strictly better sync level (word over line over plain) always replaces the shown
-                // one, however late it arrives; within the window, a better-scoring same-tier result
-                // may also replace it. This is what lets a word-synced provider win over a fast
-                // line-synced one for the same song.
-                val strictlyHigherQuality = preferSynced && shown != null &&
-                    lyrics.sync.ordinal > shown!!.sync.ordinal
-                val emit = when {
-                    shown == null -> !preferSynced || lyrics.sync != LyricsSync.PLAIN
-                    strictlyHigherQuality -> true
-                    withinUpgrade && isBetterLyrics(lyrics, shown!!, preferSynced) -> true
-                    else -> false
-                }
-                if (emit) {
+                candidates += lyrics
+                if ((lyrics.matchScore ?: 0) >= FAST_ACCEPT_SCORE && lyrics.sync == LyricsSync.WORD) {
                     onUpdate?.invoke(lyrics)
-                    shown = lyrics
-                    if (windowStartedAt == 0L) windowStartedAt = System.currentTimeMillis()
+                    return@coroutineScope lyrics
                 }
             }
 
-            val winner = best
-            if (winner != null && winner !== shown) onUpdate?.invoke(winner)
+            if (candidates.isEmpty()) return@coroutineScope null
+            // If multiple independent sources disagree, require a majority text match. With a tie
+            // (for example two unrelated songs returned) return no lyrics rather than guess.
+            val support = candidates.associateWith { candidate ->
+                candidates.count { other -> other !== candidate && LyricsPrecision.lyricSimilarity(candidate.raw, other.raw) >= AGREEMENT_THRESHOLD }
+            }
+            val topSupport = support.values.maxOrNull() ?: 0
+            val winner = if (candidates.size > 1 && topSupport == 0) null else support.entries
+                .filter { it.value == topSupport }
+                .map { it.key }
+                .maxWithOrNull(compareBy<Lyrics> { it.sync.ordinal }
+                    .thenBy { it.matchScore ?: 0 }
+                    .thenBy { providers[it.provider]?.priority ?: 100 }
+                    .thenBy { providerHealth[it.provider]?.successRate ?: 0.5 }
+                    .thenBy { -(providerHealth[it.provider]?.averageLatencyMs ?: Long.MAX_VALUE) })
+            if (winner != null) onUpdate?.invoke(winner)
             winner
         }
     }
 
     /** Resolves one provider: cached row first, else a bounded search; both cache their outcome. */
-    private suspend fun searchProvider(track: Track, providerId: String, query: LyricsQuery): Lyrics? {
-        val cachedRow = runCatching { providerCacheDao?.get(KIND_LYRICS, track.id, providerId) }.getOrNull()
+    private suspend fun searchProvider(
+        track: Track,
+        providerId: String,
+        query: LyricsQuery,
+        providers: Map<String, LyricsProvider>,
+        forceFetch: Boolean = false,
+        cacheParsed: Boolean = true,
+    ): Lyrics? {
+        val cacheKey = providerCacheKey(track)
+        val cachedRow = if (forceFetch) null else runCatching { providerCacheDao?.get(KIND_LYRICS, cacheKey, providerId) }.getOrNull()
         if (cachedRow != null) {
             if (!cachedRow.found) {
                 if (System.currentTimeMillis() - cachedRow.updatedAt < NEGATIVE_TTL_MS) return null
             } else {
-                return parseWithProvider(track, cachedRow.payload, providerId)
+                return parseWithProvider(track, decodeProviderCache(cachedRow.payload).raw, providerId, cacheParsed)
             }
         }
         val provider = providers[providerId] ?: return null
-        val result = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
-            runProvider { provider.search(query.title, query.artist, query.album, query.durationMs, query.videoId) }
-        } ?: return null
-        val raw = result.raw
-        if (raw == null) {
-            cacheProvider(track.id, providerId, "", found = false)
-            return null
+        if (provider.plainOnly) return null
+        val started = System.nanoTime()
+        for (variant in LyricsMatcher.variants(query.title, query.artist)) {
+            val result = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
+                runProvider(providerId) {
+                    val candidate = provider.searchCandidates(
+                        LyricsQuery(variant.title, variant.artist, query.album, query.durationMs, query.videoId),
+                    ).firstOrNull()
+                    if (candidate == null) null else provider.fetch(candidate)
+                }
+            } ?: continue
+            val raw = result.raw ?: continue
+            val accepted = parseWithProvider(track, raw, providerId, cacheParsed)
+            if (accepted != null) {
+                cacheProvider(cacheKey, providerId, raw, found = true, score = accepted.matchScore)
+                recordProviderHealth(providerId, true, (System.nanoTime() - started) / 1_000_000)
+                return accepted
+            }
+            val rejected = LyricsPrecision.check(track, raw)
+            if (BuildConfig.DEBUG) AppLog.d(TAG, "Rejected $providerId lyrics: ${rejected.reason} score=${rejected.score}")
         }
-        cacheProvider(track.id, providerId, raw, found = true)
-        return parseWithProvider(track, raw, providerId)
+        cacheProvider(cacheKey, providerId, "", found = false)
+        recordProviderHealth(providerId, false, (System.nanoTime() - started) / 1_000_000)
+        return null
     }
 
     /** Runs a provider call, logging (never surfacing) failures but honouring cancellation. */
-    private suspend fun <T> runProvider(block: suspend () -> T): T? = try {
+    private suspend fun <T> runProvider(providerId: String, block: suspend () -> T): T? = try {
         block()
     } catch (cancel: CancellationException) {
         throw cancel
     } catch (error: Throwable) {
-        Log.w(TAG, "Lyrics provider failed", error)
+        Log.w(TAG, "Lyrics provider $providerId failed", error)
+        AppLog.w(TAG, "Lyrics provider $providerId failed: ${error.message ?: error::class.simpleName}")
         null
     }
 
@@ -310,7 +429,7 @@ class LyricsRepository(
         runCatching { lyricsDao.delete(track.id, LyricsSource.EMBEDDED.name) }
         runCatching { lyricsDao.delete(track.id, LyricsSource.LRC.name) }
         runCatching { lyricsDao.delete(track.id, LyricsSource.LRCLIB.name) }
-        runCatching { providerCacheDao?.deleteKey(KIND_LYRICS, track.id) }
+        runCatching { providerCacheDao?.deleteKey(KIND_LYRICS, providerCacheKey(track)) }
         parsedCache.remove(track.id)
     }
 
@@ -522,30 +641,41 @@ class LyricsRepository(
     }
 
     /** LRC parsing is CPU work: always run it on Dispatchers.Default, never on the main thread. */
-    private suspend fun parseRaw(trackId: String, raw: String, source: LyricsSource): Lyrics {
+    private suspend fun parseRaw(trackId: String, raw: String, source: LyricsSource, cacheParsed: Boolean = true): Lyrics {
         val parsed = withContext(Dispatchers.Default) {
             // Malformed lyrics must degrade to plain text, never crash the screen.
             runCatching { LrcParser.parse(raw, source) }.getOrElse {
                 Lyrics(source, raw, null, raw.trim().takeIf { text -> text.isNotBlank() })
             }
         }
-        parsedCache.put(trackId, parsed)
+        if (cacheParsed && (source == LyricsSource.USER || hasTiming(parsed))) parsedCache.put(trackId, parsed)
         return parsed
     }
 
     /** Parses online lyrics and tags the result with the provider name and a match confidence. */
-    private suspend fun parseWithProvider(track: Track, raw: String, provider: String): Lyrics {
-        val base = parseRaw(track.id, raw, LyricsSource.LRCLIB).copy(provider = provider)
-        val header = lrcHeaders(raw)
+    private suspend fun parseWithProvider(track: Track, raw: String, provider: String, cacheParsed: Boolean = true): Lyrics? {
+        val cleanRaw = LyricsPrecision.sanitize(raw)
+        val precision = LyricsPrecision.check(track, cleanRaw)
+        if (!precision.accepted) return null
+        val base = parseRaw(track.id, cleanRaw, LyricsSource.LRCLIB, cacheParsed).copy(provider = provider)
+        val header = lrcHeaders(cleanRaw)
         val confidence = confidenceFor(track, header)
         // Slowed/sped-up versions are accepted only when the synced timing still matches the track;
         // otherwise the page warns that the lyrics may be out of sync.
         val outOfSync = LyricsMatcher.isSlowedOrSped(track.title) &&
             base.synced != null && !headerDurationMatches(track, header)
-        val parsed = base.copy(confidence = confidence, outOfSync = outOfSync)
-        parsedCache.put(track.id, parsed)
+        val parsed = base.copy(confidence = precision.score / 100.0, outOfSync = outOfSync, matchScore = precision.score)
+        if (!hasTiming(parsed)) {
+            if (BuildConfig.DEBUG) AppLog.d(TAG, "Rejected $provider lyrics: no synced timestamps")
+            return null
+        }
+        if (cacheParsed) parsedCache.put(track.id, parsed)
+        if (BuildConfig.DEBUG) AppLog.d(TAG, "Accepted $provider lyrics score=${precision.score} sync=${base.sync}")
         return parsed
     }
+
+    private fun hasTiming(lyrics: Lyrics): Boolean =
+        lyrics.sync != LyricsSync.PLAIN && !lyrics.synced.isNullOrEmpty()
 
     /** Reads `[ti:]`/`[ar:]`/`[al:]`/`[length:]` LRC header fields for match scoring. */
     private fun lrcHeaders(raw: String): Map<String, String> {
@@ -629,14 +759,21 @@ class LyricsRepository(
 
     private fun okayTitle(track: Track): String = metadataTitle(track)
 
-    private suspend fun cacheProvider(trackId: String, provider: String, payload: String, found: Boolean) {
+    private fun providerCacheKey(track: Track): String = listOf(
+        track.id,
+        LyricsPrecision.normalize(track.artist),
+        LyricsPrecision.normalize(okayTitle(track)),
+        track.durationMs.coerceAtLeast(0).toString(),
+    ).joinToString("|")
+
+    private suspend fun cacheProvider(trackId: String, provider: String, payload: String, found: Boolean, score: Int? = null) {
         runCatching {
             providerCacheDao?.upsert(
                 ProviderCacheEntity(
                     kind = KIND_LYRICS,
                     trackId = trackId,
                     provider = provider,
-                    payload = payload,
+                    payload = if (found) encodeProviderCache(payload, score) else "",
                     found = found,
                     updatedAt = System.currentTimeMillis(),
                 ),
@@ -644,19 +781,39 @@ class LyricsRepository(
         }.onFailure { Log.w(TAG, "Could not cache $provider lyrics for $trackId", it) }
     }
 
+    private data class CachedLyrics(val raw: String, val score: Int?)
+
+    private fun encodeProviderCache(raw: String, score: Int?): String =
+        "$CACHE_PREFIX${score ?: 0}|${android.util.Base64.encodeToString(raw.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)}"
+
+    private fun decodeProviderCache(payload: String): CachedLyrics {
+        if (!payload.startsWith(CACHE_PREFIX)) return CachedLyrics(payload, null)
+        val encoded = payload.removePrefix(CACHE_PREFIX).substringAfter('|', "")
+        val score = payload.removePrefix(CACHE_PREFIX).substringBefore('|').toIntOrNull()
+        val raw = runCatching { String(android.util.Base64.decode(encoded, android.util.Base64.DEFAULT), Charsets.UTF_8) }.getOrDefault("")
+        return CachedLyrics(raw, score)
+    }
+
     private companion object {
         const val TAG = "AuralisLyrics"
         const val KIND_LYRICS = "lyrics"
+        const val CACHE_PREFIX = "auralis-lyrics-v1|"
+        const val KIND_CHOICE = "lyrics_provider_choice"
+        const val CHOICE_PROVIDER = "selected"
+        const val KIND_HEALTH = "lyrics_provider_health"
+        const val HEALTH_KEY = "_global"
         const val MAX_LYRICS_BYTES = 512 * 1024
         const val MIN_MATCH_SCORE = 50
         /** A "none found" marker is re-queried after this long. */
-        const val NEGATIVE_TTL_MS = 7L * 24 * 60 * 60 * 1000
+        const val NEGATIVE_TTL_MS = 24L * 60 * 60 * 1000
         /** Per-provider lookup budget (Part Q). */
-        const val PROVIDER_TIMEOUT_MS = 6_000L
+        const val PROVIDER_TIMEOUT_MS = 7_000L
         /** Budget for the whole parallel lookup. */
-        const val OVERALL_BUDGET_MS = 6_000L
+        const val OVERALL_BUDGET_MS = 8_000L
         /** How long a shown synced result may be silently upgraded by a better one. */
         const val UPGRADE_WINDOW_MS = 2_000L
+        const val FAST_ACCEPT_SCORE = 90
+        const val AGREEMENT_THRESHOLD = 0.48
 
         /** Per-song lyrics timing offset (Part J), stored in the shared provider cache. */
         const val KIND_OFFSET = "lyrics_offset"
@@ -666,4 +823,43 @@ class LyricsRepository(
         /** How far an LRC `[length:]` header may differ from the track duration and still count as synced. */
         const val DURATION_TOLERANCE_MS = 5_000L
     }
+
+    private data class ProviderHealth(var successes: Int = 0, var failures: Int = 0, var totalLatencyMs: Long = 0) {
+        val successRate: Double get() = successes.toDouble() / (successes + failures).coerceAtLeast(1)
+        val averageLatencyMs: Long get() = totalLatencyMs / (successes + failures).coerceAtLeast(1)
+    }
+
+    private val providerHealth = ConcurrentHashMap<String, ProviderHealth>()
+
+    private suspend fun recordProviderHealth(id: String, success: Boolean, elapsedMs: Long) {
+        val health = providerHealth.computeIfAbsent(id) { ProviderHealth() }
+        synchronized(health) {
+            if (success) health.successes++ else health.failures++
+            health.totalLatencyMs += elapsedMs.coerceAtLeast(0)
+        }
+        runCatching {
+            providerCacheDao?.upsert(
+                ProviderCacheEntity(
+                    kind = KIND_HEALTH,
+                    trackId = HEALTH_KEY,
+                    provider = id,
+                    payload = "${health.successes},${health.failures},${health.totalLatencyMs}",
+                    found = true,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
+    private suspend fun loadProviderHealth(ids: Set<String>) {
+        ids.forEach { id ->
+            if (providerHealth.containsKey(id)) return@forEach
+            val fields = runCatching { providerCacheDao?.get(KIND_HEALTH, HEALTH_KEY, id)?.payload?.split(',') }.getOrNull()
+            if (fields?.size == 3) {
+                val row = ProviderHealth(fields[0].toIntOrNull() ?: 0, fields[1].toIntOrNull() ?: 0, fields[2].toLongOrNull() ?: 0)
+                providerHealth.putIfAbsent(id, row)
+            }
+        }
+    }
+
 }

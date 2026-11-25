@@ -106,4 +106,43 @@ class PerformanceResolverTest {
         assertTrue(low.artworkMaxPx < medium.artworkMaxPx)
         assertTrue(medium.artworkMaxPx < high.artworkMaxPx)
     }
+
+    // --- Glass-shaping rules: LOW is reserved for genuinely weak devices -----------------------
+
+    @Test fun lowCoresOrSmallHeapOnlyCapAtMediumNeverForceLow() {
+        val fewCores = strong.copy(cores = 2)
+        val smallHeap = strong.copy(memoryClassMb = 128)
+        assertEquals(VisualPerformanceTier.MEDIUM, AdaptiveTierResolver.baseTier(fewCores))
+        assertEquals(VisualPerformanceTier.MEDIUM, AdaptiveTierResolver.baseTier(smallHeap))
+    }
+
+    @Test fun lowAvailableRamNoLongerForcesLow() {
+        // A phone that is momentarily tight on RAM must not drop the whole app to LOW.
+        val brieflyTight = strong.copy(availMemBytes = 128L * 1024 * 1024)
+        assertEquals(VisualPerformanceTier.HIGH, AdaptiveTierResolver.baseTier(brieflyTight))
+    }
+
+    @Test fun onlyLowRamOrUnder3GbForcesLow() {
+        val smallTotalRam = strong.copy(totalMemBytes = (2.5 * 1024 * 1024 * 1024).toLong())
+        assertEquals(VisualPerformanceTier.LOW, AdaptiveTierResolver.baseTier(smallTotalRam))
+        assertEquals(
+            VisualPerformanceTier.LOW,
+            AdaptiveTierResolver.baseTier(strong.copy(isLowRamDevice = true)),
+        )
+    }
+
+    @Test fun automaticStepDownNeverReachesLowFromMedium() {
+        assertEquals(VisualPerformanceTier.MEDIUM, AdaptiveTierResolver.stepDown(VisualPerformanceTier.HIGH))
+        assertEquals(VisualPerformanceTier.MEDIUM, AdaptiveTierResolver.stepDown(VisualPerformanceTier.MEDIUM))
+        assertEquals(VisualPerformanceTier.LOW, AdaptiveTierResolver.stepDown(VisualPerformanceTier.LOW))
+    }
+
+    @Test fun mediumBaseTierStaysMediumUnderBatterySaver() {
+        val resolver = AdaptiveTierResolver()
+        val mediumDevice = strong.copy(cores = 4)
+        assertEquals(
+            VisualPerformanceTier.MEDIUM,
+            resolver.resolve(PerformanceMode.AUTOMATIC, mediumDevice.copy(batterySaver = true), 0L),
+        )
+    }
 }

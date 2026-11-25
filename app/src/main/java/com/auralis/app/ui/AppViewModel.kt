@@ -83,6 +83,7 @@ import com.auralis.app.ui.nav.Tab
 import com.auralis.app.ui.glass.GlassConfigRepository
 import com.auralis.app.ui.performance.PerformanceController
 import com.auralis.app.ui.explore.ExploreMoods
+import com.auralis.app.ui.screens.LyricsProviderRowState
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -106,6 +107,7 @@ private const val TAG_CLERK = "Clerk"
 
 /** Progress is rounded to this bucket before the checkpoint is rewritten, so writes stay rare. */
 private const val CHECKPOINT_POSITION_STEP_MS = 5_000L
+private const val MANUAL_LYRICS_PROVIDER_TIMEOUT_MS = 8_000L
 
 /** How long the restored placeholder waits for the library before dropping vanished local songs. */
 private const val LIBRARY_WAIT_MS = 6_000L
@@ -302,10 +304,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         scope = viewModelScope,
     )
     val glassConfig = glassConfigRepository.config
+    val glassConfigPreview = glassConfigRepository.preview
 
     /** STEP 7: the Appearance controls write glass through this repository only. */
     fun setDockTransparency(value: Int) = glassConfigRepository.setDockTransparency(value)
     fun setGlassClarity(value: Int) = glassConfigRepository.setGlassClarity(value)
+    fun previewDockTransparency(value: Int) = glassConfigRepository.previewDockTransparency(value)
+    fun previewGlassClarity(value: Int) = glassConfigRepository.previewGlassClarity(value)
+    fun clearGlassPreview() = glassConfigRepository.clearPreview()
+    fun clearGlassPreviewIfPersisted(config: com.auralis.app.ui.glass.GlassConfig) =
+        glassConfigRepository.clearPreviewIfPersisted(config)
     fun setGlassOutlines(enabled: Boolean) = glassConfigRepository.setOutlines(enabled)
 
     /** Raw device snapshot for the DEBUG diagnostics card. */
@@ -318,6 +326,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val lyrics = _lyrics.asStateFlow()
     private val _lyricsLoading = MutableStateFlow(false)
     val lyricsLoading = _lyricsLoading.asStateFlow()
+    private val _lyricsProviderRowStates = MutableStateFlow<Map<String, LyricsProviderRowState>>(emptyMap())
+    val lyricsProviderRowStates = _lyricsProviderRowStates.asStateFlow()
     /** Per-song lyrics timing offset in ms (Part J), applied on top of the global offset. */
     private val _lyricsOffsetMs = MutableStateFlow(0)
     val lyricsOffsetMs = _lyricsOffsetMs.asStateFlow()
@@ -383,6 +393,23 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         fetchMetadata = { container.youtube.metadata(it) },
     )
     private var youtubeHistoryJob: Job? = null
+    /**
+     * Pulls the account's recent YouTube searches into the local Recent list and lets deletes flow
+     * back (see [com.auralis.app.data.youtube.YouTubeSearchHistorySync]). Single-flight, under the
+     * same account-activity gate as the listening-history mirror.
+     */
+    private val youtubeSearchHistorySync = com.auralis.app.data.youtube.YouTubeSearchHistorySync(
+        dao = container.database.searchHistoryDao(),
+        fetch = { container.youtube.searchHistorySuggestions() },
+    )
+    private var youtubeSearchHistoryJob: Job? = null
+    /** Locally deleted terms with an expiry, so a pull racing the delete cannot re-import them. */
+    private val recentSearchDeletes = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    /** Last term pushed to the account's search history, and when, so taps do not re-push it. */
+    private var lastPushedSearch: String? = null
+    private var lastPushedSearchAt = 0L
+    /** True after a failed search-history pull, so one outage logs one line, not one per pass. */
+    private var searchHistoryPullFailed = false
     /** True between `onAppResumed` and `onAppBackgrounded`; the 5-min history loop idles otherwise. */
     @Volatile private var appInForeground: Boolean = true
     /** The in-flight email-code challenge, kept between "send code" and "verify code". */
@@ -523,7 +550,6 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private var refillJob: Job? = null
     private var refillKey: String? = null
     private var radioSeedingTrackId: String? = null
-    private var searchPrefetchJob: Job? = null
     private val prefetchedStreamIds = mutableSetOf<String>()
     /** Track ids we have already tried to upgrade to real album art (Part J). */
     private val artworkResolved = mutableSetOf<String>()
@@ -533,6 +559,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private var prefetchedLyricsTrackId: String? = null
     private var lyricsPrefetchJob: Job? = null
     private var lyricsLoadJob: Job? = null
+    private var manualLyricsProviderJob: Job? = null
+    private var tryAnotherLyricsJob: Job? = null
+    private var tryAnotherLyricsTrackId: String? = null
+    private var tryAnotherLyricsGeneration = 0L
+    private var manualLyricsProviderTrackId: String? = null
+    private var manualLyricsProviderId: String? = null
+    private val manualLyricsProviderResults = mutableMapOf<String, Lyrics?>()
+    private var manualLyricsProviderGeneration = 0L
     /** Guards [flushYouTubeSync] so its queue replay never runs twice at once. */
     private var syncFlushing = false
 
@@ -625,19 +659,24 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 .collect { ready -> if (ready) startYouTubeSync(includeHome = true, force = true) }
         }
 
-        // FEmusic_history refresh: once when the account becomes usable, then every five minutes.
-        // The repository cache has the same five-minute TTL, so an extra resume only re-reads it.
+        // Account refresh loop: once the integration is usable, refresh the listening-history mirror
+        // (when its own switch is on) and the recent-search list (which has no separate switch) on
+        // start and then every five minutes. The repository cache has the same five-minute TTL, so an
+        // extra resume only re-reads it.
         viewModelScope.launch {
             combine(
-                settings.map { it.youtubeIntegration && it.youtubeSyncHistory },
+                settings.map { it.youtubeIntegration },
                 container.youtubeAuth.auth.map { it?.signedIn == true },
-            ) { wanted, signedIn -> wanted && signedIn }
+            ) { enabled, signedIn -> enabled && signedIn }
                 .distinctUntilChanged()
                 .collectLatest { ready ->
                     if (!ready) return@collectLatest
                     while (true) {
                         // Only touch the network while the user is actually in the app.
-                        if (appInForeground) syncYouTubeHistory()
+                        if (appInForeground) {
+                            syncYouTubeHistory()
+                            syncYouTubeSearchHistory()
+                        }
                         delay(HISTORY_SYNC_INTERVAL_MS)
                     }
                 }
@@ -814,14 +853,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         // ONE search pipeline: 300 ms debounce + flatMapLatest cancels the previous query as soon
         // as the user types again. The repository's LRU makes a repeated prefix instant.
         viewModelScope.launch {
-            combine(youtubeQuery, youtubeRequest) { query, request -> query to request }
-                .debounce(SEARCH_DEBOUNCE_MS)
+            combine(
+                youtubeQuery,
+                youtubeRequest,
+                settings.map { it.youtubeIntegration },
+            ) { query, request, integrationEnabled -> Triple(query, request, integrationEnabled) }
                 .distinctUntilChanged()
-                .flatMapLatest { (query, _) ->
-                    if (query.isBlank()) {
+                .flatMapLatest { (query, _, integrationEnabled) ->
+                    if (!integrationEnabled || query.isBlank()) {
                         flowOf(YouTubeSearchUiState())
                     } else {
                         flow {
+                            // Debounce inside flatMapLatest so changing query or disabling the
+                            // integration cancels both the delay and any in-flight request at once.
+                            delay(SEARCH_DEBOUNCE_MS)
                             val startedAt = System.currentTimeMillis()
                             emit(YouTubeSearchUiState(query = query, loading = true))
                             var songs = container.youtube.search(query)
@@ -848,10 +893,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                         }.catch { error ->
                             if (error is CancellationException) throw error
                             AppLog.e("YouTube", "Search failed", error)
-                            _youtubeSearch.value = YouTubeSearchUiState(
+                            emit(YouTubeSearchUiState(
                                 query = query,
                                 error = "YouTube search failed. Check your connection and try again.",
-                            )
+                            ))
                         }
                     }
                 }
@@ -1466,7 +1511,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             name = _ytPlaylist.value.title.ifBlank { "YouTube playlist" },
         )
         if (shuffle) {
-            container.playback.play(tracks.shuffled(), 0, context)
+            // Real shuffle mode, anchored on a random starting song (never a pre-shuffled list,
+            // which lost the anchoring the rest of the queue needs).
+            container.playback.setShuffleEnabled(true)
+            container.playback.play(tracks, tracks.indices.random(), context)
         } else {
             container.playback.play(tracks, 0, context)
         }
@@ -1535,6 +1583,44 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
     }
+
+    /**
+     * Imports the account's recent YouTube searches into the local Recent list, so a term searched on
+     * another device (or in the YouTube app) appears here too; a term typed in AURALIS is already
+     * pushed by the signed search call. Gated only by the integration switch and a signed-in session
+     * (there is no separate toggle: this is the list the user asked to keep in two-way sync).
+     * Single-flight; a term the user just deleted is suppressed for a short window so a racing pull
+     * cannot bring it back.
+     */
+    fun syncYouTubeSearchHistory() {
+        if (!searchHistorySyncWanted()) return
+        if (youtubeSearchHistoryJob?.isActive == true) return
+        youtubeSearchHistoryJob = viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            recentSearchDeletes.entries.removeAll { it.value <= now }
+            val result = youtubeSearchHistorySync.sync(blocked = recentSearchDeletes.keys.toSet())
+            when {
+                // One line per outage, not one every five minutes while offline.
+                result.failed -> {
+                    if (!searchHistoryPullFailed) AppLog.w("YouTube", "Search history: suggestions pull failed")
+                    searchHistoryPullFailed = true
+                }
+                else -> {
+                    searchHistoryPullFailed = false
+                    if (result.merged > 0) {
+                        runCatching { container.database.searchHistoryDao().trim(SEARCH_HISTORY_LIMIT) }
+                        AppLog.i("YouTube", "Search history: merged=${result.merged}")
+                    } else {
+                        AppLog.d("YouTube", "Search history: nothing to merge")
+                    }
+                }
+            }
+        }
+    }
+
+    /** True when the account is connected; search-history sync has no separate toggle. */
+    private fun searchHistorySyncWanted(): Boolean =
+        settings.value.youtubeIntegration && isYouTubeAuthenticated()
 
     /**
      * Loads the Home discovery feed for [category]. Every section runs in its own coroutine and is
@@ -2734,20 +2820,39 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Removes one Recent-search row (case-insensitive), leaving the rest untouched. */
+    /** Removes one Recent-search row (case-insensitive) and mirrors the delete to the account. */
     fun deleteSearch(query: String) {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return
+        // Remember the delete briefly so a pull that started before it cannot re-import the term.
+        recentSearchDeletes[trimmed.lowercase()] = System.currentTimeMillis() + SEARCH_DELETE_TTL_MS
         viewModelScope.launch {
             runCatching { container.database.searchHistoryDao().delete(trimmed) }
                 .onFailure { AppLog.w("Search", "Could not delete a recent search", it) }
+            // The two lists are shared (mirror deletes was chosen); best-effort when offline.
+            if (searchHistorySyncWanted()) {
+                runCatching { container.youtube.removeSearchHistoryTerm(trimmed) }
+                    .onFailure { AppLog.w("Search", "YouTube search history delete failed", it) }
+            }
         }
     }
 
     fun clearSearchHistory() {
         viewModelScope.launch {
-            runCatching { container.database.searchHistoryDao().clear() }
+            val dao = container.database.searchHistoryDao()
+            // Suppress every term just cleared so a pull that started before this cannot restore it
+            // while the account-side delete is still in flight.
+            val suppressUntil = System.currentTimeMillis() + SEARCH_DELETE_TTL_MS
+            searchHistory.value.forEach { query ->
+                recentSearchDeletes[query.lowercase()] = suppressUntil
+            }
+            runCatching { dao.clear() }
                 .onFailure { AppLog.w("Search", "Could not clear recent searches", it) }
+            // Clear the account's list too, or the next pull would restore what was just cleared.
+            if (searchHistorySyncWanted()) {
+                runCatching { container.youtube.clearSearchHistory() }
+                    .onFailure { AppLog.w("Search", "YouTube search history clear failed", it) }
+            }
         }
     }
 
@@ -2789,6 +2894,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         container.liveSync.onAppForeground()
         // Re-read the account's recent history (respects the repository's five-minute cache).
         syncYouTubeHistory()
+        syncYouTubeSearchHistory()
         // If an OAuth browser trip was in progress, this is the return; make sure it can't hang.
         if (container.clerkAuth.configured) scheduleClerkReturnCheck()
     }
@@ -2937,6 +3043,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Tapping a taste chip on Home: run the search and jump straight to the Explore/Search tab. */
     fun searchFromHome(query: String) {
         if (query.isBlank()) return
+        recordSearch(query)
         searchYouTube(query)
         selectTab(Tab.SEARCH)
     }
@@ -2953,6 +3060,28 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 dao.upsert(SearchHistoryEntity(trimmed, System.currentTimeMillis()))
                 dao.trim(SEARCH_HISTORY_LIMIT)
             }.onFailure { AppLog.w("YouTube", "Search history not saved", it) }
+            // ...and one signed search so the term lands in the account's history exactly once.
+            // The interactive pipeline searches anonymously, so prefixes typed on the way to this
+            // term are never recorded (see YouTubeRepository.recordSearch).
+            if (searchHistorySyncWanted()) pushSearchToAccount(trimmed)
+        }
+    }
+
+    /**
+     * One signed search per committed term, not per tap: submitting "adele" and then tapping three
+     * results must not download the same signed response three times. A later re-search (after
+     * [SEARCH_RECORD_DEBOUNCE_MS]) records again, which is what lifts it back to the top of the
+     * account's list.
+     */
+    private fun pushSearchToAccount(term: String) {
+        val key = term.lowercase()
+        val now = System.currentTimeMillis()
+        if (key == lastPushedSearch && now - lastPushedSearchAt < SEARCH_RECORD_DEBOUNCE_MS) return
+        lastPushedSearch = key
+        lastPushedSearchAt = now
+        viewModelScope.launch {
+            runCatching { container.youtube.recordSearch(term) }
+                .onFailure { AppLog.w("YouTube", "Search not recorded on the account", it) }
         }
     }
 
@@ -2967,15 +3096,17 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         searchYouTube(trimmed)
     }
 
-    /** Resolve the first results in the background so the first tap usually hits a warm URL. */
-    private fun prefetchSearchResults(results: List<Track>) {        searchPrefetchJob?.cancel()
-        searchPrefetchJob = viewModelScope.launch {
-            results.take(SEARCH_PREFETCH_COUNT).forEach { track ->
-                val videoId = track.remoteId ?: return@forEach
-                if (!prefetchedStreamIds.add(track.id)) return@forEach
-                runCatching { container.youtube.resolveStream(videoId) }
-            }
-        }
+    /** Warm the most likely first tap without resolving several streams for each typed query. */
+    private fun prefetchSearchResults(results: List<Track>) {
+        val track = results.firstOrNull() ?: return
+        val videoId = track.remoteId ?: return
+        val current = settings.value
+        if (!com.auralis.app.data.network.NetworkQuality.allowPrefetch(container.appContext, current)) return
+        if (track.id in prefetchedStreamIds) return
+        if (prefetchedStreamIds.size >= PREFETCH_MEMORY_LIMIT) prefetchedStreamIds.clear()
+        prefetchedStreamIds.add(track.id)
+        val quality = com.auralis.app.data.network.NetworkQuality.effective(container.appContext, current)
+        container.youtube.prefetchStream(videoId, quality)
     }
 
     /**
@@ -3076,8 +3207,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         if (ordered.isEmpty()) return
         _remoteTracks.update { known -> known + ordered.filter { it.isRemote }.associateBy { it.id } }
         val name = playlists.value.firstOrNull { it.id == playlistId }?.name.orEmpty()
+        // Shuffle is switched on deterministically here (never "toggle if off", which raced the
+        // player); the controller anchors the order on the song it starts, so the random first
+        // song is kept and the rest of the list follows it exactly once.
+        container.playback.setShuffleEnabled(true)
         playList(ordered.random(), ordered, PlaybackContext.playlist(playlistId, name))
-        if (!container.playback.state.value.shuffle) toggleShuffle()
     }
 
     /** Album card/row: queues the album in its own order, starting at the first song. */
@@ -3550,7 +3684,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun previous() = container.playback.previous()
     fun seekTo(positionMs: Long) = container.playback.seekTo(positionMs)
     fun seekBy(deltaMs: Long) = container.playback.seekBy(deltaMs)
-    fun toggleShuffle() = container.playback.toggleShuffle()
+    fun toggleShuffle() {
+        // The controller flips Media3's real shuffle flag and the service re-anchors the order on
+        // the song that is playing. A short confirmation is shown because, unlike a pre-shuffled
+        // list, the anchored queue does not visibly reorder.
+        val turningOn = !container.playback.state.value.shuffle
+        container.playback.toggleShuffle()
+        _messages.trySend(if (turningOn) "Shuffle on" else "Shuffle off")
+    }
     fun cycleRepeat() = container.playback.cycleRepeat()
     fun startSleepTimer(minutes: Int) = container.playback.startSleepTimer(minutes)
     fun cancelSleepTimer() = container.playback.cancelSleepTimer()
@@ -3558,6 +3699,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun loadLyrics(track: Track) {
         // Already resolved (or still fetching) for this song: nothing to do.
         if (loadedLyricsTrackId == track.id) return
+        cancelLyricsProviderFetch()
+        manualLyricsProviderResults.clear()
+        _lyricsProviderRowStates.value = emptyMap()
         // A new song cancels the previous lookup; slow late responses are also dropped by the
         // track-id check below, so lyrics can never land on the wrong song.
         lyricsLoadJob?.cancel()
@@ -3666,15 +3810,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     /** "Try another source": skip the provider that supplied the current lyrics and re-query. */
     fun tryAnotherLyricsSource(track: Track) {
-        viewModelScope.launch {
+        cancelLyricsProviderFetch(track.id)
+        tryAnotherLyricsJob?.cancel()
+        val generation = ++tryAnotherLyricsGeneration
+        tryAnotherLyricsTrackId = track.id
+        tryAnotherLyricsJob = viewModelScope.launch {
             _lyricsLoading.value = true
             try {
                 val currentProvider = _lyrics.value?.provider
                 val result = runCatching { container.lyrics.tryAnother(track, currentProvider) }
                     .onFailure { report("Couldn't fetch lyrics from another source", it) }
                     .getOrNull()
-                if (loadedLyricsTrackId != track.id) return@launch
+                if (generation != tryAnotherLyricsGeneration || loadedLyricsTrackId != track.id) return@launch
                 if (result != null) {
+                    container.lyrics.rememberParsedLyrics(track.id, result)
                     _lyrics.value = result
                     val label = result.provider ?: "another source"
                     _messages.trySend("Lyrics from $label")
@@ -3683,8 +3832,90 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 }
             } finally {
                 if (loadedLyricsTrackId == track.id) _lyricsLoading.value = false
+                if (generation == tryAnotherLyricsGeneration) {
+                    tryAnotherLyricsJob = null
+                    tryAnotherLyricsTrackId = null
+                }
             }
         }
+    }
+
+    /** Fetches just the chosen provider for this song, preserving the current lyrics on failure. */
+    fun fetchLyricsFromProvider(track: Track, providerId: String) {
+        if (loadedLyricsTrackId != track.id) loadLyrics(track)
+        cancelLyricsProviderFetch(track.id)
+        lyricsLoadJob?.cancel()
+        _lyricsLoading.value = false
+
+        if (manualLyricsProviderResults.containsKey(providerId)) {
+            val cached = manualLyricsProviderResults[providerId]
+            if (cached != null) {
+                _lyrics.value = cached
+                _lyricsProviderRowStates.value = _lyricsProviderRowStates.value + (providerId to LyricsProviderRowState.FOUND)
+            }
+            return
+        }
+
+        val generation = ++manualLyricsProviderGeneration
+        manualLyricsProviderTrackId = track.id
+        manualLyricsProviderId = providerId
+        _lyricsProviderRowStates.value = _lyricsProviderRowStates.value + (providerId to LyricsProviderRowState.FETCHING)
+        manualLyricsProviderJob = viewModelScope.launch {
+            val result = try {
+                withTimeoutOrNull(MANUAL_LYRICS_PROVIDER_TIMEOUT_MS) {
+                    container.lyrics.fetchFromProvider(track, providerId)
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                report("Couldn't fetch lyrics from $providerId", error)
+                null
+            }
+            if (generation != manualLyricsProviderGeneration || loadedLyricsTrackId != track.id) return@launch
+
+            manualLyricsProviderResults[providerId] = result
+            _lyricsProviderRowStates.value = _lyricsProviderRowStates.value + (
+                providerId to if (result != null) LyricsProviderRowState.FOUND else LyricsProviderRowState.NOT_FOUND
+            )
+            if (result != null) {
+                container.lyrics.rememberSelectedProviderResult(track.id, providerId, result)
+                if (generation != manualLyricsProviderGeneration || loadedLyricsTrackId != track.id) return@launch
+                _lyrics.value = result
+            }
+            manualLyricsProviderJob = null
+            manualLyricsProviderTrackId = null
+            manualLyricsProviderId = null
+        }
+    }
+
+    /** Cancels the active manual fetch when another row is picked or Now Playing leaves composition. */
+    fun cancelLyricsProviderFetch(trackId: String? = null) {
+        val activeTrackId = manualLyricsProviderTrackId ?: tryAnotherLyricsTrackId
+        if (trackId != null && activeTrackId != null && activeTrackId != trackId) return
+        if (tryAnotherLyricsJob?.isActive == true) tryAnotherLyricsGeneration++
+        tryAnotherLyricsJob?.cancel()
+        tryAnotherLyricsJob = null
+        tryAnotherLyricsTrackId = null
+        val providerId = manualLyricsProviderId
+        if (manualLyricsProviderJob?.isActive == true) {
+            manualLyricsProviderGeneration++
+            manualLyricsProviderJob?.cancel()
+            if (providerId != null) {
+                val cachedState = when {
+                    !manualLyricsProviderResults.containsKey(providerId) -> null
+                    manualLyricsProviderResults[providerId] != null -> LyricsProviderRowState.FOUND
+                    else -> LyricsProviderRowState.NOT_FOUND
+                }
+                _lyricsProviderRowStates.value = if (cachedState == null) {
+                    _lyricsProviderRowStates.value - providerId
+                } else {
+                    _lyricsProviderRowStates.value + (providerId to cachedState)
+                }
+            }
+        }
+        manualLyricsProviderJob = null
+        manualLyricsProviderTrackId = null
+        manualLyricsProviderId = null
     }
 
     /** Retry button: forces a fresh lookup (forgetting cached provider answers) for this song. */
@@ -4074,6 +4305,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 if (container.playback.state.value.connected) {
                     container.playback.restore(queue, index, position, wasPlaying = true, restored.shuffle, restored.repeatMode, restored.context)
                 } else {
+                    // Service not up yet: keep the shuffle intent so the anchored order is built
+                    // around the restored song once the controller connects.
+                    container.playback.setShuffleEnabled(restored.shuffle)
                     container.playback.play(queue, index, restored.context)
                 }
             } finally {
@@ -4184,17 +4418,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private companion object {
         const val TAG = "AuralisViewModel"
         const val KIND_METADATA_OVERRIDE = "metadata_override"
-        const val SEARCH_DEBOUNCE_MS = 300L
+        const val SEARCH_DEBOUNCE_MS = 220L
         const val RADIO_INITIAL_SIZE = 15
         const val RADIO_REFILL_SIZE = 12
         const val MIN_RADIO_AHEAD = 3
-        const val SEARCH_PREFETCH_COUNT = 3
         const val PREFETCH_MEMORY_LIMIT = 200
         const val ARTWORK_MEMORY_LIMIT = 200
         /** Per-song lyrics timing offset ceiling (Part J). */
         const val MAX_LYRICS_OFFSET_MS = 5_000
         /** Recent searches shown on the empty Search page. */
         const val SEARCH_HISTORY_LIMIT = 20
+        /** How long a locally deleted search is suppressed from an account pull (ms). */
+        const val SEARCH_DELETE_TTL_MS = 120_000L
+        /** Do not re-push the same term to the account within this window (ms). */
+        const val SEARCH_RECORD_DEBOUNCE_MS = 5L * 60L * 1000L
         /** Queue entries warmed after a tap so Next is instant. */
         const val REMOTE_PREFETCH_COUNT = 3
         /** "Don't ask again" hides the Connect YouTube Music prompt for 48 hours. */

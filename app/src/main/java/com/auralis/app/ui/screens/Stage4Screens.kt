@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.auralis.app.data.db.PlayEventEntity
+import com.auralis.app.ui.glass.GlassMaterialAlertDialog
 import com.auralis.app.data.metadata.TagData
 import com.auralis.app.domain.audio.EqPresets
 import com.auralis.app.domain.model.AppSettings
@@ -602,7 +603,7 @@ fun BackupScreen(onExport: (Uri) -> Unit, onRestore: (Uri) -> Unit, modifier: Mo
         OutlinedButton(onClick = { open.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, modifier = Modifier.fillMaxWidth(), shape = CircleShape) { Icon(Icons.Rounded.Restore, null); Text("Restore backup", Modifier.padding(start = 8.dp)) }
         Text("Restore merges data and skips references to tracks that are not on this device.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    pendingRestore?.let { uri -> AlertDialog(
+    pendingRestore?.let { uri -> GlassMaterialAlertDialog(
         onDismissRequest = { pendingRestore = null },
         title = { Text("Restore this backup?") },
         text = { Text("Playlists, favorites, history, lyrics and settings will be merged with the current data.") },

@@ -2,6 +2,7 @@ package com.auralis.app.data.auth
 
 import android.app.Activity
 import android.content.Context
+import android.net.Uri
 import com.auralis.app.BuildConfig
 import com.auralis.app.logging.AppLog
 import com.clerk.api.Clerk
@@ -19,8 +20,19 @@ import com.clerk.api.signup.verifyCode as verifySignUpCode
 import com.clerk.api.sso.OAuthProvider
 import com.clerk.api.sso.OAuthResult
 import com.clerk.api.user.User
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** A light, UI-facing snapshot of the signed-in Clerk user. */
 data class ClerkAccount(
@@ -59,6 +71,14 @@ class EmailCodeChallenge internal constructor(
     internal val signUp: SignUp? = null,
 )
 
+/** App-level lifecycle of one Google browser sign-in, independent of any Activity/ViewModel. */
+sealed interface GoogleSignInState {
+    data object Idle : GoogleSignInState
+    data object Running : GoogleSignInState
+    data object Completed : GoogleSignInState
+    data class Failed(val message: String) : GoogleSignInState
+}
+
 /**
  * Thin wrapper over the Clerk native SDK, owned by [com.auralis.app.AppContainer].
  *
@@ -73,9 +93,32 @@ class EmailCodeChallenge internal constructor(
 class ClerkAuthRepository(context: Context) {
     private val appContext = context.applicationContext
     private val publishableKey: String = BuildConfig.CLERK_PUBLISHABLE_KEY
+    /**
+     * Survives process death, unlike the SDK's in-memory pending flow. It records that a browser
+     * sign-in was started, so a launch that finds it still set can explain the interrupted attempt
+     * instead of silently showing a fresh login screen.
+     */
+    private val authPrefs = appContext.getSharedPreferences("clerk_auth", Context.MODE_PRIVATE)
+
+    /**
+     * Owns the browser await. Living in the application, not `viewModelScope`, means an Activity
+     * recreation while Chrome is in front cannot cancel the flow before the session is activated.
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val _googleSignIn = MutableStateFlow<GoogleSignInState>(GoogleSignInState.Idle)
+    private val signInGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** Observable progress of the browser sign-in, so a recreated UI can resume its spinner. */
+    val googleSignIn: StateFlow<GoogleSignInState> = _googleSignIn.asStateFlow()
 
     /** False when no publishable key was supplied at build time; the app then skips the login gate. */
     val configured: Boolean get() = publishableKey.isNotBlank()
+
+    /**
+     * The native callback the SDK derives from the application id (`clerk://<package>.callback`).
+     * Logged so that a mismatch with the Clerk instance's allowed redirect URLs is visible.
+     */
+    val redirectUrl: String get() = "clerk://${appContext.packageName}.callback"
 
     @Volatile
     private var initialized = false
@@ -90,15 +133,30 @@ class ClerkAuthRepository(context: Context) {
         runCatching { Clerk.initialize(appContext, publishableKey) }
             .onSuccess {
                 initialized = true
-                AppLog.i(TAG, "Clerk initialized")
+                // The instance type and callback URL are logged so a dev/live mismatch, or a
+                // callback the Clerk instance does not recognise, is visible in the Logs screen.
+                val instance = runCatching { Clerk.instanceEnvironmentType }.getOrNull()
+                AppLog.i(TAG, "Clerk initialized instance=$instance redirect=$redirectUrl")
             }
             .onFailure { AppLog.e(TAG, "Clerk initialization failed", it) }
     }
+
+    /** True once the SDK finished loading the environment and any persisted session. */
+    fun isReady(): Boolean = configured && runCatching { Clerk.isInitialized.value }.getOrDefault(false)
+
+    /**
+     * Nudges a stalled or failed initialization. A no-op (returns false) when Clerk is already
+     * ready or was never configured, so it is safe to call on every resume.
+     */
+    fun reinitialize(): Boolean =
+        if (!configured) false
+        else runCatching { Clerk.reinitialize() }.getOrDefault(false)
 
     /** Hands the current Activity to Clerk so browser-based OAuth (Google) can return to the app. */
     fun attachActivity(activity: Activity) {
         if (!configured) return
         runCatching { Clerk.attachActivity(activity) }
+            .onSuccess { AppLog.d(TAG, "Activity attached for OAuth callbacks") }
             .onFailure { AppLog.w(TAG, "Clerk.attachActivity skipped", it) }
     }
 
@@ -115,6 +173,26 @@ class ClerkAuthRepository(context: Context) {
         get() = if (configured) Clerk.initializationError else flowOf(null)
 
     /**
+     * Completes a Clerk deep-link callback that reached the Activity. The SDK's own receiver
+     * normally handles this; this is a defensive second path when the app is relaunched by the
+     * redirect. Returns true when the URI belonged to a Clerk flow.
+     */
+    suspend fun handleCallback(uri: Uri): Boolean {
+        if (!configured) return false
+        val handled = runCatching { Clerk.auth.handle(uri) }.getOrDefault(false)
+        AppLog.i(TAG, "Deep-link callback handled=$handled")
+        return handled
+    }
+
+    /** PII-free labels for Clerk's auth events, so the Logs screen can show them without user data. */
+    val eventLabels: Flow<String>
+        get() = if (configured) {
+            Clerk.auth.events.map { it::class.simpleName ?: "event" }
+        } else {
+            emptyFlow()
+        }
+
+    /**
      * Starts the Google OAuth flow. Clerk opens the browser and suspends until the redirect comes
      * back; when the Google account is new to the instance the SDK turns the flow into a sign-up.
      * Either way the session it produced is activated here, because the SDK only *returns* it.
@@ -125,6 +203,81 @@ class ClerkAuthRepository(context: Context) {
                 onSuccess = { activateOAuthResult(it) },
                 onFailure = { Result.failure(it) },
             )
+
+    /**
+     * Starts the browser sign-in on the application scope. Because the await is not tied to an
+     * Activity, a recreation while Chrome is in front still ends with the session activated.
+     * Each call supersedes the previous attempt; a stale attempt can never overwrite the state.
+     */
+    fun startGoogleSignIn() {
+        if (!configured) {
+            _googleSignIn.value = GoogleSignInState.Failed("Clerk is not configured")
+            return
+        }
+        val generation = signInGeneration.incrementAndGet()
+        // Set before the browser opens; cleared only by this generation, and left set on process
+        // death so the next launch can report the interrupted attempt.
+        authPrefs.edit().putBoolean(KEY_SIGN_IN_PENDING, true).apply()
+        _googleSignIn.value = GoogleSignInState.Running
+        AppLog.i(TAG, "Google sign-in started; opening the browser (redirect=$redirectUrl)")
+        appScope.launch {
+            try {
+                val outcome = withTimeoutOrNull(GOOGLE_SIGN_IN_TIMEOUT_MS) { signInWithGoogle() }
+                if (generation != signInGeneration.get()) return@launch
+                val error = outcome?.exceptionOrNull()
+                _googleSignIn.value = when {
+                    // `call` folds a cancelled coroutine into a failure, so the ceiling and a real
+                    // cancellation both land here.
+                    outcome == null || error is CancellationException -> {
+                        AppLog.w(TAG, "Google sign-in timed out after $GOOGLE_SIGN_IN_TIMEOUT_MS ms")
+                        GoogleSignInState.Failed("Google sign-in timed out. Please try again.")
+                    }
+                    outcome.isSuccess -> {
+                        AppLog.i(TAG, "Google sign-in completed; session activated")
+                        GoogleSignInState.Completed
+                    }
+                    else -> {
+                        val message = error?.localizedMessage ?: "Google sign-in failed"
+                        AppLog.w(TAG, "Google sign-in failed: $message")
+                        GoogleSignInState.Failed(message)
+                    }
+                }
+            } catch (cancellation: CancellationException) {
+                if (generation == signInGeneration.get()) {
+                    AppLog.w(TAG, "Google sign-in was cancelled")
+                    _googleSignIn.value = GoogleSignInState.Failed("Google sign-in was cancelled")
+                }
+                throw cancellation
+            } catch (error: Exception) {
+                if (generation == signInGeneration.get()) {
+                    AppLog.e(TAG, "Google sign-in threw", error)
+                    _googleSignIn.value = GoogleSignInState.Failed(
+                        error.localizedMessage ?: "Google sign-in failed"
+                    )
+                }
+            } finally {
+                if (generation == signInGeneration.get()) clearSignInMarker()
+            }
+        }
+    }
+
+    /** Returns a finished sign-in state to Idle once the UI consumed it; never cuts a running flow. */
+    fun acknowledgeSignInState() {
+        if (_googleSignIn.value != GoogleSignInState.Running) {
+            _googleSignIn.value = GoogleSignInState.Idle
+        }
+    }
+
+    /** True once if a previous sign-in never reported back, e.g. the process died in the browser. */
+    fun consumeInterruptedSignIn(): Boolean =
+        authPrefs.getBoolean(KEY_SIGN_IN_PENDING, false).also { pending ->
+            if (pending) clearSignInMarker()
+        }
+
+    /** Clears the "a sign-in is in flight" marker; safe to call at any time. */
+    fun clearSignInMarker() {
+        authPrefs.edit().putBoolean(KEY_SIGN_IN_PENDING, false).apply()
+    }
 
     /**
      * Emails a one-time code and returns the in-progress challenge to verify against. An address
@@ -195,7 +348,10 @@ class ClerkAuthRepository(context: Context) {
             is OAuthResult.Outcome.SignUp -> outcome.signUp.createdSessionId
             OAuthResult.Outcome.Empty -> null
         }
-        if (!sessionId.isNullOrBlank()) return activateSession(sessionId, "sign-in session")
+        if (!sessionId.isNullOrBlank()) {
+            AppLog.i(TAG, "OAuth callback accepted; activating the session")
+            return activateSession(sessionId, "sign-in session")
+        }
 
         // No session normally means the sign-up still needs fields the login screen does not collect.
         val missing = (result.outcome as? OAuthResult.Outcome.SignUp)
@@ -212,15 +368,23 @@ class ClerkAuthRepository(context: Context) {
     /** Starts the Clerk session so [user] begins emitting the signed-in account. */
     private suspend fun activateSession(sessionId: String?, label: String): Result<Unit> {
         if (sessionId.isNullOrBlank()) {
+            AppLog.w(TAG, "Session activation skipped for $label: no session id")
             return Result.failure(
                 IllegalStateException("Verified, but no session was created. Please try again.")
             )
         }
-        return call(label) { Clerk.auth.setActive(sessionId) }.map { }
+        val outcome = call(label) { Clerk.auth.setActive(sessionId) }.map { }
+        outcome
+            .onSuccess { AppLog.i(TAG, "Session activated ($label)") }
+            .onFailure { AppLog.w(TAG, "Session activation failed ($label): ${it.localizedMessage}") }
+        return outcome
     }
 
     /** Signs out the active session; [Clerk.userFlow] then emits null. */
-    suspend fun signOut(): Result<Unit> = call("sign out") { Clerk.auth.signOut() }.map { }
+    suspend fun signOut(): Result<Unit> =
+        call("sign out") { Clerk.auth.signOut() }
+            .map { }
+            .onSuccess { AppLog.i(TAG, "Signed out of Clerk") }
 
     /**
      * Runs one Clerk call and folds its [ClerkResult] into a Kotlin [Result], so callers only deal
@@ -259,5 +423,8 @@ class ClerkAuthRepository(context: Context) {
 
     private companion object {
         const val TAG = "Clerk"
+        const val KEY_SIGN_IN_PENDING = "google_sign_in_pending"
+        /** Absolute ceiling for one browser round-trip; the resume grace catches normal drops. */
+        const val GOOGLE_SIGN_IN_TIMEOUT_MS = 600_000L
     }
 }

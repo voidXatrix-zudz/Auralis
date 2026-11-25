@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -132,8 +133,12 @@ class InnerTubeClient(
      * query can return different charts in different regions, which is what powers "Trending in
      * India" (gl="IN") vs "Global Top Hits" (gl="US").
      */
-    suspend fun searchSongs(query: String, gl: String = DEFAULT_GL): List<YtSong> = withContext(Dispatchers.IO) {
-        val root = searchRoot(query, SONGS_ONLY_PARAMS, gl) ?: return@withContext emptyList()
+    suspend fun searchSongs(
+        query: String,
+        gl: String = DEFAULT_GL,
+        anonymous: Boolean = false,
+    ): List<YtSong> = withContext(Dispatchers.IO) {
+        val root = searchRoot(query, SONGS_ONLY_PARAMS, gl, anonymous) ?: return@withContext emptyList()
         parseSongs(root).also { AppLog.d(TAG, "InnerTube search parsed ${it.size} songs") }
     }
 
@@ -147,16 +152,21 @@ class InnerTubeClient(
         parseSearchCards(root).also { AppLog.d(TAG, "InnerTube card search parsed ${it.size} cards") }
     }
 
-    private fun searchRoot(query: String, params: String?, gl: String): JsonObject? {
+    private fun searchRoot(query: String, params: String?, gl: String, anonymous: Boolean = false): JsonObject? {
         val payload = buildJsonObject {
-            put("context", clientContext(gl))
+            // Anonymous search calls must not carry the signed account's onBehalfOfUser value.
+            // Headers alone are not enough: YouTube rejects a body/header identity mismatch.
+            put("context", clientContext(gl, signed = !anonymous))
             put("query", query)
             // Songs-only filter (music_shelf_renderer with songs, no videos/albums/playlists).
             if (params != null) put("params", params)
         }.toString()
-        return runCatching { postJson(SEARCH_URL, payload) }
-            .onFailure { AppLog.e(TAG, "InnerTube search failed: ${it.message}") }
-            .getOrNull()
+        return try {
+            postJson(SEARCH_URL, payload, anonymous = anonymous)
+        } catch (error: Exception) {
+            AppLog.e(TAG, "InnerTube search failed: ${error.message}", error)
+            throw error
+        }
     }
 
     /**
@@ -208,6 +218,58 @@ class InnerTubeClient(
             .map(::parseSuggestions)
             .getOrDefault(emptyList())
     }
+
+    /**
+     * The account's recent searches, as YouTube Music hands them to its own search box: the
+     * suggestion endpoint called with an EMPTY input returns the `historySuggestionRenderer` entries
+     * (plus their `feedbackToken`s). This is the only way InnerTube exposes search history.
+     *
+     * Signed on purpose - unlike [suggestions], which is anonymous so typing never records a
+     * keystroke. An empty input has no keystroke to record; reading the list is one deliberate call.
+     */
+    suspend fun searchHistory(): List<YtSearchSuggestion> = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject {
+            put("context", clientContext())
+            put("input", "")
+        }.toString()
+        parseSearchHistorySuggestions(postJson(SUGGESTIONS_URL, payload))
+    }
+
+    /**
+     * [searchHistory] with a real failure state, so the mirror can tell "the account has no recent
+     * searches" from "the pull itself broke". A refusal here does not expire the session (suggestions
+     * are not session-defining).
+     */
+    suspend fun searchHistoryResult(): YouTubeLoadResult<List<YtSearchSuggestion>> =
+        withContext(Dispatchers.IO) {
+            try {
+                YouTubeLoadResult.Success(searchHistory())
+            } catch (error: Exception) {
+                AppLog.w(TAG, "Search history read failed: ${error.message}")
+                YouTubeLoadResult.Failure(error.message ?: "search history failed", codeOf(error))
+            }
+        }
+
+    /**
+     * Deletes recent searches from the account's search history. [feedbackTokens] come from
+     * [searchHistory]. Best-effort: false when nothing was sent, not signed in, or Google refused.
+     */
+    suspend fun removeSearchHistoryTerms(feedbackTokens: List<String>): Boolean =
+        withContext(Dispatchers.IO) {
+            val tokens = feedbackTokens.filter { it.isNotBlank() }.distinct()
+            if (tokens.isEmpty()) return@withContext false
+            val payload = buildJsonObject {
+                put("context", clientContext())
+                put("feedbackTokens", JsonArray(tokens.map { JsonPrimitive(it) }))
+            }.toString()
+            runCatching {
+                val root = json.parseToJsonElement(postBody(FEEDBACK_URL, payload)) as? JsonObject
+                val processed = (root?.get("feedbackResponses")?.asArray()?.firstOrNull()
+                    ?.asObject()?.get("isProcessed") as? JsonPrimitive)?.booleanOrNull
+                processed == true
+            }.onFailure { AppLog.w(TAG, "Search history delete failed: ${it.message}") }
+                .getOrDefault(false)
+        }
 
     /** Opens the HTTP/2 connection early; called once from Application.onCreate. */
     suspend fun warmUp() = withContext(Dispatchers.IO) {
@@ -852,15 +914,21 @@ class InnerTubeClient(
                 put("contentCheckOk", true)
                 put("racyCheckOk", true)
             }.toString()
-            val details = postJson(PLAYER_URL, payload)["videoDetails"]?.asObject()
+            val root = postJson(PLAYER_URL, payload)
+            val details = root["videoDetails"]?.asObject()
                 ?: return@runCatching null
-            val title = details["title"]?.asString()?.takeIf { it.isNotBlank() }
+            val rawTitle = details["title"]?.asString()?.takeIf { it.isNotBlank() }
                 ?: return@runCatching null
             val seconds = details["lengthSeconds"]?.asString()?.toLongOrNull() ?: 0L
+            // `author` is the uploader channel. Microformat's ownerChannelName is an equivalent
+            // fallback for the rare response that omits it; both feed the artist heuristics.
+            val channel = details["author"]?.asString()?.takeIf { it.isNotBlank() }
+                ?: findString(root["microformat"], setOf("ownerChannelName")).orEmpty()
+            val (artist, title) = artistAndTitle(rawTitle, channel)
             YtSong(
                 videoId = videoId,
                 title = title,
-                artist = details["author"]?.asString().orEmpty(),
+                artist = artist,
                 album = "",
                 durationMs = seconds * 1000L,
                 thumbnailUrl = fallbackThumbnailUrl(videoId),
@@ -1730,18 +1798,35 @@ class InnerTubeClient(
             ?.asObject()?.get("content")
             ?.asObject()?.get("sectionListRenderer")
             ?.asObject()?.get("contents")
-            ?.asArray() ?: return emptyList()
+            ?.asArray()
 
         val songs = ArrayList<YtSong>()
-        for (section in sections) {
-            val shelf = section.asObject()?.get("musicShelfRenderer")?.asObject() ?: continue
-            val items = shelf["contents"]?.asArray() ?: continue
-            for (entry in items) {
-                val renderer = entry.asObject()
-                    ?.get("musicResponsiveListItemRenderer")?.asObject() ?: continue
-                parseRenderer(renderer)?.let(songs::add)
+        if (sections != null) {
+            for (section in sections) {
+                val shelf = section.asObject()?.get("musicShelfRenderer")?.asObject() ?: continue
+                val items = shelf["contents"]?.asArray() ?: continue
+                for (entry in items) {
+                    val renderer = entry.asObject()
+                        ?.get("musicResponsiveListItemRenderer")?.asObject() ?: continue
+                    parseRenderer(renderer)?.let(songs::add)
+                }
             }
         }
+
+        // YouTube changes the wrappers around search shelves periodically (continuation and
+        // alternate-client responses use different nesting). Keep the strict songs shelf as the
+        // first choice, then recover song rows from any supported renderer in the response tree.
+        if (songs.isEmpty()) {
+            val recovered = LinkedHashMap<String, YtSong>()
+            collectSongsDeep(root, recovered)
+            songs += recovered.values
+            if (songs.isEmpty()) {
+                AppLog.w(TAG, "Search response contained no parsed songs (renderers=${rendererNamesIn(root).joinToString()})")
+            } else {
+                AppLog.i(TAG, "Search parsed ${songs.size} songs from alternate response layout")
+            }
+        }
+
         val distinct = songs.distinctBy { it.videoId }
         val tally = ThumbnailTally()
         for (song in distinct) {
@@ -1884,6 +1969,50 @@ class InnerTubeClient(
         return values.distinct().take(MAX_SUGGESTIONS)
     }
 
+    /**
+     * Parses a suggestion page (already decoded) into recent searches and completions. A history
+     * entry is a `historySuggestionRenderer` whose `serviceEndpoint.feedbackEndpoint.feedbackToken`
+     * deletes the term; a completion is a `searchSuggestionRenderer` and is ignored by the merge.
+     *
+     * Internal so a unit test can pin the real response shape.
+     */
+    internal fun parseSearchHistorySuggestions(root: JsonObject): List<YtSearchSuggestion> {
+        val sections = root["contents"]?.asArray() ?: return emptyList()
+        val out = ArrayList<YtSearchSuggestion>()
+        val seen = HashSet<String>()
+        for (section in sections) {
+            val entries = section.asObject()
+                ?.get("searchSuggestionsSectionRenderer")?.asObject()
+                ?.get("contents")?.asArray() ?: continue
+            for (entry in entries) {
+                val renderer = entry.asObject() ?: continue
+                val history = renderer.get("historySuggestionRenderer")?.asObject()
+                val suggestion = history
+                    ?: renderer.get("searchSuggestionRenderer")?.asObject()
+                    ?: continue
+                val text = suggestion.get("suggestion")?.asObject()
+                    ?.get("runs")?.asArray()
+                    ?.joinToString("") { it.asObject()?.get("text")?.asString().orEmpty() }
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: suggestion.get("navigationEndpoint")?.asObject()
+                        ?.get("searchEndpoint")?.asObject()
+                        ?.get("query")?.asString()?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: continue
+                if (!seen.add(text.lowercase())) continue
+                val token = history?.get("serviceEndpoint")?.asObject()
+                    ?.get("feedbackEndpoint")?.asObject()
+                    ?.get("feedbackToken")?.asString()?.takeIf { it.isNotBlank() }
+                out += YtSearchSuggestion(
+                    text = text,
+                    fromHistory = history != null,
+                    feedbackToken = token,
+                )
+            }
+        }
+        return out.take(MAX_SEARCH_HISTORY)
+    }
+
     private fun parseRenderer(renderer: JsonObject, shelfTitle: String = ""): YtSong? {
         val videoId = renderer["playlistItemData"]?.asObject()?.get("videoId")?.asString()
             ?: findVideoId(renderer["overlay"]) ?: return null
@@ -2016,6 +2145,7 @@ class InnerTubeClient(
         const val SEARCH_URL = "$BASE/search"
         const val NEXT_URL = "$BASE/next"
         const val SUGGESTIONS_URL = "$BASE/music/get_search_suggestions"
+        const val FEEDBACK_URL = "$BASE/feedback"
         const val BROWSE_URL = "$BASE/browse"
         const val ACCOUNT_MENU_URL = "$BASE/account/account_menu"
         const val LIKE_URL = "$BASE/like/like"
@@ -2035,6 +2165,8 @@ class InnerTubeClient(
         const val DEFAULT_HL = "en"
         const val SONGS_ONLY_PARAMS = "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"
         const val MAX_SUGGESTIONS = 8
+        /** Recent searches read from one empty-input suggestion page; matches the Search box cap. */
+        const val MAX_SEARCH_HISTORY = 20
         const val HISTORY_MIN_SECONDS = 10L
         const val RETRY_BASE_MS = 500L
         const val MAX_ATTEMPTS = 3

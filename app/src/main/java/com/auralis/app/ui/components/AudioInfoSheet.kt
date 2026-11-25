@@ -34,7 +34,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,16 +53,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.auralis.app.core.formatDuration
 import com.auralis.app.core.formatFileSize
+import com.auralis.app.data.youtube.AUDIO_UNKNOWN
+import com.auralis.app.data.youtube.ResolvedStream
+import com.auralis.app.data.youtube.isYouTubeTrack
+import com.auralis.app.data.youtube.shortCodecLabel
 import com.auralis.app.domain.audio.isHiRes
 import com.auralis.app.domain.audio.isLossless
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.ReplayGainMode
 import com.auralis.app.domain.model.Track
 import com.auralis.app.playback.AudioEffectsEngine
-import com.auralis.app.domain.model.ThemeStyle
-import com.auralis.app.ui.glass.DialogBackdropBlur
-import com.auralis.app.ui.glass.glassWindowPanelColor
-import com.auralis.app.ui.theme.LocalThemeStyle
+import com.auralis.app.ui.glass.GlassSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -100,18 +100,32 @@ suspend fun collectAudioInfo(
     context: Context,
     track: Track,
     settings: AppSettings,
+    resolvedStream: ResolvedStream? = null,
 ): AudioInfoReport = withContext(Dispatchers.IO) {
-    val format = readFormat(context, track.uri)
-    val sampleRate = track.sampleRateHz ?: format?.int(MediaFormat.KEY_SAMPLE_RATE)
-    val bitDepth = track.bitDepth ?: format?.int(KEY_BITS_PER_SAMPLE)
-    val channels = track.channels ?: format?.int(MediaFormat.KEY_CHANNEL_COUNT)
-    val bitrate = track.bitrateBps ?: format?.int(MediaFormat.KEY_BIT_RATE)
+    val remote = track.isYouTubeTrack()
+    // A remote item's URI is an auralis-yt:// marker, not a file: MediaExtractor cannot open it and
+    // its real details come from the resolver. Only local files get the tag + extractor pass.
+    val format = if (remote) null else readFormat(context, track.uri)
+    val sampleRate = if (remote) null else (track.sampleRateHz ?: format?.int(MediaFormat.KEY_SAMPLE_RATE))
+    val bitDepth = if (remote) null else (track.bitDepth ?: format?.int(KEY_BITS_PER_SAMPLE))
+    val channels = if (remote) null else (track.channels ?: format?.int(MediaFormat.KEY_CHANNEL_COUNT))
+    val bitrate: Number? = (if (remote) null else (track.bitrateBps ?: format?.int(MediaFormat.KEY_BIT_RATE)))
+        ?: resolvedStream?.bitrate
     val durationMs = track.durationMs.takeIf { it > 0 }
-        ?: format?.long(MediaFormat.KEY_DURATION)?.div(1000L)
-    val mime = track.mime.takeIf { it.isNotBlank() }
-        ?: format?.string(MediaFormat.KEY_MIME)
-    val lossless = track.isLossless
-    val codec = track.codec?.takeIf { it.isNotBlank() } ?: mime
+        ?: (if (remote) null else format?.long(MediaFormat.KEY_DURATION)?.div(1000L))
+    // For a stream, never trust the placeholder Track ext/mime; use the resolved stream's real values.
+    val mime = if (remote) {
+        resolvedStream?.mimeType?.takeIf { it.isNotBlank() }
+    } else {
+        track.mime.takeIf { it.isNotBlank() } ?: format?.string(MediaFormat.KEY_MIME)
+    }
+    val lossless = if (remote) resolvedStream?.format == "FLAC" else track.isLossless
+    val codec = if (remote) {
+        shortCodecLabel(resolvedStream?.codec, resolvedStream?.mimeType)
+    } else {
+        track.codec?.takeIf { it.isNotBlank() } ?: mime
+    }
+    val container = if (remote) resolvedStream?.format.orEmpty() else track.ext
     val folder = folderName(track.relativePath)
 
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -135,11 +149,15 @@ suspend fun collectAudioInfo(
     val maxVolume = runCatching { audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
     val effects = AudioEffectsEngine.current()
 
-    val header = listOfNotNull(
-        (codec ?: track.ext).uppercase().takeIf { it.isNotBlank() },
-        bitDepth?.takeIf { it > 0 }?.let { "$it-bit" },
-        sampleRate?.takeIf { it > 0 }?.let(::formatSampleRate),
-    ).joinToString(" · ").ifBlank { track.displayName }
+    val header = if (remote) {
+        resolvedStream?.displayLabel ?: AUDIO_UNKNOWN
+    } else {
+        listOfNotNull(
+            (codec ?: track.ext).uppercase().takeIf { it.isNotBlank() },
+            bitDepth?.takeIf { it > 0 }?.let { "$it-bit" },
+            sampleRate?.takeIf { it > 0 }?.let(::formatSampleRate),
+        ).joinToString(" · ").ifBlank { track.displayName }
+    }
 
     AudioInfoReport(
         title = track.displayName,
@@ -153,16 +171,16 @@ suspend fun collectAudioInfo(
                         lossless -> "Lossless"
                         else -> "Lossy"
                     }),
-                    AudioInfoRow("Format", track.ext.uppercase().ifBlank { UNKNOWN }),
+                    AudioInfoRow("Format", container.uppercase().ifBlank { UNKNOWN }),
                     AudioInfoRow("Codec / MIME", listOfNotNull(codec, mime).distinct().joinToString(" · ").ifBlank { UNKNOWN }),
                     AudioInfoRow("Sample rate", sampleRate?.let(::formatSampleRate) ?: UNKNOWN),
                     AudioInfoRow("Bit depth", bitDepth?.let { "$it-bit" } ?: UNKNOWN),
                     AudioInfoRow("Channels", channels?.let(::channelLabel) ?: UNKNOWN),
-                    AudioInfoRow("Bitrate", bitrate?.toLong()?.let(::formatBitrate) ?: UNKNOWN),
+                    AudioInfoRow("Bitrate", bitrate?.toLong()?.takeIf { it > 0 }?.let(::formatBitrate) ?: UNKNOWN),
                     AudioInfoRow("Duration", durationMs?.let(::formatDuration) ?: UNKNOWN),
-                    AudioInfoRow("File size", formatFileSize(track.sizeBytes)),
-                    AudioInfoRow("Compression", compression),
-                    AudioInfoRow("Folder name", folder),
+                    AudioInfoRow("File size", if (remote) "Streamed (not a local file)" else formatFileSize(track.sizeBytes)),
+                    AudioInfoRow("Compression", if (remote) "Not applicable (stream)" else compression),
+                    AudioInfoRow("Folder name", if (remote) "YouTube Music" else folder),
                 ),
             ),
             AudioInfoSection(
@@ -433,6 +451,7 @@ private fun yesNo(value: Boolean): String = if (value) "Yes" else "No"
 fun AudioInfoSheet(
     track: Track,
     settings: AppSettings,
+    resolvedStream: ResolvedStream? = null,
     onDismiss: () -> Unit,
     onOpenAnalysis: () -> Unit,
 ) {
@@ -442,23 +461,22 @@ fun AudioInfoSheet(
     var error by remember(track.id) { mutableStateOf<String?>(null) }
     var copied by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
 
-    LaunchedEffect(track.id, settings.eqEnabled, settings.replayGain) {
+    // Re-reads when the stream resolves later (resolvedStream is a key), so a sheet opened before the
+    // URL was ready updates to the real format instead of staying stuck on its placeholder.
+    LaunchedEffect(track.id, resolvedStream, settings.eqEnabled, settings.replayGain) {
         report = null
         error = null
-        runCatching { collectAudioInfo(context, track, settings) }
+        runCatching { collectAudioInfo(context, track, settings, resolvedStream) }
             .onSuccess { report = it }
             .onFailure { error = it.localizedMessage ?: "Could not read audio information" }
     }
 
-    ModalBottomSheet(
+    GlassSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = if (glass) glassWindowPanelColor() else MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
     ) {
-        if (glass) DialogBackdropBlur()
         Column(
             Modifier
                 .fillMaxWidth()

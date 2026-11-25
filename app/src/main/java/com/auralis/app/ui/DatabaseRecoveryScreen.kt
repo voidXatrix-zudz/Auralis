@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -31,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.auralis.app.AppContainer
+import com.auralis.app.ui.glass.GlassMaterialAlertDialog
 import com.auralis.app.data.db.AuralisDatabase
 import com.auralis.app.ui.theme.AuralisAppTheme
 import java.io.BufferedOutputStream
@@ -102,7 +102,7 @@ fun DatabaseRecoveryScreen(container: AppContainer, failure: Throwable) {
         }
 
         if (confirmingReset) {
-            AlertDialog(
+            GlassMaterialAlertDialog(
                 onDismissRequest = { confirmingReset = false },
                 title = { Text("Reset local database?") },
                 text = {

@@ -27,12 +27,24 @@ class YouTubeJsProvider(
     /** True once the bundle is loaded and the provider globals exist (used for status logging). */
     fun isWarm(): Boolean = enabled() && engine.isReady()
 
-    override suspend fun resolveAudio(videoId: String, quality: StreamQuality): String? {
+    override suspend fun resolveAudio(videoId: String, quality: StreamQuality): ResolvedStream? {
         if (!enabled()) return null
         val targetKbps = if (quality == StreamQuality.BEST) 0 else quality.approxKbps
         val json = engine.resolveAudio(videoId, targetKbps, RESOLVE_TIMEOUT_MS) ?: return null
-        val url = runCatching { JSONObject(json).optString("url") }.getOrNull()
-        return url?.takeIf { it.isPlayableAudioUrl() }
+        val payload = runCatching { JSONObject(json) }.getOrNull() ?: return null
+        val url = payload.optString("url").takeIf { it.isPlayableAudioUrl() } ?: return null
+        // The engine reports the mime type and bitrate of the stream it actually picked; either may
+        // be missing, in which case the format simply stays unknown rather than being guessed.
+        val mime = payload.optString("mimeType").takeIf { it.isNotBlank() }
+        val bitrate = payload.optInt("bitrate", 0).takeIf { it > 0 }
+        return ResolvedStream(
+            url = url,
+            format = normalizeAudioFormat(mimeType = mime),
+            mimeType = mime,
+            codec = shortCodecLabel(null, mime),
+            bitrate = bitrate,
+            resolver = ResolverKind.YOUTUBEJS,
+        )
     }
 
     /**

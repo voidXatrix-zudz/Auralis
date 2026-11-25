@@ -36,6 +36,9 @@ class PlaybackSnapshotRepository(context: Context) {
             snapshot.remoteId?.let { prefs[PlaybackSnapshotKeys.remoteId] = it } ?: prefs.remove(PlaybackSnapshotKeys.remoteId)
             snapshot.queueJson?.let { prefs[PlaybackSnapshotKeys.queueJson] = it } ?: prefs.remove(PlaybackSnapshotKeys.queueJson)
             prefs[PlaybackSnapshotKeys.savedAt] = snapshot.savedAt
+            snapshot.contextKind?.let { prefs[PlaybackSnapshotKeys.contextKind] = it } ?: prefs.remove(PlaybackSnapshotKeys.contextKind)
+            snapshot.contextId?.let { prefs[PlaybackSnapshotKeys.contextId] = it } ?: prefs.remove(PlaybackSnapshotKeys.contextId)
+            snapshot.contextName?.let { prefs[PlaybackSnapshotKeys.contextName] = it } ?: prefs.remove(PlaybackSnapshotKeys.contextName)
         }
     }
 

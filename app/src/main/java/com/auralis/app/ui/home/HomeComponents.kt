@@ -1,7 +1,7 @@
 package com.auralis.app.ui.home
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,6 +38,8 @@ import com.auralis.app.R
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.components.AuralisLogo
 import com.auralis.app.ui.components.AccountAvatar
+import com.auralis.app.ui.glass.rememberReduceMotion
+import com.auralis.app.ui.theme.AuralisMotion
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LocalThemeStyle
 
@@ -275,14 +277,14 @@ fun HomeSectionTitle(
     }
 }
 
-/** Subtle press feedback shared by every tappable Home card. */
+/** Subtle press feedback shared by every tappable Home card. Cushioned, never snappy. */
 @Composable
 internal fun rememberPressScale(): Pair<MutableInteractionSource, Float> {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.97f else 1f,
-        animationSpec = tween(durationMillis = 90),
+        targetValue = if (pressed) 0.965f else 1f,
+        animationSpec = if (rememberReduceMotion()) snap() else AuralisMotion.springPress,
         label = "homePress",
     )
     return interaction to scale

@@ -50,3 +50,23 @@ data class NavState(
 
     fun pop(): NavState = if (stack.isEmpty()) this else copy(stack = stack.dropLast(1))
 }
+
+/**
+ * True for the Settings hub and every Settings sub-page. Each of these draws its own title row with
+ * a back chevron (see `SettingsPage` / `SettingsHubScreen`), so the shared app `TopBar` must be
+ * suppressed for them — otherwise a second back arrow is stacked above the page.
+ */
+val Destination.isSettingsDestination: Boolean
+    get() = when (this) {
+        Destination.Settings,
+        Destination.SettingsPlayback,
+        Destination.SettingsMetadataLyrics,
+        Destination.SettingsDownloads,
+        Destination.SettingsYouTubeMusic,
+        Destination.SettingsAppearance,
+        Destination.SettingsPerformance,
+        Destination.SettingsStorage,
+        Destination.SettingsAbout,
+        -> true
+        else -> false
+    }

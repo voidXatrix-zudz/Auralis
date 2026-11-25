@@ -15,15 +15,18 @@ class LyricsProviderOrderTest {
 
     @Test
     fun `an existing order gets the new providers appended, not reordered`() {
-        assertEquals(legacyOrder + listOf("BiniLyrics", "LyricsPlus"), mergeProviderOrder(legacyOrder))
+        val merged = mergeProviderOrder(legacyOrder)
+        assertEquals(legacyOrder, merged.take(legacyOrder.size))
+        val expectedAppended = LyricsProviderCatalog.ALL.map { it.id }.filter { it !in legacyOrder }
+        assertEquals(expectedAppended, merged.drop(legacyOrder.size))
     }
 
     @Test
     fun `unknown ids are dropped and new providers still appended`() {
-        assertEquals(
-            legacyOrder + listOf("BiniLyrics", "LyricsPlus"),
-            mergeProviderOrder(legacyOrder + "RemovedProvider"),
-        )
+        val merged = mergeProviderOrder(legacyOrder + "RemovedProvider")
+        assertEquals(legacyOrder, merged.take(legacyOrder.size))
+        val expectedAppended = LyricsProviderCatalog.ALL.map { it.id }.filter { it !in legacyOrder }
+        assertEquals(expectedAppended, merged.drop(legacyOrder.size))
     }
 
     @Test
@@ -41,8 +44,8 @@ class LyricsProviderOrderTest {
     }
 
     @Test
-    fun `the default enabled set turns on the new word-synced providers`() {
+    fun `the default enabled set turns on the resilient providers`() {
         val enabled = AppSettings().lyricsProvidersEnabled
-        assertTrue(enabled.containsAll(listOf("LRCLIB", "BiniLyrics", "BetterLyrics", "LyricsPlus", "KuGou")))
+        assertTrue(enabled.containsAll(listOf("LRCLIB", "LrcRed", "BetterLyrics", "KuGou", "YouTubeMusic")))
     }
 }

@@ -40,6 +40,9 @@ class MetadataFiller(
 
         /** Gaps before each retry; the sum is exactly [DEADLINE_MS]. */
         val RETRY_GAPS_MS: List<Long> = listOf(1_000L, 3_000L, 6_000L, 10_000L, 10_000L)
+
+        /** Consecutive identical non-null answers after which retrying cannot add anything. */
+        const val STAGNANT_LIMIT = 2
     }
 
     private val gate = Semaphore(CONCURRENCY)
@@ -78,19 +81,32 @@ class MetadataFiller(
         var track = initial
         var elapsedMs = 0L
         var retry = 0
+        var stagnant = 0
         while (true) {
             // The fetch and the artwork upgrade share one permit: both are network lookups and both
             // count toward the concurrency cap, but the permit is never held across a delay.
+            var answered = false
             val next = gate.withPermit {
-                val merged = track.filledWith(attempt { fetch(videoId) })
+                val song = attempt { fetch(videoId) }
+                answered = song != null
+                val merged = track.filledWith(song)
                 val artwork = artworkFor(merged)
                 if (artwork != null) merged.copy(artworkUrl = artwork) else merged
             }
             if (next != track) {
                 track = next
+                stagnant = 0
                 onFilled(track)
+            } else if (answered) {
+                stagnant++
+            } else {
+                stagnant = 0
             }
             if (!track.needsMetadataFill) break
+            // A provider that keeps answering with the same incomplete song will not improve by being
+            // asked again; stop after a couple of identical successful answers instead of burning the
+            // whole retry window on it.
+            if (stagnant >= STAGNANT_LIMIT) break
             if (retry >= RETRY_GAPS_MS.size) break
             val gap = RETRY_GAPS_MS[retry]
             if (elapsedMs + gap > DEADLINE_MS) break

@@ -24,7 +24,6 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -186,7 +185,7 @@ private fun GlassPlaylistRow(
                 IconButton(onClick = { menu = true }) {
                     Icon(Icons.Rounded.MoreVert, "More options", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                GlassMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("Play next") }, onClick = { menu = false; onPlayNext() })
                     DropdownMenuItem(text = { Text("Add to queue") }, onClick = { menu = false; onQueue() })
                 }

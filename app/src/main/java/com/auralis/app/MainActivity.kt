@@ -2,6 +2,7 @@ package com.auralis.app
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -16,6 +17,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.auralis.app.logging.CrashHandler
+import com.auralis.app.logging.AppLog
 import com.auralis.app.playback.PlaybackService
 import com.auralis.app.ui.AppViewModel
 import com.auralis.app.ui.AuralisRoot
@@ -33,6 +35,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val container = (application as AuralisApp).container
+        // Makes an activity relaunch (the common OAuth-return path) visible in the Logs screen.
+        if (savedInstanceState != null) {
+            AppLog.i(TAG, "Activity relaunched; Clerk state will be re-read")
+        }
         // Let Clerk hand OAuth (Google) results back to this Activity once it is attached. This is
         // non-essential: if it fails the UI must still draw, so the failure is recorded and skipped.
         runCatching { container.clerkAuth.attachActivity(this) }
@@ -56,6 +62,17 @@ class MainActivity : ComponentActivity() {
                 AuralisRoot(viewModel)
             }
         }
+        // Defensive: if the OAuth redirect is ever routed here instead of the SDK receiver, hand it
+        // to the SDK and record the step. A normal launch has no data, so this is a no-op.
+        viewModel.onAuthCallbackIntent(intent?.data)
+    }
+
+    /** A new intent can carry a Clerk deep link when the app is already running. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.data != null) AppLog.i(TAG, "New intent received with data")
+        viewModel.onAuthCallbackIntent(intent.data)
     }
 
     /** Android 13+ needs an explicit grant before download notifications can be shown. */

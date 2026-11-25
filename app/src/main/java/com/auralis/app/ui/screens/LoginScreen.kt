@@ -88,6 +88,7 @@ fun LoginScreen(
     onVerifyCode: (String) -> Unit,
     onEditEmail: () -> Unit,
     onClearError: () -> Unit,
+    onRetryInit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
@@ -180,6 +181,41 @@ fun LoginScreen(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(40.dp))
+                return@Column
+            }
+            // Initialization exceeded its budget. Never leave the screen on a spinner: explain
+            // and let the user retry without killing the app.
+            if (auth.initTimedOut) {
+                AuthCard(glass = glass) {
+                    Text(
+                        "Sign-in is taking longer than usual",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = onBg,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        auth.error ?: "Couldn't reach the sign-in service. Check your connection and try again.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = onBgMuted,
+                    )
+                    Spacer(Modifier.height(24.dp))
+                    Button(
+                        onClick = { focus.clearFocus(); onRetryInit() },
+                        shape = RoundedCornerShape(16.dp),
+                        colors = if (glass) {
+                            ButtonDefaults.buttonColors(
+                                containerColor = GlassTokens.Cream,
+                                contentColor = GlassTokens.Indigo,
+                            )
+                        } else {
+                            ButtonDefaults.buttonColors(containerColor = accent)
+                        },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) {
+                        Text("Try again", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
                 return@Column
             }
 

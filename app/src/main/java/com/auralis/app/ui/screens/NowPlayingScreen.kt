@@ -64,6 +64,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import android.net.Uri
 import com.auralis.app.domain.model.Lyrics
+import com.auralis.app.data.db.PlaylistEntity
+import com.auralis.app.data.youtube.YtPlaylist
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -92,13 +94,16 @@ fun NowPlayingScreen(
     settings: AppSettings = AppSettings(),
     lyrics: Lyrics? = null,
     lyricsLoading: Boolean = false,
+    lyricsProviderRowStates: Map<String, LyricsProviderRowState> = emptyMap(),
     lyricsAutoScroll: Boolean = true,
-    lyricSizeSp: Int = 22,
+    lyricSizeSp: Int = 30,
     lyricsOffsetMs: Int = 0,
     onLoadLyrics: (Track) -> Unit = {},
     onImportLyrics: (Track, Uri) -> Unit = { _, _ -> },
     onSaveLyrics: (Track, String) -> Unit = { _, _ -> },
     onTryAnotherLyricsSource: (Track) -> Unit = {},
+    onFetchLyricsFromProvider: (Track, String) -> Unit = { _, _ -> },
+    onCancelLyricsProviderFetch: (String?) -> Unit = {},
     onRetryLyrics: (Track) -> Unit = {},
     onAdjustLyricsOffset: (Int) -> Unit = {},
     onResetLyricsOffset: () -> Unit = {},
@@ -125,8 +130,16 @@ fun NowPlayingScreen(
     onClearQueue: () -> Unit,
     onStartSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
+    playlists: List<PlaylistEntity> = emptyList(),
+    youtubePlaylists: List<YtPlaylist> = emptyList(),
+    onAddToPlaylist: (Long, Track) -> Unit = { _, _ -> },
+    onAddToAccountPlaylist: (YtPlaylist, Track) -> Unit = { _, _ -> },
+    onRefreshPlaylists: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    DisposableEffect(track.id) {
+        onDispose { onCancelLyricsProviderFetch(track.id) }
+    }
     // The blended layout is the portrait Now Playing screen for both themes. Landscape keeps the
     // previous layouts: a full-bleed square art column does not fit a phone held sideways.
     val configuration = LocalConfiguration.current
@@ -141,6 +154,7 @@ fun NowPlayingScreen(
             settings = settings,
             lyrics = lyrics,
             lyricsLoading = lyricsLoading,
+            lyricsProviderRowStates = lyricsProviderRowStates,
             lyricsAutoScroll = lyricsAutoScroll,
             lyricSizeSp = lyricSizeSp,
             lyricsOffsetMs = lyricsOffsetMs,
@@ -148,6 +162,7 @@ fun NowPlayingScreen(
             onImportLyrics = onImportLyrics,
             onSaveLyrics = onSaveLyrics,
             onTryAnotherLyricsSource = onTryAnotherLyricsSource,
+            onFetchLyricsFromProvider = onFetchLyricsFromProvider,
             onRetryLyrics = onRetryLyrics,
             onAdjustLyricsOffset = onAdjustLyricsOffset,
             onResetLyricsOffset = onResetLyricsOffset,
@@ -174,6 +189,11 @@ fun NowPlayingScreen(
             onClearQueue = onClearQueue,
             onStartSleepTimer = onStartSleepTimer,
             onCancelSleepTimer = onCancelSleepTimer,
+            playlists = playlists,
+            youtubePlaylists = youtubePlaylists,
+            onAddToPlaylist = onAddToPlaylist,
+            onAddToAccountPlaylist = onAddToAccountPlaylist,
+            onRefreshPlaylists = onRefreshPlaylists,
             modifier = modifier,
         )
         return
@@ -441,6 +461,7 @@ fun NowPlayingScreen(
         AudioInfoSheet(
             track = track,
             settings = settings,
+            resolvedStream = playback.resolvedStream,
             onDismiss = { audioInfoOpen = false },
             onOpenAnalysis = {
                 audioInfoOpen = false

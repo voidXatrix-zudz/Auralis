@@ -24,7 +24,7 @@ data class AppSettings(
     val balance: Float = 0f,
     val volume: Float = 1f,
     val replayGain: ReplayGainMode = ReplayGainMode.TRACK,
-    val lyricSizeSp: Int = 22,
+    val lyricSizeSp: Int = 30,
     val lyricsAutoScroll: Boolean = true,
     /** Global timing correction for synced lyrics, in milliseconds (positive = lyrics later). */
     val lyricsOffsetMs: Int = 0,
@@ -39,7 +39,7 @@ data class AppSettings(
     val crossfadeSeconds: Int = 0,
     val resumeOnOutputReconnect: Boolean = false,
     val carKeepScreenOn: Boolean = true,
-    val themeStyle: ThemeStyle = ThemeStyle.NORMAL,
+    val themeStyle: ThemeStyle = ThemeStyle.GLASSMORPHIC,
     /** Glassmorphism "Dock transparency": 0 = fully see-through, 100 = opaque. Default 35 (STEP 8.2). */
     val dockGlassOpacity: Int = 35,
     /** Glassmorphism "Glass clarity": 0 = frosted/opaque, 100 = clear. Default 60 (STEP 8.2). */
@@ -82,9 +82,10 @@ data class AppSettings(
     val youtubeSongsOnly: Boolean = false,
     /** Lyrics providers in lookup order (ids; includes disabled ones so order survives toggles). */
     val lyricsProviderOrder: List<String> = DEFAULT_LYRICS_PROVIDER_ORDER,
-    /** Enabled lyrics providers. Defaults chosen for reliability; the rest are opt-in. */
+    /** Lyrics providers enabled on a fresh install; users can toggle any provider in Settings. */
     val lyricsProvidersEnabled: Set<String> = setOf(
-        "LrcRed", "LRCLIB", "BetterLyrics", "KuGou", "YouTubeMusic",
+        "LrcRed", "BiniLyrics", "BetterLyrics", "BetterLyricsPortato", "LyricsPlus",
+        "Unison", "KuGou", "LRCLIB", "YouTubeMusic", "YouTubeCaptions", "SimpMusic",
     ),
     /** Enabled metadata providers. */
     val metadataProvidersEnabled: Set<String> = setOf("MusicBrainz", "Deezer"),

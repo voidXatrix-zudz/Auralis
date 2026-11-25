@@ -7,11 +7,14 @@ import com.auralis.app.logging.AppLog
 import com.auralis.app.ui.performance.VisualPerformanceTier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -31,6 +34,11 @@ class GlassConfigRepository(
     private val scope: CoroutineScope,
     private val sdkInt: Int = Build.VERSION.SDK_INT,
 ) {
+    private val _preview = MutableStateFlow<GlassConfigPreview?>(null)
+
+    /** Values being previewed by the Appearance sliders; never written to DataStore. */
+    val preview: StateFlow<GlassConfigPreview?> = _preview.asStateFlow()
+
     /** The single config every glass surface reads (through `LocalGlassConfig`). */
     val config: StateFlow<GlassConfig> =
         combine(settings, tier) { stored, resolvedTier -> stored.toGlassConfig(resolvedTier) }
@@ -57,9 +65,30 @@ class GlassConfigRepository(
         scope.launch { settingsRepository.update { it.copy(dockGlassOpacity = clamped) } }
     }
 
+    fun previewDockTransparency(value: Int) {
+        val clamped = value.coerceIn(0, 100)
+        _preview.update { (it ?: GlassConfigPreview()).copy(dockTransparency = clamped) }
+    }
+
     fun setGlassClarity(value: Int) {
         val clamped = value.coerceIn(0, 100)
         scope.launch { settingsRepository.update { it.copy(glassClarity = clamped) } }
+    }
+
+    fun previewGlassClarity(value: Int) {
+        val clamped = value.coerceIn(0, 100)
+        _preview.update { (it ?: GlassConfigPreview()).copy(glassClarity = clamped) }
+    }
+
+    /** Clears an unfinished slider gesture. A completed gesture remains until DataStore catches up. */
+    fun clearPreview() {
+        _preview.value = null
+    }
+
+    /** Drop the transient copy only after the committed setting is visible in the saved config. */
+    fun clearPreviewIfPersisted(config: GlassConfig) {
+        val current = _preview.value ?: return
+        if (current.matches(config)) _preview.compareAndSet(current, null)
     }
 
     fun setOutlines(enabled: Boolean) {
@@ -75,4 +104,18 @@ class GlassConfigRepository(
             tier = resolvedTier,
             sdkInt = sdkInt,
         )
+}
+
+data class GlassConfigPreview(
+    val dockTransparency: Int? = null,
+    val glassClarity: Int? = null,
+) {
+    fun applyTo(config: GlassConfig): GlassConfig = config.copy(
+        dockTransparency = dockTransparency ?: config.dockTransparency,
+        glassClarity = glassClarity ?: config.glassClarity,
+    )
+
+    fun matches(config: GlassConfig): Boolean =
+        (dockTransparency == null || dockTransparency == config.dockTransparency) &&
+            (glassClarity == null || glassClarity == config.glassClarity)
 }

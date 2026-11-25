@@ -143,6 +143,34 @@ class YouTubeRepository(
     /** True while the session is present and usable; cache keys are split on this. */
     private val signedIn: Boolean get() = authStore?.snapshot()?.signedIn == true
 
+    /**
+     * True when the most recent [homeShelves] call was served from the Room cache instead of the
+     * network. Diagnostics only (the Logs screen prints `feed source: network / cache`).
+     */
+    @Volatile
+    var lastHomeFromCache: Boolean = false
+        private set
+
+    /**
+     * A short, non-reversible tag for the signed-in account, or "" when signed out. It is part of the
+     * cache keys so one account's Home/history can never be shown to another (a bug that survived a
+     * plain signed/anon split). Only the SAPI SID is hashed, never stored in the clear.
+     */
+    private fun accountCacheKey(): String {
+        val auth = authStore?.snapshot() ?: return ""
+        if (!auth.signedIn) return ""
+        val secret = auth.sapisid ?: return ""
+        return runCatching {
+            java.security.MessageDigest.getInstance("SHA-1")
+                .digest(secret.toByteArray(Charsets.UTF_8))
+                .take(4)
+                .joinToString("") { "%02x".format(it) }
+        }.getOrDefault("")
+    }
+
+    /** `":<account>"` when signed in, "" otherwise — appended to per-account cache keys. */
+    private fun accountSuffix(): String = accountCacheKey().let { if (it.isEmpty()) "" else ":$it" }
+
     /** The user's "Songs only (strict)" choice; read per call so a settings change applies at once. */
     private suspend fun songsOnly(): Boolean =
         runCatching { settingsStore?.settings?.first()?.youtubeSongsOnly == true }.getOrDefault(false)
@@ -213,8 +241,13 @@ class YouTubeRepository(
      * Songs-only search. A repeat query is served from the LRU without touching the network.
      * [gl] localises the results (e.g. "IN" for Trending in India, "US" for Global Top Hits), and is
      * part of the cache key so the same query in two regions does not collide.
+     *
+     * Anonymous by default: a signed search is exactly what appends the term to the account's
+     * search history. The interactive pipeline fires on every 300 ms typing pause, so signing it
+     * would fill the account with prefixes ("wee", "week", "weekn"). One deliberate signed search
+     * per submitted term is issued by [recordSearch] instead.
      */
-    suspend fun search(query: String, gl: String = "US"): List<YtSong> {
+    suspend fun search(query: String, gl: String = "US", anonymous: Boolean = true): List<YtSong> {
         val trimmed = query.trim()
         if (trimmed.isBlank()) return emptyList()
         val key = "$gl|${trimmed.lowercase()}"
@@ -224,7 +257,7 @@ class YouTubeRepository(
         }
         return once("search:$key") {
             searchCache.get(key)?.let { return@once it }
-            var songs = innerTube.searchSongs(trimmed, gl)
+            var songs = innerTube.searchSongs(trimmed, gl, anonymous)
             if (songs.isEmpty() && youtubeJsEnabled) {
                 // InnerTube came back empty (a songs-only query it did not understand, or a soft
                 // block); try the YouTube.js engine once before giving up.
@@ -234,9 +267,28 @@ class YouTubeRepository(
                     songs = viaJs
                 }
             }
-            searchCache.put(key, songs)
+            // Empty responses can be caused by a temporary refusal or a response-layout change.
+            // Don't pin those in the LRU; the Search screen's retry must be able to reach YouTube.
+            if (songs.isNotEmpty()) searchCache.put(key, songs)
             songs
         }
+    }
+
+    /**
+     * Records one submitted search in the account's YouTube Music search history. A signed search is
+     * the only InnerTube call that appends to that history, so it is issued once per committed term
+     * and the response is discarded (the interactive pipeline already rendered the same results).
+     * Deliberately bypasses [search]'s LRU: a cache hit would send no request and record nothing.
+     * Best-effort - false when signed out or the call failed.
+     */
+    suspend fun recordSearch(query: String): Boolean {
+        val trimmed = query.trim()
+        if (trimmed.length < 2 || !signedIn) return false
+        return runCatching {
+            innerTube.searchSongs(trimmed, anonymous = false)
+            true
+        }.onFailure { AppLog.w(TAG, "Search not recorded on the account: ${it.message}") }
+            .getOrDefault(false)
     }
 
     /** Mixed search cards (artists/albums/playlists) for the Home discovery rows; session-cached. */
@@ -326,12 +378,50 @@ class YouTubeRepository(
         return values
     }
 
-    /** Best audio URL for one video: cached ~1 hour, in-flight de-duplicated, retried once. */
-    suspend fun resolveStream(videoId: String): String = resolver.resolve(videoId)
+    /** Best audio stream for one video: cached ~1 hour, in-flight de-duplicated, retried once. */
+    suspend fun resolveStream(videoId: String): ResolvedStream = resolver.resolve(videoId)
 
-    /** Fills missing title/artist/duration/artwork for a queue entry; null when unavailable. */
-    suspend fun metadata(videoId: String): YtSong? =
-        runCatching { innerTube.songMetadata(videoId) }.getOrNull()
+    /**
+     * Fills missing title/artist/duration/artwork for a queue entry; null when unavailable.
+     *
+     * Successful results are cached per video id in the same Room cache the list responses use, so a
+     * History row and Now Playing asking for the same song do not each hit InnerTube; concurrent
+     * identical lookups share one network round-trip. A failure is never cached, and a cached entry
+     * that lacks a real title is re-fetched instead of being served as-is.
+     */
+    suspend fun metadata(videoId: String): YtSong? {
+        if (videoId.isBlank()) return null
+        val key = metadataCacheKey(videoId)
+        val dao = cache
+        val cached = runCatching { dao?.get(key) }.getOrNull()
+        if (cached != null && System.currentTimeMillis() - cached.refreshedAt < METADATA_TTL_MS) {
+            decodeSong(cached.payload)?.takeIf { isUsableMetadata(it, videoId) }?.let {
+                AppLog.d(TAG, "Metadata cache hit for $videoId")
+                return it
+            }
+        }
+        return once("meta:$videoId") {
+            val fetched = runCatching { innerTube.songMetadata(videoId) }.getOrNull()
+            if (fetched != null && isUsableMetadata(fetched, videoId)) {
+                runCatching {
+                    dao?.put(
+                        YouTubeCacheEntity(
+                            cacheKey = key,
+                            payload = cacheJson.encodeToString(YtSong.serializer(), fetched),
+                            refreshedAt = System.currentTimeMillis(),
+                        ),
+                    )
+                }.onFailure { AppLog.d(TAG, "YouTube metadata cache write skipped: ${it.message}") }
+            }
+            // A transient miss keeps the last good copy instead of blanking the row.
+            MetadataLookup(fetched ?: cached?.let { decodeSong(it.payload) })
+        }.song
+    }
+
+    private fun metadataCacheKey(videoId: String): String = "yt_meta:$videoId"
+
+    private fun decodeSong(payload: String): YtSong? =
+        runCatching { cacheJson.decodeFromString(YtSong.serializer(), payload) }.getOrNull()
 
     /** Best downloadable audio (Opus, else AAC) for the download worker. */
     suspend fun resolveBestAudio(videoId: String): ResolvedAudio = resolver.resolveBest(videoId)
@@ -342,7 +432,7 @@ class YouTubeRepository(
         quality: StreamQuality = StreamQuality.BEST,
         force: ResolverKind? = null,
         bypassCache: Boolean = false,
-    ): String = resolver.resolveBlocking(videoId, quality, force, bypassCache)
+    ): ResolvedStream = resolver.resolveBlocking(videoId, quality, force, bypassCache)
 
     /** Warm a stream URL ahead of playback so the next transition opens instantly from cache. */
     fun prefetchStream(videoId: String, quality: StreamQuality = StreamQuality.BEST) {
@@ -434,12 +524,19 @@ class YouTubeRepository(
      * if offline. A failure is a [YouTubeLoadResult.Failure] so Home can offer a retry instead of
      * pretending the account has no recommendations.
      */
-    suspend fun homeShelves(force: Boolean = false): YouTubeLoadResult<List<YtShelf>> = cachedResult(
-        key = homeCacheKey(signedIn),
-        serializer = YtShelf.serializer(),
-        ttlMs = HOME_TTL_MS,
-        force = force,
-    ) { innerTube.homeShelves() }
+    suspend fun homeShelves(force: Boolean = false): YouTubeLoadResult<List<YtShelf>> {
+        val key = homeCacheKey(signedIn, accountCacheKey())
+        // "feed source" for the Logs screen: a fresh cached row wins, otherwise the network answers.
+        lastHomeFromCache = !force && runCatching {
+            cache?.get(key)?.let { System.currentTimeMillis() - it.refreshedAt < HOME_TTL_MS } == true
+        }.getOrDefault(false)
+        return cachedResult(
+            key = key,
+            serializer = YtShelf.serializer(),
+            ttlMs = HOME_TTL_MS,
+            force = force,
+        ) { innerTube.homeShelves() }
+    }
 
     /**
      * Saved playlists (`FEmusic_liked_playlists`, landing page as fallback). Errors are returned as
@@ -484,7 +581,7 @@ class YouTubeRepository(
     /** Recently played songs (`FEmusic_history`). Old cached rows are filtered on read. */
     suspend fun historySongs(): List<YtSong> = musicOnly(
         cachedList(
-            "yt_history:${if (signedIn) "signed" else "anon"}",
+            "yt_history:${if (signedIn) "signed" else "anon"}${accountSuffix()}",
             YtSong.serializer(),
             HISTORY_TTL_MS,
         ) { innerTube.historySongs() },
@@ -505,6 +602,36 @@ class YouTubeRepository(
     ) {
         is YouTubeLoadResult.Success -> YouTubeLoadResult.Success(musicOnly(result.value, "History"))
         is YouTubeLoadResult.Failure -> result
+    }
+
+    /**
+     * The account's recent searches (`music/get_search_suggestions` with an empty input). Not cached:
+     * the list is small, freshness matters, and the same read provides the feedback tokens that
+     * delete a term, so a stale cache could delete the wrong entry.
+     */
+    suspend fun searchHistorySuggestions(): YouTubeLoadResult<List<YtSearchSuggestion>> =
+        if (!signedIn) YouTubeLoadResult.Failure("Not signed in") else innerTube.searchHistoryResult()
+
+    /** Deletes one term from the account's search history (best-effort; false if not found/refused). */
+    suspend fun removeSearchHistoryTerm(query: String): Boolean {
+        val term = query.trim()
+        if (term.isEmpty() || !signedIn) return false
+        return runCatching {
+            val tokens = innerTube.searchHistory()
+                .filter { it.fromHistory && it.text.equals(term, ignoreCase = true) }
+                .mapNotNull { it.feedbackToken }
+            innerTube.removeSearchHistoryTerms(tokens)
+        }.getOrDefault(false)
+    }
+
+    /** Deletes the whole account search history, the mirror of "Clear recent searches". */
+    suspend fun clearSearchHistory(): Boolean {
+        if (!signedIn) return false
+        return runCatching {
+            innerTube.removeSearchHistoryTerms(
+                innerTube.searchHistory().mapNotNull { it.feedbackToken },
+            )
+        }.getOrDefault(false)
     }
 
     /** Songs saved to the account library (`FEmusic_liked_videos`), filtered on read. */
@@ -799,14 +926,21 @@ class YouTubeRepository(
         const val HOME_TTL_MS = 15L * 60L * 1000L
         const val HISTORY_TTL_MS = 5L * 60L * 1000L
         const val LIBRARY_TTL_MS = 60L * 60L * 1000L
+        /** Per-song player metadata barely changes, so it is cached for a day. */
+        const val METADATA_TTL_MS = 24L * 60L * 60L * 1000L
         val MOOD_PATTERN = Regex("mood|genre|feel|vibe|chill|energy")
     }
 }
 
-/** Signed-in and anonymous Home feeds must never share a cache row. */
-internal fun homeCacheKey(signedIn: Boolean): String =
-    "home_shelves:${if (signedIn) "signed" else "anon"}"
+/** Signed-in and anonymous Home feeds must never share a cache row (nor two signed-in accounts). */
+internal fun homeCacheKey(signedIn: Boolean, accountKey: String = ""): String {
+    val base = "home_shelves:${if (signedIn) "signed" else "anon"}"
+    return if (accountKey.isBlank()) base else "$base:$accountKey"
+}
 
 /** One playlist's cache row: browse id without `VL`, split by session state. */
 internal fun playlistCacheKeyFor(browseId: String, signedIn: Boolean): String =
     "yt_playlist:${browseId.removePrefix("VL")}:${if (signedIn) "signed" else "anon"}"
+
+/** Non-null box so a nullable lookup can pass through the non-null in-flight de-duplicator. */
+private class MetadataLookup(val song: YtSong?)

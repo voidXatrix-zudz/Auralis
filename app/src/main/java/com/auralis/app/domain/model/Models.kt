@@ -64,6 +64,8 @@ data class Lyrics(
     val outOfSync: Boolean = false,
     /** Timing precision of these lyrics: word, line, or plain. Never inferred, always parsed. */
     val sync: LyricsSync = LyricsSync.PLAIN,
+    /** Precision-first aggregator confidence (0..100); null for user/local lyrics. */
+    val matchScore: Int? = null,
 )
 
 /** A music file in the library. Mirrors the Track model of the AURALIS web reference. */

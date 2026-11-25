@@ -91,6 +91,7 @@ import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.Repeat
@@ -105,15 +106,13 @@ import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Usb
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -170,19 +169,26 @@ import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Lyrics
 import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.PlayerBackground
-import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
+import com.auralis.app.data.lyrics.LyricsProviderCatalog
+import com.auralis.app.data.lyrics.LyricsProviderInfo
+import com.auralis.app.data.db.PlaylistEntity
+import com.auralis.app.data.youtube.AUDIO_UNKNOWN
+import com.auralis.app.data.youtube.YtPlaylist
+import com.auralis.app.data.youtube.isYouTubeTrack
 import com.auralis.app.playback.PlaybackController
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.components.AudioInfoSheet
 import com.auralis.app.ui.components.LocalDownloadActions
 import com.auralis.app.ui.components.PlayerBackgroundImage
+import com.auralis.app.ui.components.PlaylistPickerDialog
 import com.auralis.app.ui.components.QualityBadgeContent
 import com.auralis.app.ui.components.qualityBadgeContent
 import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
-import com.auralis.app.ui.glass.DialogBackdropBlur
-import com.auralis.app.ui.glass.glassWindowPanelColor
-import com.auralis.app.ui.theme.LocalThemeStyle
+import com.auralis.app.ui.glass.GlassMaterialAlertDialog
+import com.auralis.app.ui.glass.GlassMenu
+import com.auralis.app.ui.glass.GlassSheet
+import com.auralis.app.ui.theme.AuralisMotion
 import com.auralis.app.ui.theme.LyricsTypography
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -208,13 +214,15 @@ fun BlendNowPlayingScreen(
     settings: AppSettings = AppSettings(),
     lyrics: Lyrics? = null,
     lyricsLoading: Boolean = false,
+    lyricsProviderRowStates: Map<String, LyricsProviderRowState> = emptyMap(),
     lyricsAutoScroll: Boolean = true,
-    lyricSizeSp: Int = 22,
+    lyricSizeSp: Int = 30,
     lyricsOffsetMs: Int = 0,
     onLoadLyrics: (Track) -> Unit = {},
     onImportLyrics: (Track, Uri) -> Unit = { _, _ -> },
     onSaveLyrics: (Track, String) -> Unit = { _, _ -> },
     onTryAnotherLyricsSource: (Track) -> Unit = {},
+    onFetchLyricsFromProvider: (Track, String) -> Unit = { _, _ -> },
     onRetryLyrics: (Track) -> Unit = {},
     onAdjustLyricsOffset: (Int) -> Unit = {},
     onResetLyricsOffset: () -> Unit = {},
@@ -241,6 +249,12 @@ fun BlendNowPlayingScreen(
     onClearQueue: () -> Unit,
     onStartSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
+    /** Local playlists plus the signed-in account's playlists, for the "Add to playlist" sheet. */
+    playlists: List<PlaylistEntity> = emptyList(),
+    youtubePlaylists: List<YtPlaylist> = emptyList(),
+    onAddToPlaylist: (Long, Track) -> Unit = { _, _ -> },
+    onAddToAccountPlaylist: (YtPlaylist, Track) -> Unit = { _, _ -> },
+    onRefreshPlaylists: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var panel by rememberSaveable { mutableStateOf(NowPlayingPanel.NONE) }
@@ -252,6 +266,14 @@ fun BlendNowPlayingScreen(
     var audioInfoOpen by rememberSaveable { mutableStateOf(false) }
     var audioOutputOpen by rememberSaveable { mutableStateOf(false) }
     var moreOpen by remember { mutableStateOf(false) }
+    var playlistPickerOpen by remember { mutableStateOf(false) }
+    var lyricsProviderPickerOpen by remember(track.id) { mutableStateOf(false) }
+    val enabledLyricsProviders = remember(settings.lyricsProviderOrder, settings.lyricsProvidersEnabled) {
+        val byId = LyricsProviderCatalog.ALL.associateBy(LyricsProviderInfo::id)
+        settings.lyricsProviderOrder.distinct().mapNotNull { id ->
+            byId[id]?.takeIf { id in settings.lyricsProvidersEnabled }
+        }
+    }
 
     LaunchedEffect(track.id) { onLoadLyrics(track) }
     ForceWhiteSystemIcons()
@@ -266,6 +288,14 @@ fun BlendNowPlayingScreen(
     val deviceName = remember(context) { deviceDisplayName(context) }
     val duration = playback.durationMs.takeIf { it > 0 } ?: track.durationMs
     val quality = remember(track) { track.qualityBadgeContent() }
+    // The timeline centre label: a streamed song shows the real codec the resolver actually selected
+    // with its bit rate ("OPUS · 160 kbps", "AAC · 160 kbps"), and stays "AUDIO" until it resolves. A
+    // local file keeps its own tag metadata exactly as before.
+    val qualityText = if (track.isYouTubeTrack()) {
+        playback.resolvedStream?.nowPlayingLabel ?: AUDIO_UNKNOWN
+    } else {
+        qualityLabel(quality)
+    }
     val isFavorite = track.id in favorites
 
     BackHandler(enabled = panel != NowPlayingPanel.NONE) { panel = NowPlayingPanel.NONE }
@@ -382,6 +412,8 @@ fun BlendNowPlayingScreen(
                                     onMoveQueueItem = onMoveQueueItem,
                                     onAddSongs = { addSongsOpen = true },
                                     onClear = onClearQueue,
+                                    contextName = playback.context?.name,
+                                    autoplayIds = playback.autoplayIds,
                                     modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp),
                                 )
                             }
@@ -414,6 +446,7 @@ fun BlendNowPlayingScreen(
                                         isFavorite = isFavorite,
                                         moreOpen = moreOpen,
                                         onMoreOpenChange = { moreOpen = it },
+                                        onAddToPlaylist = { playlistPickerOpen = true },
                                         onFavorite = { onFavorite(track) },
                                         playback = playback,
                                         track = track,
@@ -447,19 +480,22 @@ fun BlendNowPlayingScreen(
                     BlendControls(
                         positionMs = playback.positionMs,
                         durationMs = duration,
-                        quality = quality,
+                        qualityText = qualityText,
                         onQualityClick = { audioOutputOpen = false; audioInfoOpen = true },
                         onSeek = onSeek,
                         playing = playback.playing,
                         onPrevious = onPrevious,
                         onPlayPause = onPlayPause,
                         onNext = onNext,
+                        // Slightly larger transport controls only in the plain album-art view; Lyrics
+                        // and Queue panels keep the original dimensions.
+                        enlargedControls = panel == NowPlayingPanel.NONE,
                         playbackError = playback.error,
                         bluetoothOutputName = bluetoothOutputName,
                         deviceName = deviceName,
                         lyricsActive = panel == NowPlayingPanel.LYRICS,
                         lyricsLabel = if (panel == NowPlayingPanel.LYRICS) lyricsByLabel(lyrics) else null,
-                        onLyricsLabelClick = { lyricsOpen = true },
+                        onLyricsLabelClick = { lyricsProviderPickerOpen = true },
                         onLyricsToggle = {
                             panel = if (panel == NowPlayingPanel.LYRICS) NowPlayingPanel.NONE else NowPlayingPanel.LYRICS
                         },
@@ -511,6 +547,7 @@ fun BlendNowPlayingScreen(
                         onFavorite = { onFavorite(track) },
                         moreOpen = moreOpen,
                         onMoreOpenChange = { moreOpen = it },
+                        onAddToPlaylist = { playlistPickerOpen = true },
                         playback = playback,
                         lyricsOffsetMs = lyricsOffsetMs,
                         onAdjustLyricsOffset = onAdjustLyricsOffset,
@@ -559,6 +596,7 @@ fun BlendNowPlayingScreen(
         AudioInfoSheet(
             track = track,
             settings = settings,
+            resolvedStream = playback.resolvedStream,
             onDismiss = { audioInfoOpen = false },
             onOpenAnalysis = {
                 audioInfoOpen = false
@@ -591,6 +629,29 @@ fun BlendNowPlayingScreen(
                 onSaveLyrics(track, text)
                 lyricsPasteOpen = false
             },
+        )
+    }
+
+    if (playlistPickerOpen) {
+        // Make sure the account's playlists are as fresh as possible while the list is on screen.
+        LaunchedEffect(Unit) { onRefreshPlaylists() }
+        PlaylistPickerDialog(
+            track = track,
+            localPlaylists = playlists,
+            accountPlaylists = youtubePlaylists,
+            onPickLocal = { id -> onAddToPlaylist(id, track) },
+            onPickAccount = { yt -> onAddToAccountPlaylist(yt, track) },
+            onDismiss = { playlistPickerOpen = false },
+        )
+    }
+
+    if (lyricsProviderPickerOpen) {
+        LyricsProviderPickerSheet(
+            providers = enabledLyricsProviders,
+            currentProviderId = lyrics?.provider,
+            rowStates = lyricsProviderRowStates,
+            onProviderSelected = { providerId -> onFetchLyricsFromProvider(track, providerId) },
+            onDismiss = { lyricsProviderPickerOpen = false },
         )
     }
 }
@@ -725,6 +786,7 @@ private fun CompactHeaderRow(
     onFavorite: () -> Unit,
     moreOpen: Boolean,
     onMoreOpenChange: (Boolean) -> Unit,
+    onAddToPlaylist: () -> Unit,
     playback: PlaybackController.State,
     lyricsOffsetMs: Int,
     onAdjustLyricsOffset: (Int) -> Unit,
@@ -799,6 +861,7 @@ private fun CompactHeaderRow(
             PlayerMoreMenu(
                 expanded = moreOpen,
                 onDismiss = { onMoreOpenChange(false) },
+                onAddToPlaylist = onAddToPlaylist,
                 playback = playback,
                 track = track,
                 lyricsOffsetMs = lyricsOffsetMs,
@@ -827,18 +890,19 @@ private fun CompactHeaderRow(
 private fun BlendControls(
     positionMs: Long,
     durationMs: Long,
-    quality: QualityBadgeContent?,
+    qualityText: String,
     onQualityClick: () -> Unit,
     onSeek: (Long) -> Unit,
     playing: Boolean,
     onPrevious: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    enlargedControls: Boolean,
     playbackError: String?,
     bluetoothOutputName: String?,
     deviceName: String,
     lyricsActive: Boolean,
-    lyricsLabel: String?,
+    lyricsLabel: LyricsByLabel?,
     onLyricsLabelClick: () -> Unit,
     onLyricsToggle: () -> Unit,
     queueActive: Boolean,
@@ -869,7 +933,7 @@ private fun BlendControls(
             BlendTimeline(
                 positionMs = positionMs,
                 durationMs = durationMs,
-                quality = quality,
+                qualityText = qualityText,
                 centerLabel = lyricsLabel,
                 onCenterLabelClick = {
                     if (lyricsLabel != null) onLyricsLabelClick() else onQualityClick()
@@ -882,6 +946,7 @@ private fun BlendControls(
                 onPrevious = onPrevious,
                 onPlayPause = onPlayPause,
                 onNext = onNext,
+                enlargedControls = enlargedControls,
             )
             playbackError?.let {
                 Text(
@@ -930,6 +995,7 @@ private fun TitleBlock(
     isFavorite: Boolean,
     moreOpen: Boolean,
     onMoreOpenChange: (Boolean) -> Unit,
+    onAddToPlaylist: () -> Unit,
     onFavorite: () -> Unit,
     playback: PlaybackController.State,
     track: Track,
@@ -986,6 +1052,7 @@ private fun TitleBlock(
             PlayerMoreMenu(
                 expanded = moreOpen,
                 onDismiss = { onMoreOpenChange(false) },
+                onAddToPlaylist = onAddToPlaylist,
                 playback = playback,
                 track = track,
                 lyricsOffsetMs = lyricsOffsetMs,
@@ -1010,6 +1077,7 @@ private fun TitleBlock(
 private fun PlayerMoreMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     playback: PlaybackController.State,
     track: Track,
     lyricsOffsetMs: Int,
@@ -1027,7 +1095,12 @@ private fun PlayerMoreMenu(
 ) {
     val downloads = LocalDownloadActions.current
     val downloaded = (track.remoteId ?: track.id.removePrefix("yt:")) in downloads.downloadedIds
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+    GlassMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text("Add to playlist") },
+            leadingIcon = { Icon(Icons.Rounded.QueueMusic, null) },
+            onClick = { onDismiss(); onAddToPlaylist() },
+        )
         DropdownMenuItem(
             text = { Text("Shuffle · ${if (playback.shuffle) "On" else "Off"}") },
             leadingIcon = { Icon(Icons.Rounded.Shuffle, null) },
@@ -1206,8 +1279,8 @@ private fun LyricsPreviewRow(
 private fun BlendTimeline(
     positionMs: Long,
     durationMs: Long,
-    quality: QualityBadgeContent?,
-    centerLabel: String?,
+    qualityText: String,
+    centerLabel: LyricsByLabel?,
     onCenterLabelClick: () -> Unit,
     onSeek: (Long) -> Unit,
 ) {
@@ -1249,15 +1322,29 @@ private fun BlendTimeline(
                 )
                 Spacer(Modifier.width(6.dp))
             }
-            Text(
-                text = centerLabel ?: qualityLabel(quality),
-                color = Color.White.copy(alpha = if (centerLabel != null) 0.7f else 0.85f),
-                fontSize = if (centerLabel != null) 12.sp else 13.sp,
-                textDecoration = if (centerLabel != null) TextDecoration.Underline else null,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable(role = Role.Button, onClick = onCenterLabelClick),
-            )
+            if (centerLabel == null) {
+                Text(qualityText, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } else {
+                val labelColor = Color.White.copy(alpha = 0.7f)
+                val labelStyle = LocalTextStyle.current.copy(
+                    color = labelColor,
+                    fontSize = 12.sp,
+                    textDecoration = TextDecoration.Underline,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Lyrics by ", style = labelStyle, maxLines = 1)
+                    Text(
+                        text = centerLabel.name,
+                        style = labelStyle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = if (centerLabel.providerId != null) {
+                            Modifier.clickable(role = Role.Button, onClick = onCenterLabelClick)
+                        } else Modifier,
+                    )
+                    if (centerLabel.outOfSync) Text(" · out of sync", style = labelStyle, maxLines = 1)
+                }
+            }
         }
         Text(
             text = "-" + formatTime((total - shownPosition).coerceAtLeast(0L)),
@@ -1273,18 +1360,25 @@ private fun TransportRow(
     onPrevious: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    enlargedControls: Boolean,
 ) {
+    // Normal album-art mode gets slightly larger transport controls; Lyrics (and any open panel) keeps
+    // the original dimensions. Play/Pause stays the most prominent in both cases.
+    val sideSize = if (enlargedControls) 76.dp else 56.dp
+    val sideIcon = if (enlargedControls) 52.dp else 34.dp
+    val playSize = if (enlargedControls) 92.dp else 64.dp
+    val playIcon = if (enlargedControls) 72.dp else 48.dp
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            TransportButton(Icons.Rounded.SkipPrevious, "Previous", 56.dp, 34.dp, onPrevious)
+            TransportButton(Icons.Rounded.SkipPrevious, "Previous", sideSize, sideIcon, onPrevious)
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             val interaction = remember { MutableInteractionSource() }
             val pressed by interaction.collectIsPressedAsState()
-            val scale by animateFloatAsState(if (pressed) 0.9f else 1f, tween(100), label = "playScale")
+            val scale by animateFloatAsState(if (pressed) 0.9f else 1f, AuralisMotion.springPress, label = "playScale")
             Box(
                 Modifier
-                    .size(64.dp)
+                    .size(playSize)
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
@@ -1297,18 +1391,18 @@ private fun TransportRow(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Crossfade(targetState = playing, animationSpec = tween(120), label = "playPauseIcon") { isPlaying ->
+                Crossfade(targetState = playing, animationSpec = AuralisMotion.tweenCreamy(AuralisMotion.Fast), label = "playPauseIcon") { isPlaying ->
                     Icon(
                         imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         contentDescription = if (isPlaying) "Pause" else "Play",
                         tint = Color.White,
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier.size(playIcon),
                     )
                 }
             }
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            TransportButton(Icons.Rounded.SkipNext, "Next", 56.dp, 34.dp, onNext)
+            TransportButton(Icons.Rounded.SkipNext, "Next", sideSize, sideIcon, onNext)
         }
     }
 }
@@ -1323,7 +1417,7 @@ private fun TransportButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.9f else 1f, tween(100), label = "transportScale")
+    val scale by animateFloatAsState(if (pressed) 0.9f else 1f, AuralisMotion.springPress, label = "transportScale")
     Box(
         Modifier
             .size(size)
@@ -1609,6 +1703,8 @@ private fun QueuePanel(
     onMoveQueueItem: (Track, Int) -> Unit,
     onAddSongs: () -> Unit,
     onClear: () -> Unit,
+    contextName: String? = null,
+    autoplayIds: List<String> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -1679,7 +1775,7 @@ private fun QueuePanel(
                             modifier = Modifier.size(20.dp),
                         )
                     }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    GlassMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
                             text = { Text("Add songs") },
                             leadingIcon = { Icon(Icons.Rounded.Add, null) },
@@ -1694,6 +1790,17 @@ private fun QueuePanel(
                     }
                 }
             }
+        }
+
+        if (!contextName.isNullOrBlank() && queue.isNotEmpty()) {
+            Text(
+                text = "Playing from $contextName",
+                color = Color.White.copy(alpha = 0.62f),
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 2.dp, bottom = 6.dp),
+            )
         }
 
         if (queue.isEmpty()) {
@@ -1741,17 +1848,21 @@ private fun QueuePanel(
                     },
             ) {
                 var draggingId by remember { mutableStateOf<String?>(null) }
+                val autoplaySet = autoplayIds.toSet()
+                val contextTracks = if (autoplaySet.isEmpty()) queue else queue.filterNot { it.id in autoplaySet }
+                val autoplayTracks = if (autoplaySet.isEmpty()) emptyList() else queue.filter { it.id in autoplaySet }
+                val firstAutoplayAt = contextTracks.size
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    itemsIndexed(queue, key = { _, item -> item.id }) { index, item ->
+                    itemsIndexed(contextTracks, key = { _, item -> item.id }) { index, item ->
                         QueuePanelRow(
                             item = item,
                             index = index,
-                            lastIndex = queue.lastIndex,
+                            lastIndex = contextTracks.lastIndex,
                             isCurrent = item.id == currentId,
                             playing = playing,
                             selected = item.id in selectedIds,
@@ -1770,6 +1881,40 @@ private fun QueuePanel(
                             onDragEnd = { draggingId = null },
                             onDragMove = { target -> onMoveQueueItem(item, target) },
                         )
+                    }
+                    if (autoplayTracks.isNotEmpty()) {
+                        item(key = "autoplay-header") {
+                            Text(
+                                text = "Autoplay / Up next",
+                                color = Color.White.copy(alpha = 0.62f),
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(start = 2.dp, top = 10.dp, bottom = 4.dp),
+                            )
+                        }
+                        itemsIndexed(autoplayTracks, key = { _, item -> item.id }) { offset, item ->
+                            QueuePanelRow(
+                                item = item,
+                                index = firstAutoplayAt + offset,
+                                lastIndex = queue.lastIndex,
+                                isCurrent = item.id == currentId,
+                                playing = playing,
+                                selected = item.id in selectedIds,
+                                selectMode = selectMode,
+                                dragging = draggingId == item.id,
+                                onToggleSelected = {
+                                    selectedIds = if (item.id in selectedIds) selectedIds - item.id else selectedIds + item.id
+                                },
+                                onClick = { if (selectMode) {
+                                    selectedIds = if (item.id in selectedIds) selectedIds - item.id else selectedIds + item.id
+                                } else {
+                                    onPlayQueueItem(item)
+                                } },
+                                onRemove = { onRemoveFromQueue(item) },
+                                onDragStart = { draggingId = item.id },
+                                onDragEnd = { draggingId = null },
+                                onDragMove = { target -> onMoveQueueItem(item, target) },
+                            )
+                        }
                     }
                 }
             }
@@ -2251,20 +2396,17 @@ private fun AudioOutputSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val glass = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val route = rememberActiveOutputRoute()
     val volume = rememberMediaVolume()
     val isBluetooth = bluetoothOutputName != null || isBluetoothType(route.type)
     val outputTitle = if (isBluetooth) (bluetoothOutputName ?: route.productName ?: deviceName) else deviceName
 
-    ModalBottomSheet(
+    GlassSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = if (glass) glassWindowPanelColor() else MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
     ) {
-        if (glass) DialogBackdropBlur()
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             Text("Audio output", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(16.dp))
@@ -2349,7 +2491,7 @@ private fun AddSongsDialog(
     onAdd: (Track) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    GlassMaterialAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add songs to queue") },
         text = {
@@ -2399,7 +2541,7 @@ private fun SleepTimerDialog(
     onCancel: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    GlassMaterialAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Sleep timer") },
         text = {
@@ -2587,15 +2729,23 @@ private fun sanitizeLyric(raw: String?): String {
  * "Lyrics by ..." for the timeline label while lyrics mode is open. Uses the same source names as the
  * provider chip it replaces, so moving it out of the header loses nothing.
  */
-private fun lyricsByLabel(lyrics: Lyrics?): String? {
-    val source = lyrics?.source ?: return null
+private data class LyricsByLabel(
+    val name: String,
+    val providerId: String?,
+    val outOfSync: Boolean,
+)
+
+private fun lyricsByLabel(lyrics: Lyrics?): LyricsByLabel? {
+    val currentLyrics = lyrics ?: return null
+    val source = currentLyrics.source
+    val providerId = currentLyrics.provider.takeIf { source == LyricsSource.LRCLIB }
     val name = when (source) {
         LyricsSource.USER -> "you"
         LyricsSource.EMBEDDED -> "the file"
         LyricsSource.LRC -> "LRC file"
-        LyricsSource.LRCLIB -> lyrics.provider ?: "online"
+        LyricsSource.LRCLIB -> LyricsProviderCatalog.ALL.firstOrNull { it.id == providerId }?.label ?: providerId ?: "online"
     }
-    return if (lyrics.outOfSync) "Lyrics by $name · out of sync" else "Lyrics by $name"
+    return LyricsByLabel(name, providerId, currentLyrics.outOfSync)
 }
 
 /** White status/navigation icons over the artwork, restored when the screen leaves. */

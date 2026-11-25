@@ -77,6 +77,8 @@ fun SearchScreen(
     onSubmitSearch: (String) -> Unit = onSearchYouTube,
     onDeleteRecent: (String) -> Unit = {},
     onClearRecent: () -> Unit = {},
+    youtubeSignedIn: Boolean = false,
+    onConnectYouTube: () -> Unit = {},
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
         GlassSearchScreen(
@@ -84,6 +86,7 @@ fun SearchScreen(
             onQueue, sources, onPlayNext, youtubeResults, youtubeLoading, youtubeError,
             youtubeResolvingId, onSearchYouTube, onPlayYouTube, youtubeEnabled,
             recentSearches, onSubmitSearch, onDeleteRecent, onClearRecent,
+            youtubeSignedIn, onConnectYouTube,
         )
         return
     }
@@ -127,7 +130,7 @@ fun SearchScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = {
-                if (normalizedQuery.isNotBlank()) onSubmitSearch(normalizedQuery)
+                if (youtube && normalizedQuery.isNotBlank()) onSubmitSearch(normalizedQuery)
             }),
         )
         Row(
@@ -136,9 +139,24 @@ fun SearchScreen(
         ) {
             if (youtubeEnabled) {
                 FilterChip(selected = youtube, onClick = { youtube = true }, label = { Text("YouTube") })
-                FilterChip(selected = !youtube, onClick = { youtube = false }, label = { Text("Local") })
+                FilterChip(selected = !youtube, onClick = { youtube = false; onSearchYouTube("") }, label = { Text("Local") })
             } else {
                 FilterChip(selected = true, onClick = {}, label = { Text("Local") })
+            }
+        }
+
+        if (youtube && !youtubeSignedIn) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Sign in to sync recent searches with YouTube Music",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onConnectYouTube) { Text("Connect") }
             }
         }
 
@@ -148,7 +166,10 @@ fun SearchScreen(
                     RecentSearches(
                         queries = recentSearches,
                         modifier = Modifier.weight(1f),
-                        onPick = { picked -> query = picked; onSubmitSearch(picked) },
+                        onPick = { picked ->
+                            query = picked
+                            if (youtube) onSubmitSearch(picked)
+                        },
                         onDelete = onDeleteRecent,
                         onClear = onClearRecent,
                     )
@@ -177,12 +198,12 @@ fun SearchScreen(
                     favorites = favorites,
                     currentId = currentId,
                     onPlay = onPlayYouTube,
-                    onFavorite = {},
-                    playlists = emptyList(),
-                    onAddToPlaylist = { _, _ -> },
+                    onFavorite = onFavorite,
+                    playlists = playlists,
+                    onAddToPlaylist = onAddToPlaylist,
                     modifier = Modifier.weight(1f),
-                    onQueue = {},
-                    onPlayNext = {},
+                    onQueue = onQueue,
+                    onPlayNext = onPlayNext,
                     resolvingId = youtubeResolvingId,
                 )
             }
@@ -203,7 +224,10 @@ fun SearchScreen(
             RecentSearches(
                 queries = recentSearches,
                 modifier = Modifier.weight(1f),
-                onPick = { picked -> query = picked; onSubmitSearch(picked) },
+                onPick = { picked ->
+                    query = picked
+                    if (youtube) onSubmitSearch(picked)
+                },
                 onDelete = onDeleteRecent,
                 onClear = onClearRecent,
             )

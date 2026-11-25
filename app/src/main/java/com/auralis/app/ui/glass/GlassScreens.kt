@@ -72,7 +72,6 @@ import androidx.compose.ui.unit.sp
 import com.auralis.app.data.db.PlaylistEntity
 import com.auralis.app.data.db.PlaylistEntryEntity
 import com.auralis.app.data.db.PlaylistYtEntryEntity
-import com.auralis.app.data.youtube.routeLibraryPlay
 import com.auralis.app.data.youtube.YtPlaylist
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
@@ -153,6 +152,8 @@ fun GlassSearchScreen(
     onSubmitSearch: (String) -> Unit = onSearchYouTube,
     onDeleteRecent: (String) -> Unit = {},
     onClearRecent: () -> Unit = {},
+    youtubeSignedIn: Boolean = false,
+    onConnectYouTube: () -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var youtube by remember { mutableStateOf(false) }
@@ -187,7 +188,7 @@ fun GlassSearchScreen(
             placeholder = if (youtube) "Search YouTube Music" else "Songs, artists, albums, folders",
             leading = { Icon(Icons.Rounded.Search, contentDescription = if (youtube) "Search YouTube" else "Search library") },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            onSearch = { if (q.isNotBlank()) onSubmitSearch(q) },
+            onSearch = { if (youtube && q.isNotBlank()) onSubmitSearch(q) },
         )
         Spacer(Modifier.height(10.dp))
         Row(
@@ -196,9 +197,23 @@ fun GlassSearchScreen(
         ) {
             if (youtubeEnabled) {
                 GlassChip("YouTube", youtube, { youtube = true })
-                GlassChip("Local", !youtube, { youtube = false })
+                GlassChip("Local", !youtube, { youtube = false; onSearchYouTube("") })
             } else {
                 GlassChip("Local", true, {})
+            }
+        }
+        if (youtube && !youtubeSignedIn) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Sign in to sync recent searches with YouTube Music",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onConnectYouTube) { Text("Connect") }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -208,7 +223,10 @@ fun GlassSearchScreen(
                     GlassRecentSearches(
                         recentSearches,
                         Modifier.weight(1f),
-                        onPick = { picked -> query = picked; onSubmitSearch(picked) },
+                        onPick = { picked ->
+                            query = picked
+                            if (youtube) onSubmitSearch(picked)
+                        },
                         onDelete = onDeleteRecent,
                         onClear = onClearRecent,
                     )
@@ -238,8 +256,8 @@ fun GlassSearchScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     GlassTrackRows(
-                        youtubeResults, favorites, currentId, onPlayYouTube, {}, emptyList(), { _, _ -> },
-                        Modifier.weight(1f), {}, {}, youtubeResolvingId,
+                        youtubeResults, favorites, currentId, onPlayYouTube, onFavorite, playlists, onAddToPlaylist,
+                        Modifier.weight(1f), onQueue, onPlayNext, youtubeResolvingId,
                     )
                 }
             }
@@ -249,7 +267,10 @@ fun GlassSearchScreen(
                     GlassRecentSearches(
                         recentSearches,
                         Modifier.weight(1f),
-                        onPick = { picked -> query = picked; onSubmitSearch(picked) },
+                        onPick = { picked ->
+                            query = picked
+                            if (youtube) onSubmitSearch(picked)
+                        },
                         onDelete = onDeleteRecent,
                         onClear = onClearRecent,
                     )
@@ -380,6 +401,10 @@ fun GlassLibraryScreen(
     /** Live-sync state shown as a tiny marker on the Liked Songs tile (both themes). */
     liveSyncState: LiveSyncState = LiveSyncState.Disabled,
     liveSyncPulse: Long = 0L,
+    /** Whole-list tap handlers: each section queues its own list, never the whole library. */
+    onPlayLiked: (Track) -> Unit = onPlay,
+    onPlayLocal: (Track) -> Unit = onPlay,
+    onPlayDownloaded: (Track) -> Unit = onPlay,
 ) {
     val sort = LibrarySortOption.fromId(librarySort)
     var filter by remember { mutableStateOf<LibraryFilter?>(null) }
@@ -423,14 +448,8 @@ fun GlassLibraryScreen(
         spotifyImports = spotifyImports.size,
         youtubeError = youtubeLibraryError,
     )
-    // Liked Songs mixes YouTube streams and local favourites: the tap must follow the row's kind.
-    val likedOnPlay: (Track) -> Unit = { track ->
-        routeLibraryPlay(
-            track,
-            playLocal = onPlay,
-            playYouTube = { onPlayYouTubeTrackFrom(it, likedMerged) },
-        )
-    }
+    // Liked Songs mixes YouTube streams and local favourites: playLiked queues the exact merged list.
+    val likedOnPlay: (Track) -> Unit = onPlayLiked
 
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -538,10 +557,10 @@ fun GlassLibraryScreen(
                         ) {
                             if (!hasAudioPermission) GlassPrimaryButton("Allow access", onRequestAudioPermission, icon = Icons.Rounded.FolderOpen)
                         }
-                        else GlassTrackRows(localSongs, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                        else GlassTrackRows(localSongs, favorites, currentId, onPlayLocal, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
                     GlassLibrarySection.DOWNLOADED ->
                         if (downloads.isEmpty()) GlassEmptyState("No downloads yet", "Use \"Download\" on a YouTube song.", Modifier.weight(1f))
-                        else GlassTrackRows(downloads, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                        else GlassTrackRows(downloads, favorites, currentId, onPlayDownloaded, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
                     else -> Unit
                 }
             }

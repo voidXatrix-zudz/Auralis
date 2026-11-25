@@ -16,6 +16,7 @@ import com.auralis.app.ui.glass.GlassOverlayScrim
 import com.auralis.app.ui.glass.GlassOverlayState
 import com.auralis.app.ui.glass.LocalGlassOverlay
 import com.auralis.app.ui.glass.GlassConfig
+import com.auralis.app.ui.glass.GlassConfigPreview
 import com.auralis.app.ui.glass.GlassDragState
 import com.auralis.app.ui.glass.GlassSettings
 import com.auralis.app.ui.glass.LocalAppBackdrop
@@ -485,6 +486,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
             playbackReporting = playbackReporting,
             onDockTransparencyChange = viewModel::setDockTransparency,
             onGlassClarityChange = viewModel::setGlassClarity,
+            onPreviewDockTransparency = viewModel::previewDockTransparency,
+            onPreviewGlassClarity = viewModel::previewGlassClarity,
+            onClearGlassPreview = viewModel::clearGlassPreview,
             onGlassOutlinesChange = viewModel::setGlassOutlines,
         )
 
@@ -511,6 +515,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
         GlassSettingsProvider(
             drag = glassDrag,
             persisted = glassConfig,
+            preview = viewModel.glassConfigPreview,
+            onPreviewPersisted = viewModel::clearGlassPreviewIfPersisted,
             settings = settings,
             profile = profile,
             performanceReason = performanceReason,
@@ -552,6 +558,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     settings = settings,
                     lyrics = viewModel.lyrics.collectAsStateWithLifecycle().value,
                     lyricsLoading = viewModel.lyricsLoading.collectAsStateWithLifecycle().value,
+                    lyricsProviderRowStates = viewModel.lyricsProviderRowStates.collectAsStateWithLifecycle().value,
                     lyricsAutoScroll = settings.lyricsAutoScroll,
                     lyricSizeSp = settings.lyricSizeSp,
                     lyricsOffsetMs = settings.lyricsOffsetMs + viewModel.lyricsOffsetMs.collectAsStateWithLifecycle().value,
@@ -559,6 +566,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onImportLyrics = viewModel::importLyrics,
                     onSaveLyrics = viewModel::saveLyrics,
                     onTryAnotherLyricsSource = viewModel::tryAnotherLyricsSource,
+                    onFetchLyricsFromProvider = viewModel::fetchLyricsFromProvider,
+                    onCancelLyricsProviderFetch = viewModel::cancelLyricsProviderFetch,
                     onRetryLyrics = viewModel::retryLyrics,
                     onAdjustLyricsOffset = { delta -> currentTrack?.let { viewModel.adjustTrackLyricsOffset(it, delta) } },
                     onResetLyricsOffset = { currentTrack?.let { viewModel.resetTrackLyricsOffset(it) } },
@@ -663,6 +672,15 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     // the black canvas carries the hand-off with no white flash.
                                     if (transitionScale == 0f) {
                                         EnterTransition.None togetherWith ExitTransition.None
+                                    } else if (targetState.top == Destination.About) {
+                                        // The About page is a lightweight reading screen. Start it
+                                        // immediately instead of waiting for the outgoing Settings
+                                        // page's fade-through, which felt like the tap had stalled.
+                                        fadeIn(
+                                            tween((180 * transitionScale).toInt().coerceAtLeast(1), easing = AuralisMotion.Creamy),
+                                        ) togetherWith fadeOut(
+                                            tween((120 * transitionScale).toInt().coerceAtLeast(1), easing = AuralisMotion.Creamy),
+                                        )
                                     } else {
                                         // Creamy fade-through, now with a gentle rise: the outgoing
                                         // screen sinks and dissolves first (so translucent glass never
@@ -867,6 +885,11 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                                 onSubmitSearch = viewModel::submitSearch,
                                                 onDeleteRecent = viewModel::deleteSearch,
                                                 onClearRecent = viewModel::clearSearchHistory,
+                                                youtubeSignedIn = youtubeAuth?.signedIn == true && youtubeAuth?.expired != true,
+                                                onConnectYouTube = {
+                                                    youtubeForceSignIn = youtubeAuth?.expired == true
+                                                    youtubeLoginOpen = true
+                                                },
                                             )
                                             Tab.LIBRARY -> LibraryScreen(
                                                 tracks, mergedFavorites, sources, playlists, playbackTrackId, addMusic, scan,
@@ -1062,12 +1085,20 @@ fun AuralisRoot(viewModel: AppViewModel) {
 private fun GlassSettingsProvider(
     drag: GlassDragState,
     persisted: GlassConfig,
+    preview: kotlinx.coroutines.flow.StateFlow<GlassConfigPreview?>,
+    onPreviewPersisted: (GlassConfig) -> Unit,
     settings: AppSettings,
     profile: PerformanceProfile,
     performanceReason: String?,
     content: @Composable () -> Unit,
 ) {
-    val config = drag.value ?: persisted
+    val transient by preview.collectAsStateWithLifecycle()
+    val config = drag.value ?: remember(persisted, transient) {
+        transient?.applyTo(persisted) ?: persisted
+    }
+    LaunchedEffect(persisted, transient) {
+        if (transient?.matches(persisted) == true) onPreviewPersisted(persisted)
+    }
     val glass = remember(config) { GlassSettings.from(config) }
     // Dock fill/blur for the dock + Appearance preview. Surface fills are derived separately by
     // GlassKind inside glassSurface, so Glass clarity can never move the dock.

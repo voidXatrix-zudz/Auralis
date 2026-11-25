@@ -20,7 +20,6 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -126,7 +125,7 @@ fun GlassTrackRow(
                 )
                 Box {
                     GlassIconAction(Icons.Rounded.MoreVert, "More actions for ${track.title}", { menu = true })
-                    DropdownMenu(menu, { menu = false }) {
+                    GlassMenu(menu, { menu = false }) {
                         DropdownMenuItem(text = { Text("Play next") }, onClick = { onPlayNext(track); menu = false })
                         DropdownMenuItem(text = { Text("Add to queue") }, onClick = { onQueue(track); menu = false })
                         DropdownMenuItem(text = { Text(if (favorite) "Unlike" else "Like") }, onClick = { onFavorite(track); menu = false })

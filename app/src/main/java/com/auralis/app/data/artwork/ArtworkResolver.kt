@@ -49,22 +49,33 @@ class ArtworkResolver(
 
         val best = candidates.firstOrNull { candidate ->
             !candidate.coverUrl.isNullOrBlank() &&
-                LyricsMatcher.similarity(title, candidate.title) >= MIN_TITLE_SIMILARITY &&
-                (artist.isBlank() || candidate.artists.isBlank() ||
-                    LyricsMatcher.similarity(artist, LyricsMatcher.primaryArtist(candidate.artists)) >= MIN_ARTIST_SIMILARITY)
+                com.auralis.app.data.metadata.metadataCandidateAccepted(
+                    requestedTitle = title,
+                    requestedArtist = artist,
+                    requestedDurationMs = track.durationMs.takeIf { it > 0 },
+                    candidate = candidate,
+                    minTitleSimilarity = MIN_TITLE_SIMILARITY,
+                    minArtistSimilarity = MIN_ARTIST_SIMILARITY,
+                    durationToleranceMs = DURATION_TOLERANCE_MS,
+                )
         }
         val url = best?.coverUrl?.let { normalizeArtworkUrl(it, ARTWORK_LARGEST_PX) }
-        runCatching {
-            providerCacheDao.upsert(
-                ProviderCacheEntity(
-                    kind = KIND,
-                    trackId = track.id,
-                    provider = PROVIDER,
-                    payload = url.orEmpty(),
-                    found = url != null,
-                    updatedAt = System.currentTimeMillis(),
-                ),
-            )
+        // Only remember a negative when the query carried enough to be meaningful (a real artist).
+        // A title-only miss is left un-cached so a later, richer lookup is not blocked for a week.
+        val confidentQuery = artist.isNotBlank()
+        if (url != null || confidentQuery) {
+            runCatching {
+                providerCacheDao.upsert(
+                    ProviderCacheEntity(
+                        kind = KIND,
+                        trackId = track.id,
+                        provider = PROVIDER,
+                        payload = url.orEmpty(),
+                        found = url != null,
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
         }
         url
     }
@@ -74,6 +85,7 @@ class ArtworkResolver(
         private const val PROVIDER = "art"
         private const val MIN_TITLE_SIMILARITY = 0.8
         private const val MIN_ARTIST_SIMILARITY = 0.5
+        private const val DURATION_TOLERANCE_MS = 10_000L
         /** A "none found" marker is re-checked after this long. */
         private const val NEGATIVE_TTL_MS = 7L * 24 * 60 * 60 * 1000
 

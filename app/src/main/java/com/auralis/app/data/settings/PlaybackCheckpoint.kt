@@ -34,6 +34,10 @@ object PlaybackSnapshotKeys {
     val remoteId = stringPreferencesKey("track_remote_id")
     val queueJson = stringPreferencesKey("queue_json")
     val savedAt = longPreferencesKey("saved_at")
+    /** The list playback started from, so Next/Previous still work after an app restart. */
+    val contextKind = stringPreferencesKey("context_kind")
+    val contextId = stringPreferencesKey("context_id")
+    val contextName = stringPreferencesKey("context_name")
 }
 
 /**
@@ -58,6 +62,10 @@ data class PlaybackSnapshot(
     /** JSON-encoded compact queue (see [PlaybackCheckpointCodec]); null for an old snapshot. */
     val queueJson: String? = null,
     val savedAt: Long = 0L,
+    /** Playback context kind (see PlaybackContextKind); null for an old/unlabelled snapshot. */
+    val contextKind: String? = null,
+    val contextId: String? = null,
+    val contextName: String? = null,
 )
 
 /** The display data of one queue entry: enough to draw a row and to rebuild a playable [Track]. */
@@ -117,6 +125,9 @@ fun playbackSnapshotFrom(prefs: Preferences): PlaybackSnapshot? {
         remoteId = prefs[PlaybackSnapshotKeys.remoteId],
         queueJson = prefs[PlaybackSnapshotKeys.queueJson],
         savedAt = prefs[PlaybackSnapshotKeys.savedAt] ?: 0L,
+        contextKind = prefs[PlaybackSnapshotKeys.contextKind],
+        contextId = prefs[PlaybackSnapshotKeys.contextId],
+        contextName = prefs[PlaybackSnapshotKeys.contextName],
     )
 }
 

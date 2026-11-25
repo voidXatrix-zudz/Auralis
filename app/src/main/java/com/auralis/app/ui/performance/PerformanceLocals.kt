@@ -17,3 +17,10 @@ val LocalPerformanceMode = staticCompositionLocalOf { PerformanceMode.AUTOMATIC 
  * Used by the dock blur hint so the user understands a limited control.
  */
 val LocalPerformanceReason = staticCompositionLocalOf<String?> { null }
+
+/**
+ * The raw device snapshot (RAM, heap class, cores, Battery Saver, thermal status) that Automatic
+ * resolves against. Read only by the DEBUG "Glass diagnostics" card, so the user can see exactly
+ * why a tier was chosen without a logcat. Never drives the glass blur decision.
+ */
+val LocalDeviceConditions = staticCompositionLocalOf { DeviceConditions() }

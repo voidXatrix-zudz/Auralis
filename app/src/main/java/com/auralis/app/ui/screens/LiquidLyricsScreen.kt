@@ -60,10 +60,8 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.RestartAlt
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -120,6 +118,8 @@ import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
+import com.auralis.app.ui.glass.GlassMaterialAlertDialog
+import com.auralis.app.ui.glass.GlassMenu
 import com.auralis.app.ui.glass.rememberReduceMotion
 import com.auralis.app.ui.lyrics.WordRanges
 import com.auralis.app.ui.lyrics.rememberLyricsPosition
@@ -360,7 +360,7 @@ fun LiquidLyricsScreen(
                             description = "Lyrics options",
                             onClick = { moreOpen = true },
                         )
-                        DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                        GlassMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text("Try another source") },
                                 leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
@@ -524,7 +524,7 @@ internal fun LyricsPasteDialog(track: Track, onDismiss: () -> Unit, onSave: (Str
     }
     val colors = MaterialTheme.colorScheme
 
-    AlertDialog(
+    GlassMaterialAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Paste lyrics") },
         text = {

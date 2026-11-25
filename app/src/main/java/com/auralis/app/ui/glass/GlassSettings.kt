@@ -56,6 +56,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -388,6 +389,10 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
     val persistedConfig = LocalGlassConfig.current
     val drag = LocalGlassDrag.current
     val liveConfig = drag.value ?: persistedConfig
+    var sliderDragging by remember { mutableStateOf(false) }
+    DisposableEffect(drag) {
+        onDispose { if (sliderDragging) drag.value = null }
+    }
     fun percent(value: Float): Int = (value.coerceIn(0f, 1f) * 100f).roundToInt()
     fun preview(transform: (GlassConfig) -> GlassConfig) {
         drag.value = transform(drag.value ?: persistedConfig)
@@ -437,8 +442,14 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         }
         Slider(
             value = clarityPercent / 100f,
-            onValueChange = { value -> preview { it.copy(glassClarity = percent(value)) } },
-            onValueChangeFinished = { onUpdate { it.copy(glassClarity = clarityPercent) } },
+            onValueChange = { value ->
+                sliderDragging = true
+                preview { it.copy(glassClarity = percent(value)) }
+            },
+            onValueChangeFinished = {
+                sliderDragging = false
+                onUpdate { it.copy(glassClarity = clarityPercent) }
+            },
             colors = violetSliderColors(),
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -448,6 +459,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
                     label,
                     clarityPercent == value,
                     {
+                        sliderDragging = false
                         drag.value = null
                         onUpdate { it.copy(glassClarity = value) }
                     },
@@ -472,8 +484,14 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
         }
         Slider(
             value = dockPercent / 100f,
-            onValueChange = { value -> preview { it.copy(dockTransparency = percent(value)) } },
-            onValueChangeFinished = { onUpdate { it.copy(dockGlassOpacity = dockPercent) } },
+            onValueChange = { value ->
+                sliderDragging = true
+                preview { it.copy(dockTransparency = percent(value)) }
+            },
+            onValueChangeFinished = {
+                sliderDragging = false
+                onUpdate { it.copy(dockGlassOpacity = dockPercent) }
+            },
             colors = violetSliderColors(),
             modifier = Modifier.padding(top = 4.dp),
         )

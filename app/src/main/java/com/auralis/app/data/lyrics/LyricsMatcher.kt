@@ -1,5 +1,7 @@
 package com.auralis.app.data.lyrics
 
+import java.text.Normalizer
+
 /**
  * Text normalisation and similarity for lyrics matching (Part G) and query generation (Part J).
  *
@@ -9,7 +11,7 @@ package com.auralis.app.data.lyrics
  */
 object LyricsMatcher {
     private val BRACKET_NOISE = Regex(
-        "\\((?:slowed|sped\\s*up|speed\\s*up|nightcore|lyric\\s*video|official\\s*(?:video|audio|music\\s*video)?|" +
+        "\\((?:slowed|sped\\s*up|speed\\s*up|nightcore|lyrics?(?:\\s*video)?|official\\s*(?:video|audio|music\\s*video)?|" +
             "audio|hd|hq|4k|explicit|from\\s*[\"“].*?[\"”]|feat\\..*?|ft\\..*?|with\\s+.*?)\\)",
         RegexOption.IGNORE_CASE,
     )
@@ -47,8 +49,11 @@ object LyricsMatcher {
     }
 
     /** Lowercase, punctuation-free, whitespace-collapsed form used for comparison. */
-    fun normalize(value: String): String =
-        PUNCT.replace(value.lowercase(), " ").replace(SPACES, " ").trim()
+    fun normalize(value: String): String = Normalizer.normalize(value.lowercase().replace('_', ' '), Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+        .replace(Regex("^\\s*\\d{1,3}\\s*[-.)]\\s*"), "")
+        .replace(PUNCT, " ")
+        .replace(SPACES, " ").trim()
 
     /** Token-set similarity in 0..1 (order independent), with a small prefix boost. */
     fun similarity(a: String, b: String): Double {
@@ -106,12 +111,13 @@ object LyricsMatcher {
         val primary = primaryArtist(artist)
         val cleaned = cleanTitle(title)
         return buildList {
-            add(QueryVariant(title, artist))
-            if (primary.isNotBlank() && primary != artist) add(QueryVariant(title, primary))
-            if (cleaned != title) {
-                add(QueryVariant(cleaned, primary.ifBlank { artist }))
-                add(QueryVariant(cleaned, ""))
+            add(QueryVariant(cleaned, primary.ifBlank { artist }))
+            add(QueryVariant(title, primary.ifBlank { artist }))
+            if (primary.isNotBlank() && primary != artist) {
+                add(QueryVariant(cleaned, artist))
+                add(QueryVariant(title, artist))
             }
+            add(QueryVariant(cleaned, ""))
             add(QueryVariant(title, ""))
         }.distinct()
     }

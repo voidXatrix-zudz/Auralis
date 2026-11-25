@@ -33,7 +33,6 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -61,6 +60,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import com.auralis.app.BuildConfig
+import com.auralis.app.ui.glass.GlassMaterialAlertDialog
 import com.auralis.app.core.formatSummary
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
@@ -286,7 +286,7 @@ fun LogsDiagnosticsScreen(
         item { Spacer(Modifier.height(24.dp)) }
     }
 
-    if (confirmClear) AlertDialog(
+    if (confirmClear) GlassMaterialAlertDialog(
         onDismissRequest = { confirmClear = false },
         title = { Text("Clear all logs?") },
         text = { Text("This permanently deletes the on-device log files. Diagnostics and the rest of the app keep working.") },

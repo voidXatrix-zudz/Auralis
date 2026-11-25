@@ -157,6 +157,8 @@ class LyricsOvhProvider(http: ProviderHttp) : LyricsProvider {
  */
 class BiniLyricsProvider(private val http: ProviderHttp) : LyricsProvider {
     override val id: String = "BiniLyrics"
+    override val supportsSynced: Boolean = true
+    override val supportsWordSync: Boolean = true
 
     override suspend fun search(
         title: String,
@@ -365,21 +367,21 @@ internal fun kugouResult(id: String, content: String): LyricsResult? {
     return LyricsResult(id, null, text)
 }
 
-private val providerJson = Json { isLenient = true; ignoreUnknownKeys = true }
+internal val providerJson = Json { isLenient = true; ignoreUnknownKeys = true }
 
-private fun JsonObject.string(key: String): String? =
+internal fun JsonObject.string(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
 
-private fun JsonObject.long(key: String): Long? =
+internal fun JsonObject.long(key: String): Long? =
     (this[key] as? JsonPrimitive)?.longOrNull ?: (this[key] as? JsonPrimitive)?.intOrNull?.toLong()
 
-private fun JsonObject.double(key: String): Double? =
+internal fun JsonObject.double(key: String): Double? =
     (this[key] as? JsonPrimitive)?.doubleOrNull
 
-private fun parseJsonObject(body: String?): JsonObject? =
+internal fun parseJsonObject(body: String?): JsonObject? =
     body?.let { runCatching { providerJson.parseToJsonElement(it) }.getOrNull() } as? JsonObject
 
-private fun parseJsonArray(body: String?): JsonArray? =
+internal fun parseJsonArray(body: String?): JsonArray? =
     body?.let { runCatching { providerJson.parseToJsonElement(it) }.getOrNull() } as? JsonArray
 
 /**
@@ -508,8 +510,14 @@ class SimpMusicProvider(http: ProviderHttp) : LyricsProvider {
  * title/artist/duration query, which [TtmlParser] turns into enhanced LRC. The previous
  * `lyrics.betterlyrics.com` endpoint does not exist; any failure returns null for the next provider.
  */
-class BetterLyricsProvider(private val http: ProviderHttp) : LyricsProvider {
+class BetterLyricsProvider(
+    private val http: ProviderHttp,
+    private val apiKey: String = "",
+) : LyricsProvider {
     override val id: String = "BetterLyrics"
+    override val displayName: String = "BetterLyrics"
+    override val supportsSynced: Boolean = true
+    override val supportsWordSync: Boolean = true
 
     override suspend fun search(
         title: String,
@@ -526,7 +534,8 @@ class BetterLyricsProvider(private val http: ProviderHttp) : LyricsProvider {
             if (seconds != null) append("&d=").append(seconds)
             if (!album.isNullOrBlank()) append("&al=").append(ProviderHttp.encode(album))
         }
-        val body = http.getText(url) ?: return@withContext null
+        val headers = if (apiKey.isBlank()) emptyMap() else mapOf("X-API-Key" to apiKey)
+        val body = http.getText(url, headers) ?: return@withContext null
         val ttml = betterLyricsTtml(body)
         val synced = ttml?.let { TtmlParser.parse(it) }
         LyricsResult(id, synced, null)
@@ -546,6 +555,8 @@ internal fun betterLyricsTtml(body: String?): String? =
  */
 class LyricsPlusProvider(private val http: ProviderHttp) : LyricsProvider {
     override val id: String = "LyricsPlus"
+    override val supportsSynced: Boolean = true
+    override val supportsWordSync: Boolean = true
 
     override suspend fun search(
         title: String,
@@ -603,7 +614,7 @@ internal fun lyricsPlusFromBody(body: String?): String? {
 }
 
 /** One LRC line: word-tagged when timed words exist, otherwise plain text (or an empty gap line). */
-private fun lrcLine(timeMs: Long, words: List<Pair<Long, String>>, text: String?): String {
+internal fun lrcLine(timeMs: Long, words: List<Pair<Long, String>>, text: String?): String {
     if (words.isEmpty()) {
         val value = text.orEmpty()
         return if (value.isEmpty()) "[${lrcTimestamp(timeMs)}]" else "[${lrcTimestamp(timeMs)}]$value"
@@ -719,14 +730,44 @@ class YouTubeMusicLyricsProvider(http: ProviderHttp) : LyricsProvider {
 /** Names + descriptions for the Settings list, in default order. */
 object LyricsProviderCatalog {
     val ALL: List<LyricsProviderInfo> = listOf(
+        LyricsProviderInfo("LrcRed", "lrc.red", "Community TTML · word-synced where available"),
         LyricsProviderInfo("BiniLyrics", "BiniLyrics", "Community · word-synced where available (lrc.red)"),
-        LyricsProviderInfo("BetterLyrics", "BetterLyrics", "Community · word-synced where available"),
+        LyricsProviderInfo(
+            "BetterLyrics", "BetterLyrics", "Better Lyrics API · syllable TTML (key optional)",
+            ProviderAvailability.READY, ProviderCredential.BETTERLYRICS,
+        ),
+        LyricsProviderInfo(
+            "BetterLyricsPortato", "BetterLyrics Portato", "QQ provider · word-timed QRC (key optional)",
+            ProviderAvailability.READY, ProviderCredential.BETTERLYRICS,
+        ),
         LyricsProviderInfo("LyricsPlus", "LyricsPlus", "Community · word-synced (Apple timing)"),
+        LyricsProviderInfo("Unison", "Unison", "Community database · YouTube id · credit Unison"),
         LyricsProviderInfo("KuGou", "KuGou", "Unofficial · synced lyrics"),
         LyricsProviderInfo("LRCLIB", "LRCLIB", "Community synced lyrics · line-synced fallback"),
+        LyricsProviderInfo("YouTubeMusic", "YouTube Music lyrics", "From the YouTube Music app · unsynced"),
+        LyricsProviderInfo("YouTubeCaptions", "YouTube captions", "Video captions · line-synced (YouTube songs)"),
         LyricsProviderInfo("SimpMusic", "SimpMusic", "Community lyrics for YouTube songs"),
         LyricsProviderInfo("NetEase", "NetEase Cloud Music", "Unofficial · synced lyrics"),
-        LyricsProviderInfo("YouTubeMusic", "YouTube Music lyrics", "From the YouTube Music app · unsynced"),
+        LyricsProviderInfo(
+            "Musixmatch", "Musixmatch", "Line/word synced · needs a user token",
+            ProviderAvailability.NEEDS_KEY, ProviderCredential.MUSIXMATCH,
+        ),
+        LyricsProviderInfo(
+            "Genius", "Genius", "Not available · song pages return HTTP 403 (bot protection)",
+            ProviderAvailability.NOT_AVAILABLE, ProviderCredential.GENIUS,
+        ),
+        LyricsProviderInfo(
+            "PaxSenix", "PaxSenix", "Not available · API host unreachable/unverified",
+            ProviderAvailability.NOT_AVAILABLE, ProviderCredential.PAXSENIX,
+        ),
+        LyricsProviderInfo(
+            "PaxSenixSpotify", "PaxSenix: Spotify", "Not available · depends on PaxSenix",
+            ProviderAvailability.NOT_AVAILABLE, ProviderCredential.PAXSENIX,
+        ),
+        LyricsProviderInfo(
+            "PaxSenixMusixmatch", "PaxSenix: Musixmatch", "Not available · depends on PaxSenix",
+            ProviderAvailability.NOT_AVAILABLE, ProviderCredential.PAXSENIX,
+        ),
         LyricsProviderInfo("LyricsOvh", "lyrics.ovh", "Plain text, no timestamps"),
     )
 }

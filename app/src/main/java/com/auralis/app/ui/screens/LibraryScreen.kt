@@ -47,7 +47,6 @@ import com.auralis.app.data.db.PlaylistYtEntryEntity
 import com.auralis.app.data.db.SpotifyImportEntity
 import com.auralis.app.data.db.toDomain
 import com.auralis.app.data.youtube.YtPlaylist
-import com.auralis.app.data.youtube.routeLibraryPlay
 import com.auralis.app.data.youtube.LiveSyncState
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
@@ -232,6 +231,10 @@ fun LibraryScreen(
     /** Live-sync state shown as a tiny marker on the Liked Songs tile (both themes). */
     liveSyncState: LiveSyncState = LiveSyncState.Disabled,
     liveSyncPulse: Long = 0L,
+    /** Whole-list tap handlers: each section queues its own list, never the whole library. */
+    onPlayLiked: (Track) -> Unit = onPlay,
+    onPlayLocal: (Track) -> Unit = onPlay,
+    onPlayDownloaded: (Track) -> Unit = onPlay,
 ) {
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
         GlassLibraryScreen(
@@ -249,6 +252,9 @@ fun LibraryScreen(
             youtubeResolvingId = youtubeResolvingId,
             liveSyncState = liveSyncState,
             liveSyncPulse = liveSyncPulse,
+            onPlayLiked = onPlayLiked,
+            onPlayLocal = onPlayLocal,
+            onPlayDownloaded = onPlayDownloaded,
         )
         return
     }
@@ -303,14 +309,6 @@ fun LibraryScreen(
         spotifyImports = spotifyImports.size,
         youtubeError = youtubeLibraryError,
     )
-    // Liked Songs mixes YouTube streams and local favourites: the tap must follow the row's kind.
-    val likedOnPlay: (Track) -> Unit = { track ->
-        routeLibraryPlay(
-            track,
-            playLocal = onPlay,
-            playYouTube = { onPlayYouTubeTrackFrom(it, likedMerged) },
-        )
-    }
 
     Column(modifier.fillMaxSize()) {
         // Large title + "+" pill, library search, and the profile avatar (opens Settings).
@@ -415,9 +413,9 @@ fun LibraryScreen(
             section != null -> {
                 SectionHeader(section!!, onBack = { section = null }, liveState = liveSyncState, livePulse = liveSyncPulse)
                 when (section) {
-                    LibrarySection.LIKED -> TrackRows(likedMerged, favorites, currentId, likedOnPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext, resolvingId = youtubeResolvingId)
-                    LibrarySection.LOCAL -> TrackRows(localSongs, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
-                    LibrarySection.DOWNLOADED -> TrackRows(downloads, favorites, currentId, onPlay, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                    LibrarySection.LIKED -> TrackRows(likedMerged, favorites, currentId, onPlayLiked, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext, resolvingId = youtubeResolvingId)
+                    LibrarySection.LOCAL -> TrackRows(localSongs, favorites, currentId, onPlayLocal, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
+                    LibrarySection.DOWNLOADED -> TrackRows(downloads, favorites, currentId, onPlayDownloaded, onFavorite, playlists, onAddToPlaylist, Modifier.weight(1f), onQueue, onPlayNext)
                     else -> Unit
                 }
             }

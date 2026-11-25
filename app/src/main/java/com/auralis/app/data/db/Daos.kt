@@ -244,8 +244,14 @@ interface SearchHistoryDao {
     @Query("SELECT * FROM search_history ORDER BY searchedAt DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<SearchHistoryEntity>>
 
+    @Query("SELECT * FROM search_history ORDER BY searchedAt DESC")
+    suspend fun getAll(): List<SearchHistoryEntity>
+
     @Upsert
     suspend fun upsert(entry: SearchHistoryEntity)
+
+    @Upsert
+    suspend fun upsertAll(entries: List<SearchHistoryEntity>)
 
     /** Deletes one query, case-insensitively (the same term may have been re-saved with new case). */
     @Query("DELETE FROM search_history WHERE query = :query COLLATE NOCASE")
@@ -348,6 +354,13 @@ interface YouTubeDao {
 
     @Upsert
     suspend fun upsertRecent(entry: YouTubeRecentEntity)
+
+    /** Every mirrored row, for merging a fetched `FEmusic_history` page without losing play counts. */
+    @Query("SELECT * FROM youtube_recents")
+    suspend fun allRecents(): List<YouTubeRecentEntity>
+
+    @Upsert
+    suspend fun upsertRecents(entries: List<YouTubeRecentEntity>)
 
     @Query("DELETE FROM youtube_recents")
     suspend fun clearRecents()

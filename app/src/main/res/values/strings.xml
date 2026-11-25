@@ -50,4 +50,11 @@
     <string name="home_forgotten_favorites">Forgotten favorites</string>
     <string name="home_albums_and_singles">Albums and singles</string>
     <string name="home_music_videos">Music videos</string>
+
+    <!-- Playback notification: the like/favourite action next to the transport buttons. -->
+    <string name="notification_add_favorite">Add to favorites</string>
+    <string name="notification_remove_favorite">Remove from favorites</string>
+    <!-- Playback notification: the shuffle action at the end of the expanded transport row. -->
+    <string name="notification_shuffle_on">Shuffle on</string>
+    <string name="notification_shuffle_off">Shuffle off</string>
 </resources>

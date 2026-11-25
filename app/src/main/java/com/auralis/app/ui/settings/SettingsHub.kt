@@ -120,6 +120,9 @@ data class SettingsActions(
     /** STEP 7: the three glass controls write through GlassConfigRepository only. */
     val onDockTransparencyChange: (Int) -> Unit = {},
     val onGlassClarityChange: (Int) -> Unit = {},
+    val onPreviewDockTransparency: (Int) -> Unit = {},
+    val onPreviewGlassClarity: (Int) -> Unit = {},
+    val onClearGlassPreview: () -> Unit = {},
     val onGlassOutlinesChange: (Boolean) -> Unit = {},
 )
 

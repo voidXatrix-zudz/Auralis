@@ -60,6 +60,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -122,7 +123,6 @@ import com.auralis.app.glass.backdrop.backdrops.layerBackdrop
 import com.auralis.app.glass.backdrop.backdrops.rememberLayerBackdrop
 import com.auralis.app.ui.glass.LocalAppBackdrop
 import com.auralis.app.ui.glass.LocalGlassConfig
-import com.auralis.app.ui.glass.LocalGlassDrag
 import com.auralis.app.ui.glass.LocalGlassSettings
 import com.auralis.app.ui.glass.OpaqueLayerOnDraw
 import com.auralis.app.ui.glass.dockGlassMaterial
@@ -392,11 +392,9 @@ private fun MetadataLyricsSettingsPage(settings: AppSettings, actions: SettingsA
                 )
             }
         }
-        item { SettingsHelperText("Plain-text fallbacks (Genius) always run last. Providers marked “needs key” are skipped silently until their key is set. PaxSenix entries are registered disabled because no verified public endpoint was available.") }
+        item { SettingsHelperText("Lyrics lookup prefers word-timed sync, then line-timed sync. Plain-text results are not shown. Providers marked needs key are skipped until configured.") }
         item {
             SettingsGroupCard {
-                SettingsSwitchRow(Icons.Rounded.Lyrics, "Prioritize syllable lyrics", "Word-synced > line-synced > plain text when providers compete", settings.preferSyncedLyrics) { on -> actions.onUpdate { it.copy(preferSyncedLyrics = on) } }
-                SettingsDivider()
                 SettingsSwitchRow(Icons.Rounded.LibraryMusic, "Overwrite existing tags", "Auto-fix tags may replace non-empty fields", settings.overwriteExistingTags) { on -> actions.onUpdate { it.copy(overwriteExistingTags = on) } }
                 SettingsDivider()
                 SettingsRow(Icons.Rounded.Delete, "Clear lyrics & metadata cache", summary = "Also clears cached artist photos", onClick = actions.onClearLyricsCache)
@@ -810,15 +808,16 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
     val isGlass = glass()
     val profile = LocalPerformanceProfile.current
     val performanceReason = LocalPerformanceReason.current
-    // STEP 2: the persisted config is the source of truth; a slider drag writes a transient copy so
-    // the preview and the real surfaces move on the same frame, then commits through the repository.
+    // The provider merges a transient repository preview over this saved value, so every glass
+    // surface (including the dock) observes the same config on each slider tick.
     val persistedConfig = LocalGlassConfig.current
-    val drag = LocalGlassDrag.current
-    val liveConfig = drag.value ?: persistedConfig
+    val liveConfig = persistedConfig
     val liveGlass = remember(liveConfig) { GlassSettings.from(liveConfig) }
     fun percent(value: Float): Int = (value.coerceIn(0f, 1f) * 100f).roundToInt()
-    fun preview(transform: (GlassConfig) -> GlassConfig) {
-        drag.value = transform(drag.value ?: persistedConfig)
+    var sliderDragging by remember { mutableStateOf(false) }
+    val clearPreview by rememberUpdatedState(actions.onClearGlassPreview)
+    DisposableEffect(Unit) {
+        onDispose { if (sliderDragging) clearPreview() }
     }
     val previewDock = remember(settings, liveConfig, profile, performanceReason) {
         resolveDockGlass(settings, liveGlass, profile, performanceReason)
@@ -877,9 +876,13 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                         0f..1f,
                         0,
                         onChangeFinished = {
+                            sliderDragging = false
                             actions.onDockTransparencyChange(liveConfig.dockTransparency)
                         },
-                    ) { v -> preview { it.copy(dockTransparency = percent(v)) } }
+                    ) { v ->
+                        sliderDragging = true
+                        actions.onPreviewDockTransparency(percent(v))
+                    }
                     SettingsDivider()
                     SliderSetting(
                         "Glass clarity",
@@ -888,9 +891,13 @@ private fun AppearanceSettingsPage(settings: AppSettings, actions: SettingsActio
                         0f..1f,
                         0,
                         onChangeFinished = {
+                            sliderDragging = false
                             actions.onGlassClarityChange(liveConfig.glassClarity)
                         },
-                    ) { v -> preview { it.copy(glassClarity = percent(v)) } }
+                    ) { v ->
+                        sliderDragging = true
+                        actions.onPreviewGlassClarity(percent(v))
+                    }
                     SettingsDivider()
                     SettingsSwitchRow(
                         Icons.Rounded.AutoAwesome,

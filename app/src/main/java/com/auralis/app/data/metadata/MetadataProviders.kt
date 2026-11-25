@@ -310,7 +310,7 @@ class MetadataRepository(
         artist: String,
         durationMs: Long?,
     ): Double {
-        val titleScore = LyricsMatcher.similarity(title, candidate.title)
+        val titleScore = titleSimilarity(title, candidate.title)
         val artistScore = if (artist.isBlank() || candidate.artists.isBlank()) 0.5
         else LyricsMatcher.similarity(LyricsMatcher.primaryArtist(artist), LyricsMatcher.primaryArtist(candidate.artists))
         var score = titleScore * 0.7 + artistScore * 0.3
@@ -327,4 +327,49 @@ class MetadataRepository(
     }
 
     private companion object { const val TAG = "Metadata" }
+}
+
+/**
+ * Title similarity on both the raw and the edit-cleaned forms, whichever is higher. Cleaning strips
+ * "(Official Audio)", "(Lyrics)", "- Remastered 2011", "feat. ...", "(From \"...\")" and similar
+ * markers, so a clean catalogue title still matches a noisy YouTube title (and vice versa).
+ */
+fun titleSimilarity(requested: String, candidate: String): Double = maxOf(
+    LyricsMatcher.similarity(requested, candidate),
+    LyricsMatcher.similarity(LyricsMatcher.cleanTitle(requested), LyricsMatcher.cleanTitle(candidate)),
+)
+
+/**
+ * Whether [candidate] is close enough to the requested song to be trusted. Requires a strong title
+ * match, an artist match when both sides name one, and (when both durations are known) a duration
+ * within [durationToleranceMs]. Token-set similarity is script-agnostic, so Devanagari/Bengali titles
+ * compare consistently; transliterated pairs (Latin vs Devanagari) are not bridged.
+ */
+fun metadataCandidateAccepted(
+    requestedTitle: String,
+    requestedArtist: String,
+    requestedDurationMs: Long?,
+    candidate: MetadataCandidate,
+    minTitleSimilarity: Double = 0.8,
+    minArtistSimilarity: Double = 0.5,
+    durationToleranceMs: Long = 10_000L,
+): Boolean {
+    if (candidate.title.isBlank()) return false
+    if (titleSimilarity(requestedTitle, candidate.title) < minTitleSimilarity) return false
+
+    val wantedArtist = LyricsMatcher.primaryArtist(requestedArtist)
+    val gotArtist = LyricsMatcher.primaryArtist(candidate.artists)
+    if (wantedArtist.isNotBlank() && gotArtist.isNotBlank()) {
+        val artistOk = LyricsMatcher.similarity(wantedArtist, gotArtist) >= minArtistSimilarity ||
+            LyricsMatcher.normalize(candidate.artists).contains(LyricsMatcher.normalize(wantedArtist))
+        if (!artistOk) return false
+    }
+
+    if (requestedDurationMs != null && requestedDurationMs > 0 &&
+        candidate.durationMs != null && candidate.durationMs > 0 &&
+        kotlin.math.abs(requestedDurationMs - candidate.durationMs) > durationToleranceMs
+    ) {
+        return false
+    }
+    return true
 }

@@ -104,6 +104,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -114,6 +115,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -793,7 +795,7 @@ private fun InlineLyricsOverlay(
     val target = remember(trackId, lyrics) { LyricsView(trackId, lyrics) }
     var shown by remember { mutableStateOf(target) }
     LaunchedEffect(target, loading) {
-        val has = target.lyrics?.let { !it.synced.isNullOrEmpty() || !it.plain.isNullOrBlank() } == true
+        val has = !target.lyrics?.synced.isNullOrEmpty()
         if (has || !loading) shown = target
     }
 
@@ -884,11 +886,8 @@ private fun InlineLyricsBody(
     blurAvailable: Boolean,
 ) {
     val lines = lyrics?.synced.orEmpty()
-    val plainLines = remember(lyrics?.plain) {
-        lyrics?.plain?.split('\n')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-    }
     when {
-        loading && lines.isEmpty() && plainLines.isEmpty() -> CenteredLyricMessage("Finding lyrics…", lyricSizeSp)
+        loading && lines.isEmpty() -> CenteredLyricMessage("Finding lyrics…", lyricSizeSp)
         lines.isNotEmpty() -> SyncedLyricList(
             trackId = trackId,
             lines = lines,
@@ -899,13 +898,6 @@ private fun InlineLyricsBody(
             autoScroll = autoScroll,
             interactive = interactive,
             onSeek = onSeek,
-            modeProgress = modeProgress,
-            blurAvailable = blurAvailable,
-        )
-        plainLines.isNotEmpty() -> PlainLyricList(
-            lines = plainLines,
-            sizeSp = lyricSizeSp,
-            interactive = interactive,
             modeProgress = modeProgress,
             blurAvailable = blurAvailable,
         )
@@ -1026,36 +1018,6 @@ private fun SyncedLyricList(
 }
 
 @Composable
-private fun PlainLyricList(
-    lines: List<String>,
-    sizeSp: Int,
-    interactive: Boolean,
-    modeProgress: () -> Float,
-    blurAvailable: Boolean,
-) {
-    LazyColumn(
-        state = rememberLazyListState(),
-        userScrollEnabled = interactive,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 44.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        itemsIndexed(lines) { index, line ->
-            InlineLyricLine(
-                text = line,
-                active = false,
-                distance = 4,
-                staggerIndex = index,
-                sizeSp = sizeSp,
-                blurAvailable = blurAvailable,
-                modeProgress = modeProgress,
-                onClick = null,
-            )
-        }
-    }
-}
-
-@Composable
 private fun CenteredLyricMessage(text: String, sizeSp: Int) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
@@ -1124,6 +1086,11 @@ private fun InlineLyricLine(
         animationSpec = spring(dampingRatio = 0.85f, stiffness = 350f),
         label = "lyricLineScale",
     )
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (active) 0.72f else 0f,
+        animationSpec = spring(dampingRatio = 0.9f, stiffness = 300f),
+        label = "lyricLineGlow",
+    )
     val targetBlur = when {
         active || !blurAvailable -> 0f
         distance <= 1 -> 0f
@@ -1170,6 +1137,13 @@ private fun InlineLyricLine(
         lineHeight = (sizeSp + 4).sp,
         maxLines = 4,
         overflow = TextOverflow.Ellipsis,
+        style = TextStyle(
+            shadow = if (glowAlpha > 0.01f) {
+                Shadow(color = GlassTokens.Ice.copy(alpha = glowAlpha), blurRadius = 20f)
+            } else {
+                null
+            },
+        ),
         modifier = Modifier
             .fillMaxWidth()
             .then(

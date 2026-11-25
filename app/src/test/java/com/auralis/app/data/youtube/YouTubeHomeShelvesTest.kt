@@ -127,6 +127,9 @@ class YouTubeHomeShelvesTest {
     @Test
     fun `signed-in and anonymous feeds never share a cache row`() {
         assertNotEquals(homeCacheKey(true), homeCacheKey(false))
+        // Two different accounts must not read each other's Home or history either.
+        assertNotEquals(homeCacheKey(true, "acctA"), homeCacheKey(true, "acctB"))
+        assertNotEquals(homeCacheKey(true, "acctA"), homeCacheKey(true))
         assertNotEquals(
             playlistCacheKeyFor("VLPLabc", signedIn = true),
             playlistCacheKeyFor("VLPLabc", signedIn = false),

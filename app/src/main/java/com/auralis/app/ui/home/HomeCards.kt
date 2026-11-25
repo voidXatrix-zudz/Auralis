@@ -1,7 +1,6 @@
 package com.auralis.app.ui.home
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +47,7 @@ import com.auralis.app.data.youtube.YtCard
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.ArtworkImage
+import com.auralis.app.ui.theme.AuralisMotion
 
 /** Big discovery card: artwork or a flat AURALIS colour field with a generic geometric shape. */
 @Composable
@@ -66,7 +66,7 @@ fun TopPickCard(
     var artSettled by remember(pick.track?.id, pick.imageUrl) { mutableStateOf(!hasArt) }
     val reveal by animateFloatAsState(
         targetValue = if (artSettled) 1f else 0f,
-        animationSpec = tween(durationMillis = 150),
+        animationSpec = AuralisMotion.tweenCreamy(AuralisMotion.Medium),
         label = "topPickReveal",
     )
     Box(
