@@ -186,17 +186,17 @@ class LyricsRepository(
         val preferredProvider = runCatching {
             providerCacheDao?.get(KIND_CHOICE, track.id, CHOICE_PROVIDER)?.payload
         }.getOrNull()
-        // Plain-text-only sources are excluded: this screen intentionally shows timed lyrics only.
-        val order = (current?.lyricsProviderOrder ?: AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER)
+        // Query all sources; the aggregator ranks word timing above line timing above plain text.
+        val requestedOrder = (current?.lyricsProviderOrder ?: AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER)
             .filter { it in enabled }
             .filterNot { it in skipProviders }
-            .filterNot { providerMap[it]?.plainOnly == true }
-            .sortedWith(compareBy<String> { if (it == preferredProvider) 0 else 1 }
+        val order = requestedOrder.sortedWith(compareBy<String> { if (it == preferredProvider) 0 else 1 }
                 // Start word-capable sources first. Lookups still run concurrently for speed;
                 // selection prefers actual word timing, while cross-provider text agreement can
                 // still reject a word-timed outlier before line-level results are considered.
                 .thenBy { if (providerMap[it]?.supportsWordSync == true) 0 else 1 }
                 .thenBy { if (providerMap[it]?.alwaysLast == true) 1 else 0 }
+                .thenBy { requestedOrder.indexOf(it) }
                 .thenByDescending { providerMap[it]?.priority ?: 100 }
                 .thenByDescending { providerHealth[it]?.successRate ?: 0.5 }
                 .thenBy { providerHealth[it]?.averageLatencyMs ?: Long.MAX_VALUE })
@@ -355,7 +355,6 @@ class LyricsRepository(
             }
         }
         val provider = providers[providerId] ?: return null
-        if (provider.plainOnly) return null
         val started = System.nanoTime()
         for (variant in LyricsMatcher.variants(query.title, query.artist)) {
             val result = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
@@ -665,11 +664,7 @@ class LyricsRepository(
         val outOfSync = LyricsMatcher.isSlowedOrSped(track.title) &&
             base.synced != null && !headerDurationMatches(track, header)
         val parsed = base.copy(confidence = precision.score / 100.0, outOfSync = outOfSync, matchScore = precision.score)
-        if (!hasTiming(parsed)) {
-            if (BuildConfig.DEBUG) AppLog.d(TAG, "Rejected $provider lyrics: no synced timestamps")
-            return null
-        }
-        if (cacheParsed) parsedCache.put(track.id, parsed)
+        if (cacheParsed && hasTiming(parsed)) parsedCache.put(track.id, parsed)
         if (BuildConfig.DEBUG) AppLog.d(TAG, "Accepted $provider lyrics score=${precision.score} sync=${base.sync}")
         return parsed
     }
