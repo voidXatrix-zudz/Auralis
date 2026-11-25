@@ -16,7 +16,9 @@
  *
  * Local modifications (2026): package renamed to com.auralis.app.glass.backdrop;
  * the Kotlin context parameter in LayerRecorder.kt replaced by an explicit
- * parameter; @Language("AGSL") annotations dropped. See NOTICE.
+ * parameter; @Language("AGSL") annotations dropped; the recording pass marks
+ * the backdrop as recording so a nested glass surface skips its own sample.
+ * See NOTICE.
  */
 
 package com.auralis.app.glass.backdrop.backdrops
@@ -73,8 +75,16 @@ private class LayerBackdropNode(
     override val shouldAutoInvalidate: Boolean = false
 
     override fun ContentDrawScope.draw() {
+        // On-screen pass: glass surfaces inside this subtree sample the layer recorded last frame.
         drawContent()
-        recordLayer(this@LayerBackdropNode, backdrop.graphicsLayer) { backdrop.onDraw(this@draw) }
+        // Recording pass: mark the backdrop as recording so any glass surface inside the subtree
+        // skips its sample instead of drawing this same layer into itself (see LayerBackdrop.isRecording).
+        backdrop.isRecording = true
+        try {
+            recordLayer(this@LayerBackdropNode, backdrop.graphicsLayer) { backdrop.onDraw(this@draw) }
+        } finally {
+            backdrop.isRecording = false
+        }
     }
 
     override fun onGloballyPositioned(coordinates: LayoutCoordinates) {

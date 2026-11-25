@@ -32,6 +32,9 @@ The vendored sources live in:
 Each vendored file keeps an Apache-2.0 header that also records the local
 modifications: the package was renamed to `com.auralis.app.glass.backdrop`,
 the Kotlin context parameter in `LayerRecorder.kt` was replaced by an explicit
-parameter (toolchain portability), and the `@Language("AGSL")` annotations were
-dropped. The sources were vendored because the published `io.github.kyant0:backdrop`
+parameter (toolchain portability), the `@Language("AGSL")` annotations were
+dropped, and `LayerBackdrop` gained an `isRecording` guard so a glass surface
+drawn inside the recorded subtree skips its own sample instead of drawing the
+layer into itself (a native renderer crash on the glass Library/Settings
+screens). The sources were vendored because the published `io.github.kyant0:backdrop`
 artifacts require a newer Jetpack Compose than this project targets.

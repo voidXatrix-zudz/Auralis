@@ -26,6 +26,50 @@ modifier (`auralisGlass`), every glass surface reads them. Engine swapped to Kya
 - Do not touch playback, downloads, YouTube/Spotify, Clerk auth, lyrics, menu items/labels/order.
 - Do not add dependencies other than the (already) vendored backdrop engine.
 
+## NEXT
+- Owner: build the debug APK and tap-test Library and profile→Settings (both previously hard-crashed),
+  then the earlier checklist. If a crash ever recurs, read `Settings → About → Logs` / the crash
+  report screen (the global CrashHandler writes `filesDir/crash/crash-*.txt`).
+
+## CRASH FIX — LIBRARY + PROFILE→SETTINGS (done)
+### Symptom
+Home, Explore, Search, mini-player and portrait Now Playing all work; tapping **Library** or the
+**profile picture → Settings** closes the app instantly, every time, with no Java stack trace.
+### Root cause
+The recorded backdrop layer is attached to the page container (`AuralisRoot.kt:604`-`610`), so the
+wallpaper **and every page** are drawn inside it (`STEP 3.2`). Glass surfaces inside those pages
+(`GlassPanel`/`glassSurface` → `Modifier.auralisGlass` → `drawBackdrop`) therefore live *inside the
+very layer they sample*. `LayerBackdropNode.draw()` (`backdrop/backdrops/LayerBackdropModifier.kt`)
+does `drawContent()` and then `recordLayer(...) { onDraw → drawContent() }`; on that second,
+recording pass a nested `drawBackdrop` called `LayerBackdrop.drawBackdrop` → `drawLayer(backdrop.graphicsLayer)`,
+i.e. it drew the layer **into itself while it was being recorded**. On Android that re-entrant
+`GraphicsLayer`/`RenderNode` draw aborts the renderer natively, so the process dies with no Java
+trace — which is exactly why Settings only worked as a *separate* Haze pipeline before.
+### Why only those two screens
+They are the only reachable portrait screens whose glass panels sit inside the recorded layer.
+- Home / Explore / Search: their glass is only the dock/mini-player/Search circle, drawn as
+  **siblings above** the recorded layer (`AuralisRoot.kt:599`-`634` vs the dock later) → safe.
+- Portrait Now Playing: `NowPlayingScreen` picks `BlendNowPlayingScreen` in portrait, and that screen
+  renders **no** glass panels (`GlassNowPlayingScreen` is landscape-only) → safe in portrait.
+- Library (`GlassScreens.kt::GlassLibraryScreen`) and Settings (`SettingsHub.kt::SettingsHubScreen`)
+  render `GlassPanel`/`GlassTrackRows`/`GlassSearchField` **inside** the page container → crash.
+### Fix
+`backdrop/backdrops/LayerBackdrop.kt` + `LayerBackdropModifier.kt`: the recording pass sets
+`LayerBackdrop.isRecording = true` for the duration, and `LayerBackdrop.drawBackdrop` returns early
+while it is set. So the recorded pass bakes only the page content + the surfaces' own tint, and the
+next frame's on-screen pass samples the finished layer normally. No architecture change, no visual
+change on Home (its dock still samples the full page content), and the engine is now safe for glass
+inside its own recorded subtree (also fixes landscape Now Playing / the pushed glass sub-pages).
+Documented as a local modification in the two file headers and `NOTICE`.
+
+### Safety net (STEP 6)
+The global `Thread.setDefaultUncaughtExceptionHandler` already exists: `logging/CrashHandler.kt`,
+installed first in `AuralisApp.attachBaseContext:28`, writing to `filesDir/crash/crash-*.txt` (the
+store the Logs screen and the crash-report screen read). A *Compose composition* try/catch around the
+screens is **not possible**: the Compose compiler rejects `try/catch` around composable calls
+("Try catch is not supported around composable function invocations"), so no per-section boundary was
+added. Note the reported crash is a *native* abort, which no Java handler can catch anyway.
+
 ## STEP 0 — AUDIT (done; consumer matrix + conflicts)
 Engine today = Haze 1.6.7 via `Modifier.glassSurface` / `dockGlassMaterial`; settings live in
 DataStore through `SettingsRepository` (`dock_glass_opacity`, `dock_glass_clarity`, `glass_outlines`,

@@ -16,7 +16,9 @@
  *
  * Local modifications (2026): package renamed to com.auralis.app.glass.backdrop;
  * the Kotlin context parameter in LayerRecorder.kt replaced by an explicit
- * parameter; @Language("AGSL") annotations dropped. See NOTICE.
+ * parameter; @Language("AGSL") annotations dropped; added an `isRecording`
+ * guard so a glass surface inside the recorded subtree never draws the layer
+ * into itself. See NOTICE.
  */
 
 package com.auralis.app.glass.backdrop.backdrops
@@ -62,6 +64,17 @@ class LayerBackdrop internal constructor(
 
     internal var layerCoordinates: LayoutCoordinates? by mutableStateOf(null)
 
+    /**
+     * AURALIS local addition (2026): true while this backdrop's own [graphicsLayer] is being
+     * recorded by its `Modifier.layerBackdrop` node. AURALIS draws glass surfaces *inside* the
+     * recorded page subtree, so without this guard a surface would ask [drawLayer] to draw the very
+     * layer that is mid-`record`, i.e. the layer into itself. On Android that re-entrant
+     * `GraphicsLayer`/`RenderNode` draw aborts the renderer natively (no Java stack trace), which is
+     * why the glass Library and Settings screens closed instantly. While recording we skip the
+     * sample and let the surface draw only its tint; the on-screen pass still samples normally.
+     */
+    internal var isRecording: Boolean = false
+
     private var inverseLayerScope: InverseLayerScope? = null
 
     override fun DrawScope.drawBackdrop(
@@ -69,6 +82,8 @@ class LayerBackdrop internal constructor(
         coordinates: LayoutCoordinates?,
         layerBlock: (GraphicsLayerScope.() -> Unit)?
     ) {
+        // Never sample a layer while it is being recorded (see [isRecording]).
+        if (isRecording) return
         val coordinates = coordinates ?: return
         val layerCoordinates = layerCoordinates ?: return
         withTransform({
