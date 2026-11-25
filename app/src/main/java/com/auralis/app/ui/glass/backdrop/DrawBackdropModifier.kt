@@ -45,6 +45,7 @@ import androidx.compose.ui.node.GlobalPositionAwareModifierNode
 import androidx.compose.ui.node.LayoutModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.ObserverModifierNode
+import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.node.observeReads
 import androidx.compose.ui.node.requireGraphicsContext
 import androidx.compose.ui.platform.InspectorInfo
@@ -203,6 +204,11 @@ private class DrawBackdropElement(
         node.onDrawSurface = onDrawSurface
         node.onDrawFront = onDrawFront
         node.invalidateDrawCache()
+        // The element state above (tint via onDrawSurface, backdrop, shape) changed, so the draw
+        // must be re-issued as well. `invalidateDrawCache()` only re-observes the effect scope and
+        // never invalidates the draw itself, so a rebuilt chain could keep painting the old tint
+        // until some sibling happened to repaint. The shadow/highlight elements already do this.
+        node.invalidateDraw()
     }
 
     override fun InspectorInfo.inspectableProperties() {

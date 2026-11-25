@@ -47,7 +47,14 @@ enum class GlassRole { Dock, Panel }
  */
 @Composable
 fun Modifier.auralisGlass(shape: Shape, role: GlassRole): Modifier {
-    val config = LocalGlassConfig.current
+    // STEP 4.4 - read the transient drag value HERE, in the surface's own recompose scope, so a
+    // slider tick rebuilds the dock / mini-player / Search circle on the same frame as the
+    // Appearance preview. Reading only [LocalGlassConfig] left those surfaces stale: the local is
+    // forwarded by the root provider, but a surface whose parameters did not change was skipped
+    // and never re-ran this modifier. `LocalGlassDrag` is a static local holding one shared object,
+    // so `value` is a plain snapshot read of the app-wide transient config - same instance the root
+    // provider forwards, so the rendered values are identical; only the invalidation path differs.
+    val config = LocalGlassDrag.current.value ?: LocalGlassConfig.current
     val backdrop = LocalAppBackdrop.current
     // STEP 10.3 (debug only): a glass-capable surface drawn in the Glassmorphic theme with no
     // recorded backdrop is silently rendering the tint fallback. Warn once so a missing wiring is

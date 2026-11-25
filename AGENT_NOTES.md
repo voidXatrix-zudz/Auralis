@@ -664,3 +664,48 @@ Legend: FIXED / SKIP(reason). "Glass" = reachable in Glassmorphic theme.
 - Tests: `PlaylistPickerTest` (6 cases: mirror de-duplication, VL-normalisation, local-only rows,
   ordering, duplicate account ids, origin labels). Full suite: 369 tests, 1 pre-existing glass
   failure (`GlassMappingTest`), unrelated.
+
+# LIVE GLASS ON DRAG (2026-11-25)
+
+## TASK
+Make the real dock, mini-player and Search circle repaint in the SAME frame as the Appearance
+"Dock transparency" / "Glass clarity" sliders. The small preview already moved; the real surfaces
+did not.
+
+## ROOT CAUSE (as far as code allows without a device)
+Two independent gaps, both now closed:
+
+1. Invalidation path. `Modifier.auralisGlass` derived its tint from `LocalGlassConfig.current` only.
+   That is forwarded by `GlassSettingsProvider` (a dynamic `compositionLocalOf`), but the dock
+   surfaces (`GlassDock`/`GlassNavPill`/`GlassCircleButton`/`DockMiniPill`) receive `DockGlassStyle`
+   and never the live config, so a drag tick could update the provider without the surface's
+   modifier chain being rebuilt - it kept painting the tint it built on the tick before.
+2. Repaint path. `DrawBackdropElement.update()` refreshed `onDrawSurface`/effects but called only
+   `invalidateDrawCache()`, which re-observes the effect scope and never calls `invalidateDraw()`.
+   A rebuilt backdrop chain could therefore hold the new tint without requesting a draw. The shadow
+   and highlight elements next to it already call `invalidateDraw()`.
+
+## FIX (2 files, no visual change)
+- `ui/glass/AuralisGlass.kt`: `val config = LocalGlassDrag.current.value ?: LocalGlassConfig.current`.
+  `LocalGlassDrag` is a static local holding one shared `GlassDragState`; `.value` is a plain
+  snapshot read, so every glass surface is invalidated directly on each slider tick in its own
+  scope. The value is the same instance the root provider forwards, so rendering is identical:
+  live during the drag, persisted config after the drag clears the override.
+- `ui/glass/backdrop/DrawBackdropModifier.kt`: `DrawBackdropElement.update()` now also calls
+  `node.invalidateDraw()`, so an element swap always repaints (matches ShadowElement/HighlightElement).
+
+## DO
+- Keep the drag override in `GlassDragState` (transient) and persist only on
+  `onValueChangeFinished`; the root clears it once the persisted value catches up.
+- Read the live config where the material is built (`auralisGlass`), not only through the provider.
+
+## DON'T
+- Do not revert these locals to `staticCompositionLocalOf` to force the dock to update; that
+  recomposes the whole provider content (player + page container + dock) on every tick.
+- Do not remove the `LocalAppBackdrop provides null` override around page content (native crash).
+- Do not add a second slider write path or persist per tick.
+
+## NEXT
+- User builds and drags Dock transparency 0 -> 100 -> 0 watching the real dock; leaves mid-drag;
+  restarts and confirms persistence. If the dock still lags, the remaining suspect is the recorded
+  layer composite, not the tint (check the DEBUG diagnostics card first).
