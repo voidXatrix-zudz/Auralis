@@ -69,6 +69,7 @@ import com.auralis.app.data.youtube.toYouTubeLikeEntity as ytSongToLikeEntity
 import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Lyrics
+import com.auralis.app.domain.model.LyricsSettings
 import com.auralis.app.domain.model.LyricsSource
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.Track
@@ -266,6 +267,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val settings: StateFlow<AppSettings> = storedSettings
         .map { it ?: AppSettings() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
+    val lyricsSettings: StateFlow<LyricsSettings> = settings
+        .map { it.lyricsSettings }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, LyricsSettings())
     val sources: StateFlow<List<MusicSource>> = container.sources.observeSources().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val tracks: StateFlow<List<Track>> = container.database.trackDao().observeAll().map { rows -> rows.map { it.toDomain() } }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val favorites: StateFlow<Set<String>> = container.database.favoriteDao().observeIds().map { it.toSet() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
@@ -1139,6 +1143,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun push(destination: Destination) { _nav.update { it.push(destination) } }
     fun back() { _nav.update { it.pop() } }
     fun updateSettings(transform: (AppSettings) -> AppSettings) { viewModelScope.launch { runCatching { container.settings.update(transform) }.onFailure { report("Couldn't save settings", it) } } }
+    fun updateLyricsSettings(transform: (LyricsSettings) -> LyricsSettings) {
+        updateSettings { current -> current.copy(lyricsSettings = transform(current.lyricsSettings)) }
+    }
 
     // ---- Clerk authentication -----------------------------------------------------------------
 

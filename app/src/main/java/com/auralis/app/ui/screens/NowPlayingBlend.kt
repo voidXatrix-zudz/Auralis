@@ -86,7 +86,9 @@ import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
@@ -126,6 +128,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -168,9 +171,16 @@ import androidx.media3.common.Player
 import com.auralis.app.domain.lyrics.LrcParser
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.Lyrics
+import com.auralis.app.domain.model.LyricsSettings
 import com.auralis.app.domain.model.LyricsSource
+import com.auralis.app.domain.model.LyricsStyle
 import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.domain.model.Track
+import com.auralis.app.ui.lyrics.CinematicKineticLyricsView
+import com.auralis.app.ui.lyrics.ClassicLyricsView
+import com.auralis.app.ui.lyrics.LyricsOffsetDialog
+import com.auralis.app.ui.lyrics.LyricsSettingsBottomSheet
+import com.auralis.app.ui.lyrics.rememberLyricsPosition
 import com.auralis.app.data.lyrics.LyricsProviderCatalog
 import com.auralis.app.data.lyrics.LyricsProviderInfo
 import com.auralis.app.data.db.PlaylistEntity
@@ -233,6 +243,7 @@ fun BlendNowPlayingScreen(
     onRetryLyrics: (Track) -> Unit = {},
     onAdjustLyricsOffset: (Int) -> Unit = {},
     onResetLyricsOffset: () -> Unit = {},
+    onUpdateLyricsSettings: (LyricsSettings) -> Unit = {},
     onSeekBy: (Long) -> Unit = {},
     doubleTapSeekSeconds: Int = 10,
     gesturesEnabled: Boolean = true,
@@ -275,6 +286,11 @@ fun BlendNowPlayingScreen(
     var moreOpen by remember { mutableStateOf(false) }
     var playlistPickerOpen by remember { mutableStateOf(false) }
     var lyricsProviderPickerOpen by remember(track.id) { mutableStateOf(false) }
+    var advancedLyricsSheetOpen by rememberSaveable { mutableStateOf(false) }
+    var lyricsOffsetDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var kineticLayoutSeed by remember { mutableLongStateOf(42L) }
+    val lyricsSettings = settings.lyricsSettings
+    val isCinematicLyricsOpen = panel == NowPlayingPanel.LYRICS && lyricsSettings.style == LyricsStyle.CINEMATIC_KINETIC
     val enabledLyricsProviders = remember(settings.lyricsProviderOrder, settings.lyricsProvidersEnabled) {
         val byId = LyricsProviderCatalog.ALL.associateBy(LyricsProviderInfo::id)
         settings.lyricsProviderOrder.distinct().mapNotNull { id ->
@@ -333,6 +349,11 @@ fun BlendNowPlayingScreen(
                 onResetOffset = onResetLyricsOffset,
             )
             else -> {
+                val liveLyricsPos by rememberLyricsPosition(
+                    positionMs = playback.positionMs,
+                    playing = playback.playing,
+                    offsetMs = lyricsOffsetMs,
+                )
                 // The background is recorded into its own layer. Every control below is drawn above
                 // that layer as a sibling, so its glass blurs the background and never samples itself.
                 val playerBackdrop = if (LocalGlassConfig.current.isGlassCapable) {
@@ -350,6 +371,22 @@ fun BlendNowPlayingScreen(
                     } else {
                         NowPlayingBlendBackground(palette = palette, art = visuals.bitmap)
                     }
+                }
+
+                // Cinematic lyrics draw above the recorded background layer, never inside it: the
+                // per-frame camera/starfield work must not re-record the glass backdrop.
+                if (isCinematicLyricsOpen) {
+                    CinematicKineticLyricsView(
+                        lyrics = lyrics,
+                        isLoading = lyricsLoading,
+                        isPlaying = playback.playing,
+                        settings = lyricsSettings,
+                        artPalette = palette,
+                        layoutSeed = kineticLayoutSeed,
+                        onSeekTo = { ts -> onSeek((ts - lyricsOffsetMs).coerceAtLeast(0L)) },
+                        positionProvider = { liveLyricsPos },
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
 
                 CompositionLocalProvider(LocalAppBackdrop provides playerBackdrop) {
@@ -394,33 +431,34 @@ fun BlendNowPlayingScreen(
                                 when (expanded) {
                                 NowPlayingPanel.LYRICS -> Column(Modifier.fillMaxSize()) {
                                     Spacer(Modifier.height(headerHeight))
-                                    LyricsContent(
-                                        lyrics = lyrics,
-                                        loading = lyricsLoading,
-                                        playing = playback.playing,
-                                        positionMs = playback.positionMs,
-                                        durationMs = duration,
-                                        lyricsOffsetMs = lyricsOffsetMs,
-                                        autoScroll = lyricsAutoScroll,
-                                        lyricSizeSp = lyricSizeSp,
-                                        accent = palette.vibrant,
-                                        onSeek = onSeek,
-                                        onTryAnotherSource = { onTryAnotherLyricsSource(track) },
-                                        onRetry = { onRetryLyrics(track) },
-                                        onPaste = { lyricsPasteOpen = true },
-                                        onImport = {
-                                            lyricImporter.launch(
-                                                arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"),
-                                            )
-                                        },
-                                        modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp),
-                                        anchorFraction = 0.27f,
-                                        topPaddingFraction = 0.25f,
-                                        bottomPaddingFraction = 0.65f,
-                                        onDark = true,
-                                        edgeFade = 40.dp,
-                                        reanchorKey = morph > 0.98f,
-                                    )
+                                    when (lyricsSettings.style) {
+                                        LyricsStyle.CLASSIC_FULLSCREEN -> ClassicLyricsView(
+                                            lyrics = lyrics,
+                                            loading = lyricsLoading,
+                                            playing = playback.playing,
+                                            positionMs = playback.positionMs,
+                                            lyricsOffsetMs = lyricsOffsetMs,
+                                            autoScroll = lyricsAutoScroll,
+                                            lyricSizeSp = lyricSizeSp,
+                                            lyricsSettings = lyricsSettings,
+                                            accent = palette.vibrant,
+                                            onSeek = onSeek,
+                                            onTryAnotherSource = { onTryAnotherLyricsSource(track) },
+                                            onRetry = { onRetryLyrics(track) },
+                                            onPaste = { lyricsPasteOpen = true },
+                                            onImport = {
+                                                lyricImporter.launch(
+                                                    arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"),
+                                                )
+                                            },
+                                            modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp),
+                                        )
+                                        LyricsStyle.CINEMATIC_KINETIC -> {
+                                            // Full-bleed CinematicKineticLyricsView draws behind the header,
+                                            // middle band and controls, so the middle only reserves space.
+                                            Spacer(Modifier.weight(1f).fillMaxWidth())
+                                        }
+                                    }
                                 }
                                 NowPlayingPanel.QUEUE -> Column(Modifier.fillMaxSize()) {
                                     Spacer(Modifier.height(headerHeight))
@@ -483,6 +521,11 @@ fun BlendNowPlayingScreen(
                                             onEditMetadata = onEditMetadata,
                                             onAudioInfo = { audioInfoOpen = true },
                                             onOpenFullLyrics = { lyricsOpen = true },
+                                            lyricsStyle = lyricsSettings.style,
+                                            onSelectLyricsStyle = { style ->
+                                                onUpdateLyricsSettings(lyricsSettings.copy(style = style))
+                                            },
+                                            onOpenAdvancedLyricsSettings = { advancedLyricsSheetOpen = true },
                                         )
                                         Spacer(Modifier.height(if (compact) 9.dp else 12.dp))
                                         LyricsPreviewRow(
@@ -532,6 +575,25 @@ fun BlendNowPlayingScreen(
                             onOutputLabelClick = { audioInfoOpen = false; audioOutputOpen = true },
                             compact = compact,
                             collapsedGaps = 1f - morph,
+                            isCinematicLyricsOpen = isCinematicLyricsOpen,
+                        )
+                    }
+
+                    // Cinematic lyrics run full-bleed under the header; this scrim keeps the compact
+                    // header and its controls legible without dimming the whole frame.
+                    if (isCinematicLyricsOpen) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .height(openHeaderHeight)
+                                .background(
+                                    Brush.verticalGradient(
+                                        0f to Color(0x70050508),
+                                        0.75f to Color(0x45050508),
+                                        1f to Color.Transparent,
+                                    ),
+                                ),
                         )
                     }
 
@@ -582,6 +644,11 @@ fun BlendNowPlayingScreen(
                             onEditMetadata = onEditMetadata,
                             onAudioInfo = { audioInfoOpen = true },
                             onOpenFullLyrics = { lyricsOpen = true },
+                            lyricsStyle = lyricsSettings.style,
+                            onSelectLyricsStyle = { style ->
+                                onUpdateLyricsSettings(lyricsSettings.copy(style = style))
+                            },
+                            onOpenAdvancedLyricsSettings = { advancedLyricsSheetOpen = true },
                             modifier = Modifier.align(Alignment.TopStart),
                         )
                     }
@@ -642,6 +709,27 @@ fun BlendNowPlayingScreen(
         onCancel = onCancelSleepTimer,
         onDismiss = { sleepTimerOpen = false },
     )
+
+    if (lyricsOffsetDialogOpen) {
+        LyricsOffsetDialog(
+            currentOffsetMs = lyricsOffsetMs,
+            onAdjustOffset = onAdjustLyricsOffset,
+            onReset = onResetLyricsOffset,
+            onDismiss = { lyricsOffsetDialogOpen = false },
+        )
+    }
+
+    if (advancedLyricsSheetOpen) {
+        LyricsSettingsBottomSheet(
+            settings = lyricsSettings,
+            onUpdateSettings = onUpdateLyricsSettings,
+            onDismissRequest = { advancedLyricsSheetOpen = false },
+            onShuffleLayout = { kineticLayoutSeed = System.nanoTime() },
+            onOpenOffsetControls = { lyricsOffsetDialogOpen = true },
+            onSearchAgain = { onRetryLyrics(track) },
+            currentLyrics = lyrics,
+        )
+    }
 
     if (lyricsPasteOpen) {
         LyricsPasteDialog(
@@ -822,6 +910,9 @@ private fun CompactHeaderRow(
     onEditMetadata: () -> Unit,
     onAudioInfo: () -> Unit,
     onOpenFullLyrics: () -> Unit,
+    lyricsStyle: LyricsStyle,
+    onSelectLyricsStyle: (LyricsStyle) -> Unit,
+    onOpenAdvancedLyricsSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val titleFamily = remember(track.title) { LyricsTypography.familyFor(track.title) }
@@ -898,6 +989,9 @@ private fun CompactHeaderRow(
                 onEditMetadata = onEditMetadata,
                 onAudioInfo = onAudioInfo,
                 onOpenFullLyrics = onOpenFullLyrics,
+                lyricsStyle = lyricsStyle,
+                onSelectLyricsStyle = onSelectLyricsStyle,
+                onOpenAdvancedLyricsSettings = onOpenAdvancedLyricsSettings,
             )
         }
     }
@@ -939,12 +1033,25 @@ private fun BlendControls(
     // 1f while the collapsed layout is showing, 0f once a panel is open. The lower gaps breathe out
     // toward the reference spacing only in the collapsed view, so Lyrics/Queue land exactly as before.
     collapsedGaps: Float,
+    isCinematicLyricsOpen: Boolean = false,
 ) {
     val gapLabelsTransport = if (compact) 8.dp else (14f + 22f * collapsedGaps).dp
     val gapTransportVolume = if (compact) 6.dp else (12f + 34f * collapsedGaps).dp
     val gapVolumeIcons = if (compact) 6.dp else (12f + 12f * collapsedGaps).dp
     val gapIconsLabel = if (compact) 6.dp else (6f + 14f * collapsedGaps).dp
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+    val bottomScrim = if (isCinematicLyricsOpen) {
+        Modifier.background(
+            Brush.verticalGradient(
+                0f to Color.Transparent,
+                0.22f to Color(0x45050508),
+                0.65f to Color(0x66050508),
+                1f to Color(0x80050508),
+            ),
+        )
+    } else {
+        Modifier
+    }
+    Box(Modifier.fillMaxWidth().then(bottomScrim), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -979,9 +1086,13 @@ private fun BlendControls(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 )
             }
-            Spacer(Modifier.height(gapTransportVolume))
-            VolumeRow()
-            Spacer(Modifier.height(gapVolumeIcons))
+            if (!lyricsActive) {
+                Spacer(Modifier.height(gapTransportVolume))
+                VolumeRow()
+                Spacer(Modifier.height(gapVolumeIcons))
+            } else {
+                Spacer(Modifier.height(if (compact) 8.dp else 14.dp))
+            }
             BottomIconRow(
                 lyricsActive = lyricsActive,
                 queueActive = queueActive,
@@ -993,18 +1104,20 @@ private fun BlendControls(
                 onOutput = onOutput,
                 onQueue = onQueueToggle,
             )
-            Spacer(Modifier.height(gapIconsLabel))
-            Text(
-                text = bluetoothOutputName ?: deviceName,
-                color = Color.White.copy(alpha = 0.65f),
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(role = Role.Button, onClick = onOutputLabelClick),
-            )
+            if (!lyricsActive) {
+                Spacer(Modifier.height(gapIconsLabel))
+                Text(
+                    text = bluetoothOutputName ?: deviceName,
+                    color = Color.White.copy(alpha = 0.65f),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(role = Role.Button, onClick = onOutputLabelClick),
+                )
+            }
             Spacer(Modifier.height(10.dp))
         }
     }
@@ -1033,6 +1146,9 @@ private fun TitleBlock(
     onEditMetadata: () -> Unit,
     onAudioInfo: () -> Unit,
     onOpenFullLyrics: () -> Unit,
+    lyricsStyle: LyricsStyle,
+    onSelectLyricsStyle: (LyricsStyle) -> Unit,
+    onOpenAdvancedLyricsSettings: () -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -1089,6 +1205,9 @@ private fun TitleBlock(
                 onEditMetadata = onEditMetadata,
                 onAudioInfo = onAudioInfo,
                 onOpenFullLyrics = onOpenFullLyrics,
+                lyricsStyle = lyricsStyle,
+                onSelectLyricsStyle = onSelectLyricsStyle,
+                onOpenAdvancedLyricsSettings = onOpenAdvancedLyricsSettings,
             )
         }
     }
@@ -1114,6 +1233,9 @@ private fun PlayerMoreMenu(
     onEditMetadata: () -> Unit,
     onAudioInfo: () -> Unit,
     onOpenFullLyrics: () -> Unit,
+    lyricsStyle: LyricsStyle,
+    onSelectLyricsStyle: (LyricsStyle) -> Unit,
+    onOpenAdvancedLyricsSettings: () -> Unit,
 ) {
     val downloads = LocalDownloadActions.current
     val downloaded = (track.remoteId ?: track.id.removePrefix("yt:")) in downloads.downloadedIds
@@ -1189,6 +1311,32 @@ private fun PlayerMoreMenu(
                 text = { Text("Full screen lyrics") },
                 leadingIcon = { Icon(Icons.Rounded.Lyrics, null) },
                 onClick = { onDismiss(); onOpenFullLyrics() },
+            )
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (lyricsStyle == LyricsStyle.CLASSIC_FULLSCREEN) {
+                            "Lyrics mode · Classic (tap for Kinetic)"
+                        } else {
+                            "Lyrics mode · Kinetic (tap for Classic)"
+                        },
+                    )
+                },
+                leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null) },
+                onClick = {
+                    val next = if (lyricsStyle == LyricsStyle.CLASSIC_FULLSCREEN) {
+                        LyricsStyle.CINEMATIC_KINETIC
+                    } else {
+                        LyricsStyle.CLASSIC_FULLSCREEN
+                    }
+                    onSelectLyricsStyle(next)
+                    onDismiss()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Lyrics studio") },
+                leadingIcon = { Icon(Icons.Rounded.Tune, null) },
+                onClick = { onDismiss(); onOpenAdvancedLyricsSettings() },
             )
             // Timing nudge, kept from the full-screen lyrics page so the offset stays adjustable here.
             DropdownMenuItem(

@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
@@ -100,12 +101,15 @@ import com.auralis.app.data.youtube.LiveSyncState
 import com.auralis.app.data.youtube.PlaybackReportOutcome
 import com.auralis.app.data.youtube.PlaybackReportingState
 import com.auralis.app.domain.model.AppSettings
+import com.auralis.app.domain.model.LyricsStyle
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.PerformanceMode
 import com.auralis.app.domain.model.ReplayGainMode
 import com.auralis.app.domain.model.StreamQuality
 import com.auralis.app.domain.model.StreamSourceMode
 import com.auralis.app.domain.model.ThemeMode
+import com.auralis.app.ui.lyrics.LyricsOffsetDialog
+import com.auralis.app.ui.lyrics.LyricsSettingsBottomSheet
 import com.auralis.app.logging.refreshAgeText
 import com.auralis.app.ui.debugCrashTrigger
 import com.auralis.app.ui.components.PlayerBackgroundSelector
@@ -404,12 +408,59 @@ private fun MetadataLyricsSettingsPage(settings: AppSettings, actions: SettingsA
         }
         item { SettingsSectionLabel("Lyrics display") }
         item {
+            var advancedLyricsOpen by remember { mutableStateOf(false) }
+            var offsetDialogOpen by remember { mutableStateOf(false) }
             SettingsGroupCard {
+                SettingsValueRow(
+                    icon = Icons.Rounded.Lyrics,
+                    title = "Lyrics style",
+                    value = if (settings.lyricsSettings.style == LyricsStyle.CLASSIC_FULLSCREEN) "Classic Full-Screen" else "Cinematic Kinetic",
+                    summary = "Tap to switch between Classic and Cinematic Kinetic",
+                    onClick = {
+                        val next = if (settings.lyricsSettings.style == LyricsStyle.CLASSIC_FULLSCREEN) {
+                            LyricsStyle.CINEMATIC_KINETIC
+                        } else {
+                            LyricsStyle.CLASSIC_FULLSCREEN
+                        }
+                        actions.onUpdate { it.copy(lyricsSettings = it.lyricsSettings.copy(style = next)) }
+                    },
+                )
+                SettingsDivider()
+                SettingsValueRow(
+                    icon = Icons.Rounded.Tune,
+                    title = "Advanced Lyrics Settings",
+                    value = settings.lyricsSettings.fontChoice.displayName,
+                    summary = "14 fonts, glow, kinetic motion, colors, display mode",
+                    onClick = { advancedLyricsOpen = true },
+                )
+                SettingsDivider()
                 SliderSetting("Lyric size", "${settings.lyricSizeSp}sp", settings.lyricSizeSp.toFloat(), 14f..40f, 25) { v -> actions.onUpdate { it.copy(lyricSizeSp = v.roundToInt().coerceIn(14, 40)) } }
                 SettingsDivider()
                 SettingsSwitchRow(Icons.Rounded.Lyrics, "Auto-scroll lyrics", "Follow the current line during playback", settings.lyricsAutoScroll) { on -> actions.onUpdate { it.copy(lyricsAutoScroll = on) } }
                 SettingsDivider()
                 SliderSetting("Lyrics offset", if (settings.lyricsOffsetMs > 0) "+${settings.lyricsOffsetMs} ms" else "${settings.lyricsOffsetMs} ms", settings.lyricsOffsetMs.toFloat(), -2000f..2000f, 79) { v -> actions.onUpdate { it.copy(lyricsOffsetMs = (v / 50f).roundToInt() * 50) } }
+            }
+            if (advancedLyricsOpen) {
+                LyricsSettingsBottomSheet(
+                    settings = settings.lyricsSettings,
+                    onUpdateSettings = { updated ->
+                        actions.onUpdate { it.copy(lyricsSettings = updated) }
+                    },
+                    onDismissRequest = { advancedLyricsOpen = false },
+                    onOpenOffsetControls = { offsetDialogOpen = true },
+                )
+            }
+            if (offsetDialogOpen) {
+                LyricsOffsetDialog(
+                    currentOffsetMs = settings.lyricsOffsetMs,
+                    onAdjustOffset = { delta ->
+                        actions.onUpdate {
+                            it.copy(lyricsOffsetMs = (it.lyricsOffsetMs + delta).coerceIn(-5_000, 5_000))
+                        }
+                    },
+                    onReset = { actions.onUpdate { it.copy(lyricsOffsetMs = 0) } },
+                    onDismiss = { offsetDialogOpen = false },
+                )
             }
         }
         item { SettingsSectionLabel("Metadata providers") }

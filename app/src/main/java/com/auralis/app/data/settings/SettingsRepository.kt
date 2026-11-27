@@ -16,6 +16,13 @@ import com.auralis.app.domain.audio.EqGainsCodec
 import com.auralis.app.domain.audio.EqLevelsCodec
 import com.auralis.app.domain.audio.EqPresets
 import com.auralis.app.domain.model.AppSettings
+import com.auralis.app.domain.model.LyricsBaseColor
+import com.auralis.app.domain.model.LyricsDisplayMode
+import com.auralis.app.domain.model.LyricsFontChoice
+import com.auralis.app.domain.model.LyricsGlowPalette
+import com.auralis.app.domain.model.LyricsProviderChoice
+import com.auralis.app.domain.model.LyricsSettings
+import com.auralis.app.domain.model.LyricsStyle
 import com.auralis.app.domain.model.ReplayGainMode
 import com.auralis.app.domain.model.StreamQuality
 import com.auralis.app.domain.model.StreamSourceMode
@@ -134,6 +141,24 @@ private object Keys {
     val resolverItAvg = longPreferencesKey("resolver_innertube_avg_ms")
     val resolverItSuccess = intPreferencesKey("resolver_innertube_success")
     val resolverItFailure = intPreferencesKey("resolver_innertube_failure")
+    // Ported LyricsSettings keys
+    val lyricsStyle = stringPreferencesKey("lyrics_style")
+    val lyricsFontChoice = stringPreferencesKey("lyrics_font_choice")
+    val lyricsFontSizeScale = floatPreferencesKey("lyrics_font_size_scale")
+    val lyricsBaseColor = stringPreferencesKey("lyrics_base_color")
+    val lyricsGlowPalette = stringPreferencesKey("lyrics_glow_palette")
+    val lyricsGlowIntensity = floatPreferencesKey("lyrics_glow_intensity")
+    val lyricsInactiveOpacity = floatPreferencesKey("lyrics_inactive_opacity")
+    val lyricsIsBold = booleanPreferencesKey("lyrics_is_bold")
+    val lyricsCommonZoom = floatPreferencesKey("lyrics_common_zoom")
+    val lyricsSparkleDensity = floatPreferencesKey("lyrics_sparkle_density")
+    val lyricsLrSwing = floatPreferencesKey("lyrics_lr_swing")
+    val lyricsVerticalSpacing = floatPreferencesKey("lyrics_vertical_spacing")
+    val lyricsCameraGlide = floatPreferencesKey("lyrics_camera_glide")
+    val lyricsBounce = floatPreferencesKey("lyrics_bounce")
+    val lyricsRomanizeForeign = booleanPreferencesKey("lyrics_romanize_foreign")
+    val lyricsDisplayMode = stringPreferencesKey("lyrics_display_mode")
+    val lyricsPreferredProvider = stringPreferencesKey("lyrics_preferred_provider")
 }
 
 /**
@@ -337,6 +362,25 @@ class SettingsRepository(private val context: Context) {
             downloadLyricsWithSongs = this[Keys.downloadLyricsWithSongs] ?: d.downloadLyricsWithSongs,
             cacheSizeMb = this[Keys.cacheSizeMb] ?: d.cacheSizeMb,
             welcomeSeen = this[Keys.welcomeSeen] ?: d.welcomeSeen,
+            lyricsSettings = LyricsSettings(
+                style = enumOr(this[Keys.lyricsStyle], d.lyricsSettings.style),
+                commonZoom = (this[Keys.lyricsCommonZoom] ?: d.lyricsSettings.commonZoom).coerceIn(0.60f, 1.80f),
+                sparkleDensity = (this[Keys.lyricsSparkleDensity] ?: d.lyricsSettings.sparkleDensity).coerceIn(0f, 1f),
+                lrSwing = (this[Keys.lyricsLrSwing] ?: d.lyricsSettings.lrSwing).coerceIn(0f, 2f),
+                verticalSpacing = (this[Keys.lyricsVerticalSpacing] ?: d.lyricsSettings.verticalSpacing).coerceIn(0.60f, 2.20f),
+                cameraGlide = (this[Keys.lyricsCameraGlide] ?: d.lyricsSettings.cameraGlide).coerceIn(0.30f, 2.00f),
+                bounce = (this[Keys.lyricsBounce] ?: d.lyricsSettings.bounce).coerceIn(0f, 2.00f),
+                palette = enumOr(this[Keys.lyricsGlowPalette], d.lyricsSettings.palette),
+                preferredProvider = enumOr(this[Keys.lyricsPreferredProvider], d.lyricsSettings.preferredProvider),
+                romanizeForeignLyrics = this[Keys.lyricsRomanizeForeign] ?: d.lyricsSettings.romanizeForeignLyrics,
+                lyricsDisplayMode = enumOr(this[Keys.lyricsDisplayMode], d.lyricsSettings.lyricsDisplayMode),
+                fontChoice = enumOr(this[Keys.lyricsFontChoice], d.lyricsSettings.fontChoice),
+                fontSizeScale = (this[Keys.lyricsFontSizeScale] ?: d.lyricsSettings.fontSizeScale).coerceIn(0.60f, 1.80f),
+                baseColor = enumOr(this[Keys.lyricsBaseColor], d.lyricsSettings.baseColor),
+                glowIntensity = (this[Keys.lyricsGlowIntensity] ?: d.lyricsSettings.glowIntensity).coerceIn(0f, 2.00f),
+                inactiveOpacity = (this[Keys.lyricsInactiveOpacity] ?: d.lyricsSettings.inactiveOpacity).coerceIn(0.10f, 0.90f),
+                isBold = this[Keys.lyricsIsBold] ?: d.lyricsSettings.isBold,
+            ),
         )
     }
 
@@ -412,6 +456,24 @@ class SettingsRepository(private val context: Context) {
         this[Keys.downloadLyricsWithSongs] = s.downloadLyricsWithSongs
         this[Keys.cacheSizeMb] = s.cacheSizeMb
         this[Keys.welcomeSeen] = s.welcomeSeen
+        val ls = s.lyricsSettings
+        this[Keys.lyricsStyle] = ls.style.name
+        this[Keys.lyricsFontChoice] = ls.fontChoice.name
+        this[Keys.lyricsFontSizeScale] = ls.fontSizeScale
+        this[Keys.lyricsBaseColor] = ls.baseColor.name
+        this[Keys.lyricsGlowPalette] = ls.palette.name
+        this[Keys.lyricsGlowIntensity] = ls.glowIntensity
+        this[Keys.lyricsInactiveOpacity] = ls.inactiveOpacity
+        this[Keys.lyricsIsBold] = ls.isBold
+        this[Keys.lyricsCommonZoom] = ls.commonZoom
+        this[Keys.lyricsSparkleDensity] = ls.sparkleDensity
+        this[Keys.lyricsLrSwing] = ls.lrSwing
+        this[Keys.lyricsVerticalSpacing] = ls.verticalSpacing
+        this[Keys.lyricsCameraGlide] = ls.cameraGlide
+        this[Keys.lyricsBounce] = ls.bounce
+        this[Keys.lyricsRomanizeForeign] = ls.romanizeForeignLyrics
+        this[Keys.lyricsDisplayMode] = ls.lyricsDisplayMode.name
+        this[Keys.lyricsPreferredProvider] = ls.preferredProvider.name
     }
 
     /**

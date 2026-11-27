@@ -5,6 +5,9 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.theme.AuralisTheme
 import com.auralis.app.ui.theme.LyricsFontPreloader
+import com.auralis.app.ui.lyrics.LocalLyricsFontFamily
+import com.auralis.app.ui.lyrics.LocalLyricsFontResolver
+import com.auralis.app.ui.lyrics.createAndroidLyricsFontResolver
 import com.auralis.app.ui.components.AuralisBackdrop
 import com.auralis.app.ui.glass.GlassTopBar
 import com.auralis.app.ui.glass.GlassAlertDialog
@@ -525,8 +528,12 @@ fun AuralisRoot(viewModel: AppViewModel) {
             profile = profile,
             performanceReason = performanceReason,
         ) {
+        val lyricsFontResolver = remember { createAndroidLyricsFontResolver() }
+        val activeLyricsFont = lyricsFontResolver(settings.lyricsSettings.fontChoice)
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+            LocalLyricsFontResolver provides lyricsFontResolver,
+            LocalLyricsFontFamily provides activeLyricsFont,
             LocalGlassDrag provides glassDrag,
             LocalGlassOverlay provides glassOverlay,
             LocalGlassPortal provides if (glassLayerEnabled) glassPortal else null,
@@ -575,6 +582,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onRetryLyrics = viewModel::retryLyrics,
                     onAdjustLyricsOffset = { delta -> currentTrack?.let { viewModel.adjustTrackLyricsOffset(it, delta) } },
                     onResetLyricsOffset = { currentTrack?.let { viewModel.resetTrackLyricsOffset(it) } },
+                    onUpdateLyricsSettings = { updated -> viewModel.updateLyricsSettings { updated } },
                     onBack = { nowPlayingOpen = false },
                     onPlayPause = { if (showingRestored) viewModel.resumeRestored() else viewModel.togglePlayback() },
                     onPrevious = { if (showingRestored) viewModel.resumeRestored(-1) else viewModel.previous() },

@@ -125,6 +125,8 @@ data class AppSettings(
     val cacheSizeMb: Int = 512,
     /** True once the one-time first-run welcome screen has been dismissed (shown before the login gate). */
     val welcomeSeen: Boolean = false,
+    /** Ported Node Player lyrics style, font, kinetic, and glow customization settings. */
+    val lyricsSettings: LyricsSettings = LyricsSettings(),
 ) {
     companion object {
         /**
