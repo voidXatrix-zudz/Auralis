@@ -437,7 +437,7 @@ internal fun SourceChip(lyrics: Lyrics?) {
         LyricsSource.LRC -> "LRC file"
         LyricsSource.LRCLIB -> lyrics.provider ?: "Online"
     }
-    // Part J: the chip shows the online provider plus a match-confidence percentage when known.
+    // the chip shows the online provider plus a match-confidence percentage when known.
     val confidence = lyrics.confidence
     val label = if (source == LyricsSource.LRCLIB && confidence != null) {
         "$base · ${(confidence * 100).toInt()}%"

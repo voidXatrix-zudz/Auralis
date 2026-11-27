@@ -62,7 +62,7 @@ interface MetadataProvider {
     suspend fun search(title: String, artist: String, album: String?, durationMs: Long?): List<MetadataCandidate>
 }
 
-/** Names + descriptions for the Settings list (Part H). */
+/** Names + descriptions for the Settings list. */
 data class MetadataProviderInfo(val id: String, val label: String, val description: String)
 
 object MetadataProviderCatalog {

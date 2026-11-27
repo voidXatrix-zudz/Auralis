@@ -34,7 +34,7 @@ import com.auralis.app.data.lyrics.LyricsMatcher
 import com.auralis.app.ui.performance.LocalPerformanceProfile
 
 /**
- * Resolves a circular artist photo (Part L). Provided once at the root so any screen can show an
+ * Resolves a circular artist photo. Provided once at the root so any screen can show an
  * artist image without threading a ViewModel through the composition.
  */
 fun interface ArtistImageResolver {

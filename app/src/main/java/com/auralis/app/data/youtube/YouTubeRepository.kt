@@ -152,9 +152,9 @@ class YouTubeRepository(
         private set
 
     /**
-     * A short, non-reversible tag for the signed-in account, or "" when signed out. It is part of the
-     * cache keys so one account's Home/history can never be shown to another (a bug that survived a
-     * plain signed/anon split). Only the SAPI SID is hashed, never stored in the clear.
+     * A short, non-reversible tag for the signed-in account, or "" when signed out. It is part of
+     * account-scoped cache keys so one account's Home/library data cannot appear under another
+     * account. Only the SAPI SID is hashed, never stored in the clear.
      */
     private fun accountCacheKey(): String {
         val auth = authStore?.snapshot() ?: return ""
@@ -316,7 +316,7 @@ class YouTubeRepository(
         }
     }
 
-    /** The artist page header image (Part L); session-cached, null when the page has none. */
+    /** The artist page header image; session-cached, null when the page has none. */
     suspend fun artistImage(browseId: String): String? {
         artistImageCache.get(browseId)?.let { return it.ifBlank { null } }
         val image = once("artistimage:$browseId") { innerTube.artistImage(browseId).orEmpty() }
@@ -439,7 +439,7 @@ class YouTubeRepository(
         scope.launch { runCatching { resolver.resolve(videoId, quality) } }
     }
 
-    // ---- Stage 1B: YouTube Music account / home / likes --------------------------------
+    // ---- YouTube Music account / home / likes --------------------------------
 
     /**
      * Last feed is served until [invalidateHome]; signed-in state changes invalidate it.
@@ -542,15 +542,20 @@ class YouTubeRepository(
      * Saved playlists (`FEmusic_liked_playlists`, landing page as fallback). Errors are returned as
      * [YouTubeLoadResult.Failure] so the Library can show a retry row instead of "no playlists".
      */
-    suspend fun likedPlaylists(force: Boolean = false): YouTubeLoadResult<List<YtPlaylist>> = cachedResult(
-        key = playlistCacheKey(),
-        serializer = YtPlaylist.serializer(),
-        ttlMs = LIBRARY_TTL_MS,
-        force = force,
-    ) { innerTube.likedPlaylists() }
+    suspend fun likedPlaylists(force: Boolean = false): YouTubeLoadResult<List<YtPlaylist>> {
+        val key = playlistCacheKey()
+        return once("liked-playlists:$key:force=$force") {
+            cachedResult(
+                key = key,
+                serializer = YtPlaylist.serializer(),
+                ttlMs = LIBRARY_TTL_MS,
+                force = force,
+            ) { innerTube.likedPlaylists() }
+        }
+    }
 
     /**
-     * The last successfully stored playlist list for the current session state, ignoring its TTL.
+     * The last successfully stored playlist list for the current account, ignoring its TTL.
      * Read once at startup so the Library paints from Room before the first network call.
      */
     suspend fun cachedPlaylists(): List<YtPlaylist>? {
@@ -562,18 +567,18 @@ class YouTubeRepository(
     }
 
     private fun playlistCacheKey(): String =
-        "yt_liked_playlists:${if (signedIn) "signed" else "anon"}"
+        "yt_liked_playlists:${if (signedIn) "signed" else "anon"}${accountSuffix()}"
 
     /** Saved albums and singles (`FEmusic_liked_albums`). */
     suspend fun likedAlbums(): List<YtAlbum> = cachedList(
-        "yt_liked_albums:${if (signedIn) "signed" else "anon"}",
+        "yt_liked_albums:${if (signedIn) "signed" else "anon"}${accountSuffix()}",
         YtAlbum.serializer(),
         LIBRARY_TTL_MS,
     ) { innerTube.likedAlbums() }
 
     /** Library/subscribed artists. */
     suspend fun likedArtists(): List<YtArtist> = cachedList(
-        "yt_liked_artists:${if (signedIn) "signed" else "anon"}",
+        "yt_liked_artists:${if (signedIn) "signed" else "anon"}${accountSuffix()}",
         YtArtist.serializer(),
         LIBRARY_TTL_MS,
     ) { innerTube.likedArtists() }
@@ -595,7 +600,7 @@ class YouTubeRepository(
      */
     suspend fun historySongsResult(): YouTubeLoadResult<List<YtSong>> = when (
         val result = cachedResult(
-            key = "yt_history:${if (signedIn) "signed" else "anon"}",
+            key = "yt_history:${if (signedIn) "signed" else "anon"}${accountSuffix()}",
             serializer = YtSong.serializer(),
             ttlMs = HISTORY_TTL_MS,
         ) { innerTube.historySongsResult() }
@@ -637,7 +642,7 @@ class YouTubeRepository(
     /** Songs saved to the account library (`FEmusic_liked_videos`), filtered on read. */
     suspend fun librarySongs(): List<YtSong> = musicOnly(
         cachedList(
-            "yt_library_songs:${if (signedIn) "signed" else "anon"}",
+            "yt_library_songs:${if (signedIn) "signed" else "anon"}${accountSuffix()}",
             YtSong.serializer(),
             LIBRARY_TTL_MS,
         ) { innerTube.librarySongs() },
@@ -645,9 +650,9 @@ class YouTubeRepository(
     )
 
     /**
-     * Songs of one playlist/album in `VL<id>` form, cached per browse id *and* session state
-     * (`yt_playlist:<id>:signed`). The raw response is cached; the songs-only rule is applied when
-     * the list is read, so switching the filter immediately changes what the screen shows.
+     * Songs of one playlist/album in `VL<id>` form, cached per browse id and account. The raw
+     * response is cached; the songs-only rule is applied when the list is read, so switching the
+     * filter immediately changes what the screen shows.
      */
     suspend fun playlistSongs(playlistId: String, force: Boolean = false): YouTubeLoadResult<List<YtSong>> {
         val browseId = normalizePlaylistBrowseId(playlistId)
@@ -690,7 +695,8 @@ class YouTubeRepository(
         return musicOnly(decodeSongs(entry.payload).orEmpty(), "Playlist (cached)")
     }
 
-    private fun playlistCacheKey(browseId: String): String = playlistCacheKeyFor(browseId, signedIn)
+    private fun playlistCacheKey(browseId: String): String =
+        playlistCacheKeyFor(browseId, signedIn) + accountSuffix()
 
     private fun decodeSongs(payload: String): List<YtSong>? = runCatching {
         cacheJson.decodeFromString(ListSerializer(YtSong.serializer()), payload)
@@ -886,14 +892,17 @@ class YouTubeRepository(
     suspend fun libraryPlaylists(): YouTubeLoadResult<List<YtPlaylist>> = likedPlaylists()
 
     /** Account name/avatar plus the session check the library sequence depends on. */
-    suspend fun accountMenu(): YouTubeLoadResult<Pair<String, String>> = innerTube.accountMenu()
+    suspend fun accountMenu(): YouTubeLoadResult<Pair<String, String>> =
+        once("account-menu:${if (signedIn) "signed" else "anon"}${accountSuffix()}") {
+            innerTube.accountMenu()
+        }
 
     /** Settings diagnostics: account menu, saved playlists and liked songs, in order. */
     suspend fun connectionTest(): List<YouTubeEndpointCheck> = innerTube.connectionTest()
 
     suspend fun setLiked(videoId: String, liked: Boolean): Boolean = innerTube.setLiked(videoId, liked)
 
-    // ---- Account playlist mutations + playback history (Part E) -----------------------------
+    // ---- Account playlist mutations + playback history -----------------------------
 
     suspend fun createPlaylist(title: String): String? = innerTube.createPlaylist(title)
 

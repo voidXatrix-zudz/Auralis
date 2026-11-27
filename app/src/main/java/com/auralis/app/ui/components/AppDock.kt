@@ -39,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -74,6 +75,7 @@ import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.metadata.displayTitle
 import com.auralis.app.ui.glass.DockGlassStyle
 import com.auralis.app.ui.glass.LocalDockGlassStyle
+import com.auralis.app.ui.glass.LocalDockTransparencyScale
 import com.auralis.app.ui.glass.dockGlassMaterial
 import com.auralis.app.ui.glass.glassBubble
 import com.auralis.app.ui.glass.rememberReduceMotion
@@ -941,7 +943,7 @@ private fun Modifier.dockControlCircle(
 )
 
 // ---------------------------------------------------------------------------------------------
-// Glassmorphic (Mornye-style) dock. Normal theme keeps the shared legacy layout above untouched.
+// Glassmorphic  dock. Normal theme keeps the shared legacy layout above untouched.
 // ---------------------------------------------------------------------------------------------
 
 private val DockPink = GlassTokens.Cream
@@ -997,6 +999,7 @@ private fun GlassDock(
     val activeTab = selected ?: Tab.HOME
     val showsMini = hasTrack && track != null
 
+    CompositionLocalProvider(LocalDockTransparencyScale provides p) {
     Layout(
         modifier = modifier
             .fillMaxWidth()
@@ -1088,6 +1091,7 @@ private fun GlassDock(
             activePlaceable.placeRelative(activeX, circleY)
             miniPlaceable.placeRelative(miniX, miniY)
         }
+    }
     }
 }
 

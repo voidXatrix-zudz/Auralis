@@ -26,14 +26,14 @@ class UrlExpiredException(val code: Int) : RuntimeException("Stream URL expired 
 /** How a byte range is requested: a `Range` header, or a `&range=start-end` query parameter. */
 enum class RangeMode { HEADER, PARAM }
 
-/** What a completed download produced (Part P). */
+/** What a completed download produced. */
 data class DownloadOutcome(val bytes: Long, val elapsedMs: Long, val chunked: Boolean)
 
 /** A range request the host honoured, plus the total size learned from it. */
 private data class RangeProbe(val mode: RangeMode, val total: Long)
 
 /**
- * Fast ranged downloader (Part P).
+ * Fast ranged downloader.
  *
  * A single long YouTube request is throttled to a crawl, so this splits the file into ~1 MB pieces
  * and fetches up to [parallelism] at once over the shared, connection-pooled OkHttp client

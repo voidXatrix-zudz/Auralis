@@ -236,7 +236,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
     val profile by viewModel.performanceProfile.collectAsStateWithLifecycle()
     val performanceMode by viewModel.performanceMode.collectAsStateWithLifecycle()
     val performanceReason by viewModel.performanceReason.collectAsStateWithLifecycle()
-    // STEP 2/3: the ONE glass config. The repository combines the stored transparency/clarity/
+    // the ONE glass config. The repository combines the stored transparency/clarity/
     // outlines with the resolved performance tier; provided below via LocalGlassConfig.
     val glassConfig by viewModel.glassConfig.collectAsStateWithLifecycle()
     val deviceConditions by viewModel.performanceConditions.collectAsStateWithLifecycle()
@@ -332,12 +332,12 @@ fun AuralisRoot(viewModel: AppViewModel) {
 
     // Shared dock state + the backdrop window every glass surface blurs (glass only, Android 12+).
     val dockScroll = rememberDockScrollState()
-    // STEP 3: the ONE recorded layer the dock / mini-player / Search circle sample. It records an
-    // opaque canvas first, then the wallpaper + every page (STEP 3.2). Only Glassmorphic on API 31+
+    // the ONE recorded layer the dock / mini-player / Search circle sample. It records an
+    // opaque canvas first, then the wallpaper + every page (). Only Glassmorphic on API 31+
     // attaches it (`glassLayerEnabled`); Normal records nothing and pays nothing.
     val appBackdrop = rememberLayerBackdrop(onDraw = OpaqueLayerOnDraw)
     val glassLayerEnabled = settings.themeStyle == ThemeStyle.GLASSMORPHIC && glassConfig.isGlassCapable
-    // STEP 10.2: log once at launch whether the backdrop layer is recording (and that it records an
+    // log once at launch whether the backdrop layer is recording (and that it records an
     // opaque canvas first), so the Logs screen can explain a sharp-text-through-glass report.
     LaunchedEffect(glassLayerEnabled) {
         AppLog.i(
@@ -509,7 +509,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             effectiveProfile.isLow -> 0.6f
             else -> 1f
         }
-        // STEP 3: the recorded layer is attached in exactly two mutually exclusive places (the
+        // the recorded layer is attached in exactly two mutually exclusive places (the
         // page container and the full player). It is recorded whenever the theme is Glassmorphic
         // and the device can blur (Android 12+); the Normal theme records nothing and pays nothing.
         GlassSettingsProvider(
@@ -544,9 +544,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 onHidden = viewModel::releaseMetadata,
             )
             if (nowPlayingOpen && currentTrack != null) {
-                // CRASH FIX: glass inside a recorded layer must never sample the layer that records
-                // it (a RenderNode cycle aborts natively). The player records its own content, so its
-                // subtree gets a null backdrop and its surfaces fall back to the plain tint.
+                // The player is recorded into this backdrop. Its own glass surfaces must not sample
+                // the layer they are recording; the dock remains outside and can sample it safely.
                 CompositionLocalProvider(LocalAppBackdrop provides null) {
                 NowPlayingScreen(
                     track = currentTrack,
@@ -599,7 +598,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                     onOpenBackup = { nowPlayingOpen = false; viewModel.push(Destination.Backup) },
                     onEditMetadata = { nowPlayingOpen = false; viewModel.push(Destination.MetadataEditor(currentTrack.id)) },
                     onOpenAudioAnalysis = { id -> nowPlayingOpen = false; viewModel.push(Destination.AudioAnalysis(id)) },
-                    // STEP 3: the full player records its own content into the SAME layer as the
+                    // the full player records its own content into the SAME layer as the
                     // pages (only one of the two composes), so its own glass samples the player
                     // background instead of falling back to a flat tint.
                     modifier = Modifier
@@ -611,9 +610,9 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 } // end CompositionLocalProvider(LocalAppBackdrop = null)
             } else {
                 Box(Modifier.fillMaxSize().nestedScroll(dockScroll)) {
-                    // STEP 3: the wallpaper and every page are recorded into ONE layer carrying an
-                    // opaque canvas (spec 3.2). It is attached to the page container only; the dock,
-                    // mini-player and Search circle are drawn above it as siblings (spec 3.4), so
+                    // the wallpaper and every page are recorded into ONE layer carrying an
+                    // opaque canvas . It is attached to the page container only; the dock,
+                    // mini-player and Search circle are drawn above it as siblings , so
                     // they sample the finished frame instead of themselves.
                     Box(
                         Modifier
@@ -622,13 +621,13 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                 if (glassLayerEnabled) Modifier.layerBackdrop(appBackdrop) else Modifier,
                             ),
                     ) {
-                        // CRASH FIX: glass inside a recorded page must never sample the layer that
-                        // records it (a RenderNode cycle aborts natively). Only the dock /
-                        // mini-player / Search siblings, drawn above this layer, keep the backdrop.
+                        // Page surfaces are part of the layer being recorded. Letting them sample
+                        // that same layer can re-enter its RenderNode and crash the renderer.
+                        // Dock siblings remain outside this provider and keep the live backdrop.
                         CompositionLocalProvider(LocalAppBackdrop provides null) {
                         // App-wide chosen player background (Glass theme only): drawn once behind
                         // every pushed screen and tab, fixed while content scrolls, INSIDE the
-                        // recorded layer so glass samples the wallpaper too (spec 3.3).
+                        // recorded layer so glass samples the wallpaper too .
                         if (settings.themeStyle == ThemeStyle.GLASSMORPHIC &&
                             settings.playerBackground != PlayerBackground.NONE
                         ) {
@@ -1105,7 +1104,7 @@ private fun GlassSettingsProvider(
     val dockGlass = remember(settings, glass, profile, performanceReason) {
         resolveDockGlass(settings, glass, profile, performanceReason)
     }
-    // The ONE blur decision for every glass surface (STEP 2.6: blur is a fixed constant, so the
+    // The ONE blur decision for every glass surface (blur is a fixed constant, so the
     // removed "Blur strength" slider no longer participates).
     val blurAllowed = GlassBlurPolicy.allowed(settings)
     CompositionLocalProvider(
@@ -1117,7 +1116,7 @@ private fun GlassSettingsProvider(
     )
 }
 
-/** One-time post-sign-in prompt offering the YouTube Music hand-off (Part D). */
+/** One-time post-sign-in prompt offering the YouTube Music hand-off. */
 @Composable
 private fun ConnectYouTubePrompt(
     email: String?,

@@ -48,4 +48,14 @@ class LyricsProviderOrderTest {
         val enabled = AppSettings().lyricsProvidersEnabled
         assertTrue(enabled.containsAll(listOf("LRCLIB", "LrcRed", "BetterLyrics", "KuGou", "YouTubeMusic")))
     }
+
+    @Test
+    fun `the default order starts with the owner's eleven providers and only those are enabled`() {
+        val eleven = listOf(
+            "LrcRed", "BiniLyrics", "BetterLyrics", "BetterLyricsPortato", "LyricsPlus", "Unison",
+            "KuGou", "LRCLIB", "YouTubeMusic", "YouTubeCaptions", "SimpMusic",
+        )
+        assertEquals(eleven, AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER.take(eleven.size))
+        assertEquals(eleven.toSet(), AppSettings().lyricsProvidersEnabled)
+    }
 }

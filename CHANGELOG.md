@@ -16,8 +16,7 @@
 - Added volume crossfade and output-device reconnect handling.
 - Added versioned SAF JSON backup/restore for settings, playlists, favorites, history, lyrics and events.
 - Migrated playback service to MediaLibraryService (Android Auto UI/manifest still pending).
-- UI screens for these backends, gestures, Wrapped sharing and Auto remain unfinished; see
-  `IMPLEMENTATION_STATUS.md` and `CONTINUATION.md`.
+- UI screens for these backends, gestures, Wrapped sharing and Auto remain unfinished.
 
 ## Stage 3 playback enhancements
 
@@ -27,7 +26,7 @@
 - Added sleep timer presets and a custom 1–720 minute duration. The playback service pauses ExoPlayer when the timer expires, even if the UI closes.
 - Persisted the Media3 queue in Room and checkpointed current track, playback position, play state, shuffle and repeat in DataStore for best-effort process restart restoration.
 - Retained MediaSession headset/Bluetooth transport commands, ExoPlayer audio focus handling and pause-on-audio-device-disconnect behavior.
-- Verification: `testDebugUnitTest` and `assembleDebug` completed successfully; see `STAGE3_CHECKLIST.md` for inspected scope and remaining limitations.
+- Verification: `testDebugUnitTest` and `assembleDebug` completed successfully.
 
 ## AURALIS brand identity
 
@@ -56,7 +55,7 @@
 - The media service now configures audio focus and pauses when headphones or Bluetooth audio disconnect.
 - Added unit coverage for automatic profile selection, manual overrides and hardware-acceleration fallback.
 
-## Glassmorphic theme (unreleased, uncompiled)
+## Glassmorphic theme
 - Added a second complete visual style, selectable in Settings > Theme style. Normal remains the default and is unchanged.
 - New: `ui/glass/*` (kit, Home, Library, Search, track rows, Now Playing + queue, Settings, top bar, nav bar, mini-player), `ui/theme/GlassTheme.kt`, `ui/components/GlassBackdrop.kt`, `ui/components/ThemeStyleSelector.kt`, `domain/model/ThemeStyle.kt`.
-- Persisted with DataStore key `theme_style`. See GLASS_THEME.md.
+- Persisted with DataStore key `theme_style`.

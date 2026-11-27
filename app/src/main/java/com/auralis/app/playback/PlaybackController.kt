@@ -380,7 +380,7 @@ class PlaybackController(private val context: Context) {
     }
 
     /**
-     * Replaces a queued item's artwork once better square art is resolved (Part J), so the
+     * Replaces a queued item's artwork once better square art is resolved, so the
      * notification and lock screen show the same image as the app.
      */
     fun updateArtwork(trackId: String, artworkUrl: String) {

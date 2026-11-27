@@ -42,7 +42,7 @@ import com.auralis.app.logging.SessionLogSanitizer
 import com.auralis.app.logging.YouTubeSessionLog
 import org.json.JSONObject
 
-/** The exact Google account chooser the prompt requires; no OAuth, no external browser. */
+/** Google account chooser loaded in the in-app WebView; no OAuth, no external browser. */
 private const val LOGIN_URL =
     "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&prompt=select_account" +
         "&continue=https%3A%2F%2Fmusic.youtube.com%2F"

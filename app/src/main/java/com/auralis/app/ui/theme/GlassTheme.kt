@@ -98,13 +98,13 @@ object GlassTokens {
     val RadiusXl = 32.dp
 
     // ---------------------------------------------------------------------------------------------
-    // STEP 2.4 - fixed glass-effect constants. Blur is NOT a user setting: these are the only blur,
+    // fixed glass-effect constants. Blur is NOT a user setting: these are the only blur,
     // lens, saturation, rim and resolution numbers in the project. No other file may hardcode one.
     // ---------------------------------------------------------------------------------------------
 
     /** Backdrop blur radius per resolved performance tier, in dp. */
-    const val BLUR_DP_HIGH = 10f
-    const val BLUR_DP_MEDIUM = 10f
+    const val BLUR_DP_HIGH = 8f
+    const val BLUR_DP_MEDIUM = 8f
     const val BLUR_DP_LOW = 16f
 
     /** AGSL lens geometry (dp). */
@@ -112,7 +112,7 @@ object GlassTokens {
     const val LENS_AMOUNT_DP = 24f
 
     /** Backdrop saturation boost applied by the lens/colour controls. */
-    const val SATURATION = 1.5f
+    const val SATURATION = 1.3f
 
     /** Effect-resolution scale per tier (1.0 = full resolution). */
     const val EFFECT_RESOLUTION_HIGH = 0.5f
@@ -130,10 +130,13 @@ object GlassTokens {
     /** Nested control inside an already-glassed pill (no second backdrop sample). */
     const val NESTED_BUBBLE_ALPHA = 0.10f
 
+    /** Additional dock tint reduction so the sampled backdrop stays visible under dock surfaces. */
+    const val DOCK_TINT_ALPHA_SCALE = 0.5f
+
     /**
      * Dock tint: Midnight Indigo lifted toward Vanilla Cream (a very light cream touch over a dark
      * indigo base). Deliberately dark so the dock's cream icons/labels stay readable at every
-     * transparency, including an opaque dock (see AGENT_NOTES: spec said "very light"; the safest
+     * transparency, including an opaque dock (
      * readable option is kept and the deviation is recorded).
      */
     val TINT_COLOR_DOCK = blend(Cream, Indigo, 0.06f)

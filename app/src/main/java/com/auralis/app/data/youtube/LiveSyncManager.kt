@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -62,6 +63,7 @@ class LiveSyncManager(
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val syncLock = Mutex()
+    private val playlistStateLock = Any()
     private val polling = AtomicBoolean(false)
     private var loopJob: Job? = null
     private var settingsJob: Job? = null
@@ -89,6 +91,7 @@ class LiveSyncManager(
     @Volatile private var online = true
     @Volatile private var lowPerformance = false
     @Volatile private var failureStreak = 0
+    @Volatile private var playlistAccountGeneration = 0L
     @Volatile private var lastLikedHash = 0
     private var lastTopIds: Set<String> = emptySet()
     private var lastPlaylistSignature: String? = null
@@ -135,6 +138,15 @@ class LiveSyncManager(
         settingsJob = null
         cancelWorker()
         _ui.value = _ui.value.copy(state = LiveSyncState.Disabled)
+    }
+
+    /** Invalidates the previous account's snapshot so an old poll cannot restore it. */
+    fun onYouTubeAccountChanged() {
+        synchronized(playlistStateLock) {
+            playlistAccountGeneration++
+            lastPlaylistSignature = null
+            _accountPlaylists.value = emptyList()
+        }
     }
 
     /** Called when the Activity is resumed: poll at once and resume the foreground lanes. */
@@ -297,23 +309,36 @@ class LiveSyncManager(
 
     private suspend fun reconcilePlaylists() {
         if (!ready()) return
-        val result = runCatching { youtube.likedPlaylists(force = true) }
+        val generation = playlistAccountGeneration
+        val result = try {
+            Result.success(youtube.likedPlaylists(force = true))
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
         result.onSuccess { outcome ->
-            when (outcome) {
-                is YouTubeLoadResult.Failure -> handleFailure(outcome.code)
-                is YouTubeLoadResult.Success -> {
-                    val list = outcome.value
-                    val signature = list.joinToString("|") { "${it.id}:${it.title}:${it.trackCount}:${it.thumbnailUrl}" }
-                    if (signature != lastPlaylistSignature) {
-                        lastPlaylistSignature = signature
-                        _accountPlaylists.value = list
+            synchronized(playlistStateLock) {
+                if (generation != playlistAccountGeneration) return@onSuccess
+                when (outcome) {
+                    is YouTubeLoadResult.Failure -> handleFailure(outcome.code)
+                    is YouTubeLoadResult.Success -> {
+                        val list = outcome.value
+                        val signature = list.joinToString("|") { "${it.id}:${it.title}:${it.trackCount}:${it.thumbnailUrl}" }
+                        if (signature != lastPlaylistSignature) {
+                            lastPlaylistSignature = signature
+                            _accountPlaylists.value = list
+                        }
+                        onSuccess()
                     }
-                    onSuccess()
                 }
             }
         }.onFailure { error ->
-            AppLog.w(TAG, "Playlist refresh failed", error)
-            onFailure()
+            synchronized(playlistStateLock) {
+                if (generation != playlistAccountGeneration) return@onFailure
+                AppLog.w(TAG, "Playlist refresh failed", error)
+                onFailure()
+            }
         }
     }
 

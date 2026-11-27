@@ -334,9 +334,8 @@ fun GlassNowPlayingScreen(
                 )
             }
             else -> {
-                // STEP 3: the chosen player background is drawn INSIDE the full player's recorded
-                // layer (the screen root carries Modifier.layerBackdrop), so every glass panel over
-                // it samples a real blurred backdrop with no separate capture state.
+                // the chosen player background is drawn inside the player's recorded layer. The
+                // player surfaces use the safe tint fallback while the dock samples this backdrop.
                 if (settings.playerBackground != PlayerBackground.NONE) {
                     PlayerBackgroundImage(settings.playerBackground, Modifier.fillMaxSize())
                 }
@@ -498,7 +497,7 @@ fun GlassNowPlayingScreen(
                                                         lyricImporter.launch(arrayOf("text/plain", "application/octet-stream", "application/x-subrip", "*/*"))
                                                     },
                                                 )
-                                                // Per-song timing nudge (Part J).
+                                                // Per-song timing nudge.
                                                 DropdownMenuItem(
                                                     text = { Text("Lyrics earlier by 0.5s") },
                                                     leadingIcon = { Icon(Icons.Rounded.Remove, null) },

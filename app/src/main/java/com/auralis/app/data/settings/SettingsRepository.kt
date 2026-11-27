@@ -41,12 +41,6 @@ internal fun mergeProviderOrder(stored: List<String>): List<String> {
     return kept + known.filter { it !in kept }
 }
 
-private val LEGACY_DEFAULT_LYRICS_ORDER = listOf(
-    "LrcRed", "BiniLyrics", "BetterLyrics", "BetterLyricsPortato", "LyricsPlus", "Unison",
-    "KuGou", "LRCLIB", "YouTubeMusic", "YouTubeCaptions", "SimpMusic", "NetEase",
-    "Musixmatch", "Genius", "PaxSenix", "PaxSenixSpotify", "PaxSenixMusixmatch", "LyricsOvh",
-)
-
 /**
  * One-time migration for the renamed "Dock opacity" control. The old "Dock transparency" direction is
  * inverted (transparency 30% == opacity 70%) and the result is clamped to the 0..100 range.
@@ -111,6 +105,8 @@ private object Keys {
     val lyricsProviderOrder = stringPreferencesKey("lyrics_provider_order")
     val lyricsProvidersEnabled = stringPreferencesKey("lyrics_providers_enabled")
     val lyricsProviderDefaultsMigrated = booleanPreferencesKey("lyrics_provider_defaults_migrated")
+    /** One-time reset of the lyrics provider order + enabled set to the current defaults. */
+    val lyricsProviderDefaultsV2 = booleanPreferencesKey("lyrics_provider_defaults_v2")
     val metadataProvidersEnabled = stringPreferencesKey("metadata_providers_enabled")
     val preferSyncedLyrics = booleanPreferencesKey("prefer_synced_lyrics")
     val overwriteExistingTags = booleanPreferencesKey("overwrite_existing_tags")
@@ -131,7 +127,7 @@ private object Keys {
     val cacheSizeMb = intPreferencesKey("cache_size_mb")
     /** First-run onboarding: true once the welcome screen has been dismissed, so it never returns. */
     val welcomeSeen = booleanPreferencesKey("welcome_seen")
-    // Part M: rolling stream-resolver stats (latency + success/failure counts).
+    // rolling stream-resolver stats (latency + success/failure counts).
     val resolverNpAvg = longPreferencesKey("resolver_newpipe_avg_ms")
     val resolverNpSuccess = intPreferencesKey("resolver_newpipe_success")
     val resolverNpFailure = intPreferencesKey("resolver_newpipe_failure")
@@ -141,7 +137,7 @@ private object Keys {
 }
 
 /**
- * Rolling success/latency record for one stream resolver (Part M). The recent average is bounded by
+ * Rolling success/latency record for one stream resolver. The recent average is bounded by
  * [MAX_SAMPLES] so a device that gets faster (or slower) over time adapts. Persisted in DataStore.
  */
 data class ResolverStat(
@@ -207,11 +203,12 @@ class SettingsRepository(private val context: Context) {
             if (updated.themeStyle != current.themeStyle) prefs[Keys.themeStyleUserSelected] = true
             // Persist the one-time upgrade default merge. Later explicit deselections are preserved.
             prefs[Keys.lyricsProviderDefaultsMigrated] = true
+            prefs[Keys.lyricsProviderDefaultsV2] = true
             prefs.write(updated)
         }
     }
 
-    /** Reads one resolver's persisted rolling stats (Part M). */
+    /** Reads one resolver's persisted rolling stats. */
     suspend fun resolverStat(newpipe: Boolean): ResolverStat = runCatching {
         val prefs = context.settingsStore.data.first()
         if (newpipe) {
@@ -229,7 +226,7 @@ class SettingsRepository(private val context: Context) {
         }
     }.getOrDefault(ResolverStat())
 
-    /** Persists one resolution outcome for the resolver race (Part M). */
+    /** Persists one resolution outcome for the resolver race. */
     suspend fun recordResolverResult(newpipe: Boolean, latencyMs: Long, succeeded: Boolean) {
         runCatching {
             context.settingsStore.edit { prefs ->
@@ -309,11 +306,17 @@ class SettingsRepository(private val context: Context) {
             youtubeSongsOnly = this[Keys.youtubeSongsOnly] ?: d.youtubeSongsOnly,
             liveSyncEnabled = this[Keys.liveSyncEnabled] ?: d.liveSyncEnabled,
             liveSyncLastSyncedAt = (this[Keys.liveSyncLastSyncedAt] ?: d.liveSyncLastSyncedAt).coerceAtLeast(0L),
-            lyricsProviderOrder = decodeList(this[Keys.lyricsProviderOrder], d.lyricsProviderOrder)
-                .let { order -> if (order == LEGACY_DEFAULT_LYRICS_ORDER) d.lyricsProviderOrder else order }
-                .let(::mergeLyricsProviderOrder),
-            lyricsProvidersEnabled = decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled).let { enabled ->
-                if (this[Keys.lyricsProviderDefaultsMigrated] == true) enabled else enabled + d.lyricsProvidersEnabled
+            // V2: until the one-time reset has been persisted, every install (new or updated) uses the
+            // current defaults. After that, the user's own order and toggles are kept.
+            lyricsProviderOrder = if (this[Keys.lyricsProviderDefaultsV2] == true) {
+                mergeLyricsProviderOrder(decodeList(this[Keys.lyricsProviderOrder], d.lyricsProviderOrder))
+            } else {
+                d.lyricsProviderOrder
+            },
+            lyricsProvidersEnabled = if (this[Keys.lyricsProviderDefaultsV2] == true) {
+                decodeSet(this[Keys.lyricsProvidersEnabled], d.lyricsProvidersEnabled)
+            } else {
+                d.lyricsProvidersEnabled
             },
             metadataProvidersEnabled = decodeSet(this[Keys.metadataProvidersEnabled], d.metadataProvidersEnabled),
             preferSyncedLyrics = this[Keys.preferSyncedLyrics] ?: d.preferSyncedLyrics,

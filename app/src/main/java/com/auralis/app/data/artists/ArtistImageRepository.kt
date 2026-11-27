@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
 /**
- * Resolves a circular artist photo (Part L) with a strict priority:
+ * Resolves a circular artist photo with a strict priority:
  * 1. an InnerTube thumbnail the caller already has in hand (used as-is and cached),
  * 2. the artist page header image via a browse request when only a browse id is known,
  * 3. a Deezer public artist search (no key) for artists without a YouTube id, on a close name match.

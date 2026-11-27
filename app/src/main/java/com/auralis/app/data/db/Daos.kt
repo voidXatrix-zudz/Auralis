@@ -475,7 +475,7 @@ interface YouTubeCacheDao {
     suspend fun clear()
 }
 
-/** Cached circular artist photos (Part L): positives and 7-day negatives, keyed by browse id or name. */
+/** Cached circular artist photos: positives and 7-day negatives, keyed by browse id or name. */
 @Dao
 interface ArtistImageDao {
     @Upsert

@@ -28,9 +28,9 @@ data class AppSettings(
     val lyricsAutoScroll: Boolean = true,
     /** Global timing correction for synced lyrics, in milliseconds (positive = lyrics later). */
     val lyricsOffsetMs: Int = 0,
-    /** Library sort selector: "CUSTOM", "RECENTS" or "AZ" (Part R). */
+    /** Library sort selector: "CUSTOM", "RECENTS" or "AZ". */
     val librarySort: String = "CUSTOM",
-    /** Library list/grid toggle; false = list (Part R). */
+    /** Library list/grid toggle; false = list. */
     val libraryGridView: Boolean = false,
     val performanceProfile: PerformanceMode = PerformanceMode.AUTOMATIC,
     val gestureSeekEnabled: Boolean = true,
@@ -40,9 +40,9 @@ data class AppSettings(
     val resumeOnOutputReconnect: Boolean = false,
     val carKeepScreenOn: Boolean = true,
     val themeStyle: ThemeStyle = ThemeStyle.GLASSMORPHIC,
-    /** Glassmorphism "Dock transparency": 0 = fully see-through, 100 = opaque. Default 35 (STEP 8.2). */
-    val dockGlassOpacity: Int = 35,
-    /** Glassmorphism "Glass clarity": 0 = frosted/opaque, 100 = clear. Default 60 (STEP 8.2). */
+    /** Glassmorphism "Dock transparency": 0 = fully see-through, 100 = opaque. Default 10 (was 18). */
+    val dockGlassOpacity: Int = 10,
+    /** Glassmorphism "Glass clarity": 0 = frosted/opaque, 100 = clear. Default 60 (). */
     val glassClarity: Int = 60,
     /** Draw the 1dp specular hairline on glass surfaces. */
     val glassOutlines: Boolean = true,
@@ -101,9 +101,9 @@ data class AppSettings(
     val geniusApiKey: String = "",
     /** When on, Auto-fix tags may overwrite existing (non-empty) tag fields. */
     val overwriteExistingTags: Boolean = false,
-    /** Show artist photos throughout the UI (Part L). */
+    /** Show artist photos throughout the UI. */
     val fetchArtistPhotos: Boolean = true,
-    /** Use Deezer's public artist search for artist photos when no YouTube id is known (Part L). */
+    /** Use Deezer's public artist search for artist photos when no YouTube id is known. */
     val useDeezerForArtistPhotos: Boolean = true,
     /** Last.fm API key for genre tags (empty = provider disabled). Stored encrypted. */
     val lastFmApiKey: String = "",
@@ -127,10 +127,14 @@ data class AppSettings(
     val welcomeSeen: Boolean = false,
 ) {
     companion object {
-        /** Default lyrics provider lookup order: word-synced first, then line-synced, then plain. */
+        /**
+         * Default lyrics provider order. The first 11 ids are the providers enabled by default (see
+         * [lyricsProvidersEnabled]); the rest are listed after them and are off by default. The lookup
+         * itself ranks word-synced above line-synced above unsynced, whatever the order.
+         */
         val DEFAULT_LYRICS_PROVIDER_ORDER: List<String> = listOf(
-            "LRCLIB", "BiniLyrics", "BetterLyrics", "LyricsPlus", "Unison", "KuGou",
-            "BetterLyricsPortato", "YouTubeMusic", "YouTubeCaptions", "SimpMusic", "LrcRed", "NetEase",
+            "LrcRed", "BiniLyrics", "BetterLyrics", "BetterLyricsPortato", "LyricsPlus", "Unison",
+            "KuGou", "LRCLIB", "YouTubeMusic", "YouTubeCaptions", "SimpMusic", "NetEase",
             "Musixmatch", "Genius", "PaxSenix", "PaxSenixSpotify", "PaxSenixMusixmatch", "LyricsOvh",
         )
     }

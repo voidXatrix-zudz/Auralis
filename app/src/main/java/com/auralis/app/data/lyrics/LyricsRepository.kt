@@ -32,6 +32,7 @@ import com.auralis.app.domain.model.Track
 import com.auralis.app.logging.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -42,6 +43,21 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+
+/** Minimum text similarity for two providers' lyrics to count as the same song's lyrics. */
+internal const val LYRICS_AGREEMENT_THRESHOLD = 0.48
+
+/**
+ * Whether [candidate] may replace [shown]: only a strictly better sync tier (PLAIN < LINE < WORD).
+ * A lower-scored candidate must also match the text already on screen, so a different song's lyrics
+ * can never replace it. Equal tiers never swap, so the lyrics do not jump during playback.
+ */
+internal fun shouldUpgradeLyrics(shown: Lyrics?, candidate: Lyrics): Boolean {
+    if (shown == null) return true
+    if (candidate.sync.ordinal <= shown.sync.ordinal) return false
+    if ((candidate.matchScore ?: 0) >= (shown.matchScore ?: 0)) return true
+    return LyricsPrecision.lyricSimilarity(shown.raw, candidate.raw) >= LYRICS_AGREEMENT_THRESHOLD
+}
 
 /**
  * Resolves lyrics for a track using a strict priority:
@@ -200,7 +216,7 @@ class LyricsRepository(
                 .thenByDescending { providerMap[it]?.priority ?: 100 }
                 .thenByDescending { providerHealth[it]?.successRate ?: 0.5 }
                 .thenBy { providerHealth[it]?.averageLatencyMs ?: Long.MAX_VALUE })
-        return@withContext loadOnlineParallel(track, order, onUpdate, providerMap, forceProviderFetch, cacheParsedResults)
+        return@withContext loadOnlineParallel(track, order, requestedOrder, onUpdate, providerMap, forceProviderFetch, cacheParsedResults)
     }
 
     /**
@@ -254,18 +270,25 @@ class LyricsRepository(
     private class LyricsHit(val lyrics: Lyrics?)
 
     /**
-     * Queries every enabled [order] provider in parallel and picks the best answer (Part Q).
+     * Queries every enabled provider in parallel and shows the best answer in stages.
      *
-     * One coroutine per provider starts at once (never for a disabled one); each has a
-     * [PROVIDER_TIMEOUT_MS] budget and the whole lookup is capped at [OVERALL_BUDGET_MS]. Only
-     * timed results are admitted. A high-confidence word-synced result may be shown immediately;
-     * otherwise the completed search prefers word timing, then line timing, with cross-provider
-     * agreement and match confidence breaking ties. Cached positives are reused and fresh negatives
-     * skip a provider; provider failures are only logged.
+     * Priority is word-synced > line-synced > unsynced. All providers start at once; each has a
+     * [PROVIDER_TIMEOUT_MS] budget and the whole search stops after [BACKGROUND_BUDGET_MS].
+     *  - A word-synced result scoring at least [WORD_FAST_SCORE] is shown immediately.
+     *  - Otherwise the best line-synced (or lower-scored word-synced) result is shown once
+     *    [WORD_GRACE_MS] has passed, or as soon as every provider has answered.
+     *  - Unsynced text is shown only when nothing timed exists, after [PLAIN_FALLBACK_MS] or when every
+     *    provider has answered.
+     *  - The search keeps running after the first result and only ever upgrades it
+     *    (see [shouldUpgradeLyrics]); it never downgrades or swaps equal tiers.
+     *
+     * [userOrder] is the user's provider order (a tie-break); [order] is the start order. Returns the
+     * best result that was shown, or null when nothing acceptable was found.
      */
     private suspend fun loadOnlineParallel(
         track: Track,
         order: List<String>,
+        userOrder: List<String>,
         onUpdate: (suspend (Lyrics) -> Unit)?,
         providers: Map<String, LyricsProvider>,
         forceProviderFetch: Boolean = false,
@@ -283,6 +306,7 @@ class LyricsRepository(
             val hits = Channel<LyricsHit>(Channel.UNLIMITED)
             val jobs = order.map { providerId ->
                 launch {
+                    // cacheParsed = false: only the result that is actually shown is put in parsedCache.
                     hits.send(
                         LyricsHit(
                             searchProvider(
@@ -291,7 +315,7 @@ class LyricsRepository(
                                 query,
                                 providers,
                                 forceFetch = forceProviderFetch,
-                                cacheParsed = cacheParsedResults,
+                                cacheParsed = false,
                             ),
                         ),
                     )
@@ -302,37 +326,77 @@ class LyricsRepository(
                 hits.close()
             }
 
-            val candidates = mutableListOf<Lyrics>()
-            val deadline = System.currentTimeMillis() + OVERALL_BUDGET_MS
-            while (true) {
-                val remaining = deadline - System.currentTimeMillis()
-                if (remaining <= 0L) break
-                val hit = withTimeoutOrNull(remaining) { hits.receiveCatching().getOrNull() } ?: break
-                val lyrics = hit.lyrics ?: continue
-                candidates += lyrics
-                if ((lyrics.matchScore ?: 0) >= FAST_ACCEPT_SCORE && lyrics.sync == LyricsSync.WORD) {
-                    onUpdate?.invoke(lyrics)
-                    return@coroutineScope lyrics
+            fun userRank(lyrics: Lyrics): Int =
+                userOrder.indexOf(lyrics.provider ?: "").let { if (it < 0) Int.MAX_VALUE / 2 else it }
+
+            fun pickBest(pool: List<Lyrics>): Lyrics? {
+                if (pool.isEmpty()) return null
+                val agreement = pool.associateWith { candidate ->
+                    pool.count { other ->
+                        other !== candidate &&
+                            LyricsPrecision.lyricSimilarity(candidate.raw, other.raw) >= LYRICS_AGREEMENT_THRESHOLD
+                    }
                 }
+                return pool.maxWithOrNull(
+                    compareBy<Lyrics> { it.sync.ordinal }
+                        .thenBy { it.matchScore ?: 0 }
+                        .thenBy { agreement[it] ?: 0 }
+                        .thenBy { -userRank(it) }
+                        .thenBy { providerHealth[it.provider ?: ""]?.successRate ?: 0.5 },
+                )
             }
 
-            if (candidates.isEmpty()) return@coroutineScope null
-            // If multiple independent sources disagree, require a majority text match. With a tie
-            // (for example two unrelated songs returned) return no lyrics rather than guess.
-            val support = candidates.associateWith { candidate ->
-                candidates.count { other -> other !== candidate && LyricsPrecision.lyricSimilarity(candidate.raw, other.raw) >= AGREEMENT_THRESHOLD }
+            val startedAt = System.currentTimeMillis()
+            val candidates = mutableListOf<Lyrics>()
+            var shown: Lyrics? = null
+            var allDone = false
+
+            suspend fun show(lyrics: Lyrics) {
+                shown = lyrics
+                if (cacheParsedResults && hasTiming(lyrics)) parsedCache.put(track.id, lyrics)
+                onUpdate?.invoke(lyrics)
             }
-            val topSupport = support.values.maxOrNull() ?: 0
-            val winner = if (candidates.size > 1 && topSupport == 0) null else support.entries
-                .filter { it.value == topSupport }
-                .map { it.key }
-                .maxWithOrNull(compareBy<Lyrics> { it.sync.ordinal }
-                    .thenBy { it.matchScore ?: 0 }
-                    .thenBy { providers[it.provider]?.priority ?: 100 }
-                    .thenBy { providerHealth[it.provider]?.successRate ?: 0.5 }
-                    .thenBy { -(providerHealth[it.provider]?.averageLatencyMs ?: Long.MAX_VALUE) })
-            if (winner != null) onUpdate?.invoke(winner)
-            winner
+
+            fun readyToShow(best: Lyrics, elapsed: Long): Boolean = when {
+                best.sync == LyricsSync.WORD && (best.matchScore ?: 0) >= WORD_FAST_SCORE -> true
+                best.sync != LyricsSync.PLAIN -> elapsed >= WORD_GRACE_MS || allDone
+                else -> elapsed >= PLAIN_FALLBACK_MS || allDone
+            }
+
+            while (true) {
+                val elapsed = System.currentTimeMillis() - startedAt
+                val remaining = BACKGROUND_BUDGET_MS - elapsed
+                if (remaining <= 0L) break
+                // Wake for the next provider answer, or for the next stage deadline while nothing is shown.
+                val wait = when {
+                    shown != null || candidates.isEmpty() -> remaining
+                    candidates.any { it.sync != LyricsSync.PLAIN } -> WORD_GRACE_MS - elapsed
+                    else -> PLAIN_FALLBACK_MS - elapsed
+                }.coerceIn(1L, remaining)
+
+                val received = withTimeoutOrNull(wait) { hits.receiveCatching() }
+                if (received != null) {
+                    if (received.isClosed) {
+                        allDone = true
+                    } else {
+                        received.getOrNull()?.lyrics?.let { candidates += it }
+                    }
+                }
+
+                val now = System.currentTimeMillis() - startedAt
+                val current = shown
+                if (current == null) {
+                    val best = pickBest(candidates)
+                    if (best != null && readyToShow(best, now)) show(best)
+                } else {
+                    val upgrade = pickBest(candidates.filter { shouldUpgradeLyrics(current, it) })
+                    if (upgrade != null) show(upgrade)
+                }
+                if (allDone) break
+            }
+            // Stop any provider still running; the shown result (if any) is the answer.
+            coroutineContext.cancelChildren()
+            shown
         }
     }
 
@@ -730,7 +794,7 @@ class LyricsRepository(
         }.getOrNull()
     }
 
-    /** Per-song lyrics timing offset in ms (Part J). Stored in the shared provider cache. */
+    /** Per-song lyrics timing offset in ms. Stored in the shared provider cache. */
     suspend fun offsetMs(trackId: String): Int = withContext(Dispatchers.IO) {
         runCatching { providerCacheDao?.get(KIND_OFFSET, trackId, PROVIDER_OFFSET)?.payload?.toIntOrNull() }.getOrNull() ?: 0
     }
@@ -801,16 +865,18 @@ class LyricsRepository(
         const val MIN_MATCH_SCORE = 50
         /** A "none found" marker is re-queried after this long. */
         const val NEGATIVE_TTL_MS = 24L * 60 * 60 * 1000
-        /** Per-provider lookup budget (Part Q). */
+        /** Per-provider lookup budget. */
         const val PROVIDER_TIMEOUT_MS = 7_000L
-        /** Budget for the whole parallel lookup. */
-        const val OVERALL_BUDGET_MS = 8_000L
-        /** How long a shown synced result may be silently upgraded by a better one. */
-        const val UPGRADE_WINDOW_MS = 2_000L
-        const val FAST_ACCEPT_SCORE = 90
-        const val AGREEMENT_THRESHOLD = 0.48
+        /** Whole search incl. background upgrades; a result is normally shown long before this. */
+        const val BACKGROUND_BUDGET_MS = 12_000L
+        /** A word-synced result at or above this match score is shown at once (header-less results score ~76). */
+        const val WORD_FAST_SCORE = 70
+        /** How long line-synced results wait for a word-synced one before being shown. */
+        const val WORD_GRACE_MS = 1_500L
+        /** Unsynced text is shown only after this long (or when every provider has answered). */
+        const val PLAIN_FALLBACK_MS = 4_000L
 
-        /** Per-song lyrics timing offset (Part J), stored in the shared provider cache. */
+        /** Per-song lyrics timing offset, stored in the shared provider cache. */
         const val KIND_OFFSET = "lyrics_offset"
         const val PROVIDER_OFFSET = "offset"
         /** The user may nudge timing by at most ±5 s. */

@@ -366,7 +366,7 @@ fun LiquidLyricsScreen(
                                 leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
                                 onClick = { moreOpen = false; onTryAnotherSource() },
                             )
-                            // Per-song timing nudge (Part J): −5 s…+5 s, saved for this track.
+                            // Per-song timing nudge: −5 s…+5 s, saved for this track.
                             DropdownMenuItem(
                                 text = { Text("Lyrics earlier by 0.5s") },
                                 leadingIcon = { Icon(Icons.Rounded.Remove, null) },
