@@ -231,7 +231,7 @@ class MusicScanner(
     }
 
     /**
-     * Part J: a sibling `folder.jpg`/`cover.jpg`/`folder.png` in the same SAF directory, opened lazily
+     * a sibling `folder.jpg`/`cover.jpg`/`folder.png` in the same SAF directory, opened lazily
      * only when the track has no embedded or MediaStore artwork. Never written into the audio file.
      */
     private fun folderArtOpener(files: Array<DocumentFile>): (() -> InputStream?)? {
@@ -241,7 +241,7 @@ class MusicScanner(
         return { runCatching { context.contentResolver.openInputStream(doc.uri) }.getOrNull() }
     }
 
-    /** Part J: the same folder-art lookup for MediaStore-backed files, cached per scan by directory. */
+    /** the same folder-art lookup for MediaStore-backed files, cached per scan by directory. */
     private fun folderArtStream(path: String, cache: MutableMap<String, Uri?>): InputStream? {
         if (path.isBlank()) return null
         val dir = if (path.contains('/')) path.substringBeforeLast('/') + "/" else ""

@@ -12,7 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The glass mapping contract (STEP 2.5): the ONE place a transparency/clarity value becomes an
+ * The glass mapping contract (): the ONE place a transparency/clarity value becomes an
  * alpha, a blur radius or an effect scale. The dock and the panels move in opposite directions on
  * purpose, both never add a black/grey wash, and blur is fixed per tier (never slider-driven).
  */

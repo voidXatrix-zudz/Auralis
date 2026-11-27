@@ -103,11 +103,11 @@ class AppContainer(context: Context) {
     val metadataRepository: com.auralis.app.data.metadata.MetadataRepository by lazy {
         com.auralis.app.data.metadata.MetadataRepository(youtubeHttp, settings, BuildConfig.VERSION_NAME)
     }
-    /** Real square album art lookup for songs that only have a video thumbnail (Part J). */
+    /** Real square album art lookup for songs that only have a video thumbnail. */
     val artworkResolver: com.auralis.app.data.artwork.ArtworkResolver by lazy {
         com.auralis.app.data.artwork.ArtworkResolver(database.providerCacheDao(), metadataRepository)
     }
-    /** Circular artist photos with Room cache (Part L). */
+    /** Circular artist photos with Room cache. */
     val artistImages: com.auralis.app.data.artists.ArtistImageRepository by lazy {
         com.auralis.app.data.artists.ArtistImageRepository(
             database.artistImageDao(),

@@ -16,7 +16,7 @@ import com.auralis.app.domain.model.AppSettings
  *  - the platform cannot blur-plus-sample a recorded layer (API < 31), or
  *  - the user explicitly turned on "Reduce blur and effects".
  *
- * The old "Blur strength" slider is gone (STEP 2.6): blur is a fixed constant, so it is no longer
+ * The old "Blur strength" slider is gone (): blur is a fixed constant, so it is no longer
  * part of this decision.
  *
  * Every glass surface reads the pre-computed [LocalGlassBlurAllowed] instead of threading the raw

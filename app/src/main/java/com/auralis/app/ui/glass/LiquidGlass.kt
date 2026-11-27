@@ -25,7 +25,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import com.auralis.app.ui.theme.GlassTokens
 
 /**
- * STEP 6 - the in-composition glass entry point.
+ * the in-composition glass entry point.
  *
  * Every card, row, chip, panel, sheet-in-tree and Now Playing surface routes through here, and here
  * alone: [GlassKind] only chooses the role (Dock vs Panel), and the single [auralisGlass] modifier
@@ -48,7 +48,7 @@ fun Modifier.glassSurface(
 }
 
 /**
- * STEP 6.1 - the ONE dock material, used by the dock tab pill, the dock circles, the mini-player
+ * the ONE dock material, used by the dock tab pill, the dock circles, the mini-player
  * pill and the Appearance preview, so all four stay identical.
  *
  * - SOLID (Normal theme): opaque palette surface with the dock's soft shadow. No blur, no rim.
@@ -91,7 +91,7 @@ fun Modifier.dockGlassMaterial(
 /**
  * The active-tab lens: a clear white bubble rather than a solid cream capsule. It carries no
  * backdrop blur of its own (it sits on the already-glassed nav pill). Its rim follows the same
- * "Glass outlines" setting as every other surface (spec 11.2).
+ * "Glass outlines" setting as every other surface .
  */
 @Composable
 fun Modifier.glassBubble(shape: Shape = CircleShape): Modifier {
@@ -140,7 +140,7 @@ private fun dockRim(): Brush = Brush.linearGradient(
 )
 
 /**
- * STEP 6.2b - window-level glass fill for dialogs, menus and sheets.
+ * window-level glass fill for dialogs, menus and sheets.
  *
  * Those surfaces live in their own window and cannot sample the app's in-composition layer, so
  * [DialogBackdropBlur] blurs the page behind the window (API 31+) and this fill carries readability
@@ -153,7 +153,7 @@ fun glassWindowPanelColor(): Color {
     val blurDp = if (blurAllowed) GlassMappings.blurDp(config.tier) else 0f
     val canBlur = Build.VERSION.SDK_INT >= 31 && blurDp > 0.5f
     val alpha = if (canBlur) {
-        // "High panel tint" per spec 6.2b: the window cannot sample the layer, so lean solid.
+        // "High panel tint" : the window cannot sample the layer, so lean solid.
         maxOf(GlassMappings.panelTintAlpha(config.glassClarity), 0.62f)
     } else {
         GlassMapping.WINDOW_NO_BLUR_TINT

@@ -266,7 +266,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
             }
         }
 
-        /** Adds the circular artist-photo cache (Part L). Existing data untouched. */
+        /** Adds the circular artist-photo cache. Existing data untouched. */
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

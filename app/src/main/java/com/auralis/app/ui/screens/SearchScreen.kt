@@ -92,7 +92,7 @@ fun SearchScreen(
     }
     var query by rememberSaveable { mutableStateOf("") }
     var youtube by remember { mutableStateOf(false) }
-    // Part S: YouTube is the default source every time Search opens, when the integration is on.
+    // YouTube is the default source every time Search opens, when the integration is on.
     LaunchedEffect(youtubeEnabled) { youtube = youtubeEnabled }
     val normalizedQuery = query.trim()
     val sourceNames = remember(sources) { sources.associate { it.id to it.name } }

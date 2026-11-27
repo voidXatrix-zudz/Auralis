@@ -52,7 +52,7 @@ val LocalGlassDrag = staticCompositionLocalOf { GlassDragState() }
 enum class GlassKind { Dock, Surface }
 
 /**
- * BRIDGE mapping for surfaces and separate-window overlays (Step 6). The live in-composition glass
+ * BRIDGE mapping for surfaces and separate-window overlays (). The live in-composition glass
  * now flows through the one `auralisGlass` modifier and [GlassConfigMappings]; this object remains
  * the single home for the fixed dock/window scrim maths the overlay windows still read.
  *

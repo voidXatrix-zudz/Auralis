@@ -384,7 +384,7 @@ private fun AppearanceSection(settings: AppSettings, onUpdate: ((AppSettings) ->
     val dockGlass = LocalDockGlassStyle.current
     val profile = LocalPerformanceProfile.current
     val performanceReason = LocalPerformanceReason.current
-    // STEP 2: the persisted GlassConfig is the source of truth; a slider drag writes a transient
+    // the persisted GlassConfig is the source of truth; a slider drag writes a transient
     // copy so the preview and the real surfaces move on the same frame.
     val persistedConfig = LocalGlassConfig.current
     val drag = LocalGlassDrag.current

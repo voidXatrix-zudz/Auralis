@@ -58,7 +58,7 @@ fun resolveDockGlass(
     val opacity = glass.dockOpacity.coerceIn(0f, 1f)
 
     val fillAlpha = GlassMapping.dockFill(opacity).alpha
-    // Blur is a fixed constant now (STEP 2.4): the tier only chooses the radius, never on/off.
+    // Blur is a fixed constant now (): the tier only chooses the radius, never on/off.
     val effectiveBlur = GlassTokens.blurDpFor(profile.tier)
     val blurAllowed = GlassBlurPolicy.allowed(settings, sdkInt)
     val blurEnabled = blurAllowed && effectiveBlur > 0.5f

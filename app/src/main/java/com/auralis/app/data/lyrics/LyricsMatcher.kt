@@ -3,7 +3,7 @@ package com.auralis.app.data.lyrics
 import java.text.Normalizer
 
 /**
- * Text normalisation and similarity for lyrics matching (Part G) and query generation (Part J).
+ * Text normalisation and similarity for lyrics matching and query generation.
  *
  * Titles are cleaned of edit markers ("(Slowed)", "(Official Video)", "- Remastered",
  * "(From \"...\")", "feat. …"), artists are reduced to the first name of "A, B & C", and
@@ -100,13 +100,13 @@ object LyricsMatcher {
         return true
     }
 
-    /** True when a title advertises a slowed/sped-up/nightcore edit (Part J). */
+    /** True when a title advertises a slowed/sped-up/nightcore edit. */
     fun isSlowedOrSped(raw: String): Boolean = SLOWED_SPED.containsMatchIn(raw)
 
     /** One query form tried in order: most specific first. */
     data class QueryVariant(val title: String, val artist: String)
 
-    /** Query variants in the Part J order: exact, first artist, cleaned titles, then title only. */
+    /** Query variants in the this order: exact, first artist, cleaned titles, then title only. */
     fun variants(title: String, artist: String): List<QueryVariant> {
         val primary = primaryArtist(artist)
         val cleaned = cleanTitle(title)

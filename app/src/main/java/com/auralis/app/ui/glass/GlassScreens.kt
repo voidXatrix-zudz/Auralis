@@ -157,7 +157,7 @@ fun GlassSearchScreen(
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var youtube by remember { mutableStateOf(false) }
-    // Part S: YouTube is the default source every time Search opens, when the integration is on.
+    // YouTube is the default source every time Search opens, when the integration is on.
     LaunchedEffect(youtubeEnabled) { youtube = youtubeEnabled }
     val q = query.trim()
     val sourceNames = remember(sources) { sources.associate { it.id to it.name } }
@@ -367,7 +367,7 @@ fun GlassLibraryScreen(
     spotifyImports: List<com.auralis.app.data.db.SpotifyImportEntity> = emptyList(),
     onOpenImport: (Long) -> Unit = {},
     onAutoFixTags: () -> Unit = {},
-    // Part R: library redesign inputs and callbacks.
+    // library redesign inputs and callbacks.
     playlistEntries: List<PlaylistEntryEntity> = emptyList(),
     playlistYtEntries: List<PlaylistYtEntryEntity> = emptyList(),
     profileImageUrl: String? = null,

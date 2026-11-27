@@ -12,7 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Finds real square album art for a track when the source only provided a video thumbnail (Part J).
+ * Finds real square album art for a track when the source only provided a video thumbnail.
  *
  * YouTube songs expose a 4:3 video thumbnail, which is not album art. This resolver looks a cover up
  * through the same metadata providers used elsewhere (Cover Art Archive via MusicBrainz, Deezer,

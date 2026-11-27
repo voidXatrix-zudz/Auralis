@@ -30,7 +30,7 @@ data class InnerTubeAudioFormat(
 
 /**
  * Keyless InnerTube `player` resolver. It is the fallback used when NewPipeExtractor cannot run
- * (e.g. it throws a [LinkageError] on an old WebView/runtime) and, from Part M, one of the racing
+ * (e.g. it throws a [LinkageError] on an old WebView/runtime) and, from , one of the racing
  * stream sources.
  *
  * Several clients are tried in order — ANDROID_VR, IOS, then ANDROID_MUSIC — because YouTube

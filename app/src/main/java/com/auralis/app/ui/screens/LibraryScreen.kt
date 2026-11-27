@@ -55,7 +55,7 @@ import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.components.ArtistAvatar
 import com.auralis.app.ui.components.LiveDot
 
-/** The three persisted library orderings (Part R). */
+/** The three persisted library orderings. */
 enum class LibrarySortOption(val id: String, val label: String) {
     CUSTOM("CUSTOM", "Custom order"),
     RECENTS("RECENTS", "Recents"),
@@ -66,7 +66,7 @@ enum class LibrarySortOption(val id: String, val label: String) {
     }
 }
 
-/** Library filter chips; tapping the active chip again clears it (Part R). */
+/** Library filter chips; tapping the active chip again clears it. */
 enum class LibraryFilter(val label: String) {
     PLAYLISTS("Playlists"),
     BY_ME("By me"),
@@ -152,7 +152,9 @@ fun buildLibraryPlaylists(
         )
     }
 
-    val merged = locals + remote
+    // Account refreshes can return the same remote playlist more than once. LazyColumn uses these
+    // keys below, so collapse duplicate ids before they reach the list or Compose throws at layout.
+    val merged = (locals + remote).distinctBy { it.key }
     return when (sort) {
         LibrarySortOption.CUSTOM -> merged
         LibrarySortOption.RECENTS -> merged.sortedByDescending { it.updatedAt }
@@ -201,7 +203,7 @@ fun LibraryScreen(
     spotifyImports: List<SpotifyImportEntity> = emptyList(),
     onOpenImport: (Long) -> Unit = {},
     onAutoFixTags: () -> Unit = {},
-    // Part R: library redesign inputs and callbacks.
+    // library redesign inputs and callbacks.
     playlistEntries: List<PlaylistEntryEntity> = emptyList(),
     playlistYtEntries: List<PlaylistYtEntryEntity> = emptyList(),
     profileImageUrl: String? = null,

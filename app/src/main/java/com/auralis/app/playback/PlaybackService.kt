@@ -107,7 +107,7 @@ class PlaybackService : MediaLibraryService() {
     private var autoPlayOnReady = false
     /** Consecutive "stream failed → skipped to next" attempts, to avoid an infinite failure loop. */
     private var skipRetries = 0
-    /** Part M: per-song stream-resolve retries before giving up and skipping. */
+    /** per-song stream-resolve retries before giving up and skipping. */
     private var retryMediaId: String? = null
     private var retryCount = 0
     /** Tap generation for which a "tap → audible" line was logged, so it is written once per tap. */
@@ -272,7 +272,7 @@ class PlaybackService : MediaLibraryService() {
                     retryMediaId = mediaId
                     retryCount = 0
                 }
-                // Part M: a remote stream can fail because its signed URL expired or was blocked
+                // a remote stream can fail because its signed URL expired or was blocked
                 // (403/410) or the source broke. Re-resolve with the OTHER resolver and resume the
                 // same position, respecting a user pause, up to MAX_STREAM_RETRIES times per song.
                 if (mediaId?.startsWith(YOUTUBE_TRACK_PREFIX) == true &&
@@ -630,7 +630,7 @@ class PlaybackService : MediaLibraryService() {
             ?: return dataSpec
         val startedAt = System.currentTimeMillis()
         val quality = com.auralis.app.data.network.NetworkQuality.effective(this, settings)
-        // Part M fallback: when a retry is armed, force the other resolver and ignore the failed URL.
+        //  fallback: when a retry is armed, force the other resolver and ignore the failed URL.
         val force = forcedResolver
         val bypass = bypassResolveCache
         forcedResolver = null
@@ -976,7 +976,7 @@ class PlaybackService : MediaLibraryService() {
         private const val PREVIOUS_RESTART_MS = 3_000L
         /** How many consecutive failed streams to auto-skip past before giving up. */
         private const val MAX_SKIP_RETRIES = 3
-        /** Part M: re-resolve attempts with the other resolver before skipping a failed song. */
+        /** re-resolve attempts with the other resolver before skipping a failed song. */
         private const val MAX_STREAM_RETRIES = 2
         private const val TAG = "AuralisService"
         private const val ROOT = "auralis_root"
