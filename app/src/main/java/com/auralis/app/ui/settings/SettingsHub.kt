@@ -117,7 +117,7 @@ data class SettingsActions(
     /** Outbound reports plus inbound `FEmusic_history` pulls, for the "History sync" status line. */
     val playbackReporting: com.auralis.app.data.youtube.PlaybackReportingState =
         com.auralis.app.data.youtube.PlaybackReportingState(),
-    /** STEP 7: the three glass controls write through GlassConfigRepository only. */
+    /** the three glass controls write through GlassConfigRepository only. */
     val onDockTransparencyChange: (Int) -> Unit = {},
     val onGlassClarityChange: (Int) -> Unit = {},
     val onPreviewDockTransparency: (Int) -> Unit = {},

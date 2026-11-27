@@ -31,7 +31,7 @@ class ArtworkStore(context: Context) {
 
     /**
      * Saves a sibling `folder.jpg`/`cover.jpg`/`folder.png` as the album art when nothing is embedded
-     * (Part J). The bank is content-hashed like embedded art, so tracks in the same folder share one
+     *. The bank is content-hashed like embedded art, so tracks in the same folder share one
      * cached file and the source image is never written into the audio file.
      */
     fun saveFolderArt(open: () -> InputStream?): String? = try {

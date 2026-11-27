@@ -10,7 +10,7 @@ import org.junit.Test
  * The blur contract: backdrop blur is a property of the Glassmorphism look, so it may only be
  * refused by the platform or by an explicit user choice. Performance heuristics (RAM, cores, heap
  * class, Battery Saver, thermal) are not inputs at all, which is what makes "Automatic never
- * disables blur" true by construction. STEP 5: the Low tier still blurs (a larger, cheaper radius);
+ * disables blur" true by construction. the Low tier still blurs (a larger, cheaper radius);
  * it only drops the lens.
  */
 class GlassBlurPolicyTest {

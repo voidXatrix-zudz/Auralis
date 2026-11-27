@@ -21,33 +21,34 @@ import com.auralis.app.glass.backdrop.shadow.Shadow
 import com.auralis.app.logging.AppLog
 import com.auralis.app.ui.theme.GlassTokens
 import com.auralis.app.ui.theme.LocalThemeStyle
+import kotlin.math.roundToInt
 
-/** STEP 10.3: warn at most once per process that a glass surface fell back to a flat tint. */
+/** warn at most once per process that a glass surface fell back to a flat tint. */
 private var warnedMissingBackdrop = false
 
 /**
- * STEP 4 - which family of glass a surface belongs to. This is the ONLY scoping switch: a Dock
+ * which family of glass a surface belongs to. This is the ONLY scoping switch: a Dock
  * surface reads `dockTransparency`, a Panel surface reads `glassClarity`. Nothing else differs.
  */
 enum class GlassRole { Dock, Panel }
 
 /**
- * STEP 4 - the ONE glass modifier every glass surface in the app uses, and nothing else.
+ * the ONE glass modifier every glass surface in the app uses, and nothing else.
  *
  * It reads ONLY [LocalGlassConfig], [LocalAppBackdrop] and [GlassTokens]:
  *  - no surface may read DataStore, a preference int, or hardcode a blur/alpha/outline number;
  *  - [config] is part of the [remember] keys (with the tier inside it), so a settings change
- *    rebuilds the modifier and the surface repaints in the SAME frame (spec 4.4/4.5);
+ *    rebuilds the modifier and the surface repaints in the SAME frame ;
  *  - blur is a fixed [GlassTokens] constant chosen by the resolved tier, never a user slider.
  *
- * Capability fallbacks (Step 5):
+ * Capability fallbacks ():
  *  - no backdrop (Normal theme, API < 31) -> a plain translucent tint + optional hairline;
  *  - API 31-32 -> blur + rim, no lens; API 33+ & tier != Low -> blur + colour + lens + rim;
  *  - Low tier -> blur (16dp) + rim, no lens. The content behind stays blurred at every tier.
  */
 @Composable
 fun Modifier.auralisGlass(shape: Shape, role: GlassRole): Modifier {
-    // STEP 4.4 - read the transient drag value HERE, in the surface's own recompose scope, so a
+    // read the transient drag value HERE, in the surface's own recompose scope, so a
     // slider tick rebuilds the dock / mini-player / Search circle on the same frame as the
     // Appearance preview. Reading only [LocalGlassConfig] left those surfaces stale: the local is
     // forwarded by the root provider, but a surface whose parameters did not change was skipped
@@ -55,8 +56,9 @@ fun Modifier.auralisGlass(shape: Shape, role: GlassRole): Modifier {
     // so `value` is a plain snapshot read of the app-wide transient config - same instance the root
     // provider forwards, so the rendered values are identical; only the invalidation path differs.
     val config = LocalGlassDrag.current.value ?: LocalGlassConfig.current
+    val dockTransparencyScale = if (role == GlassRole.Dock) LocalDockTransparencyScale.current else 1f
     val backdrop = LocalAppBackdrop.current
-    // STEP 10.3 (debug only): a glass-capable surface drawn in the Glassmorphic theme with no
+    // (debug only): a glass-capable surface drawn in the Glassmorphic theme with no
     // recorded backdrop is silently rendering the tint fallback. Warn once so a missing wiring is
     // visible in the in-app Logs screen instead of only on the phone screen.
     if (BuildConfig.DEBUG && backdrop == null && config.isGlassCapable &&
@@ -65,8 +67,8 @@ fun Modifier.auralisGlass(shape: Shape, role: GlassRole): Modifier {
         warnedMissingBackdrop = true
         AppLog.w("Glass", "A glass surface rendered without a recorded backdrop; drew the tint fallback.")
     }
-    val glass = remember(config, backdrop, shape, role) {
-        buildAuralisGlass(config, backdrop, shape, role)
+    val glass = remember(config, backdrop, shape, role, dockTransparencyScale) {
+        buildAuralisGlass(config, backdrop, shape, role, dockTransparencyScale)
     }
     return this.then(glass)
 }
@@ -76,9 +78,11 @@ private fun buildAuralisGlass(
     backdrop: com.auralis.app.glass.backdrop.backdrops.LayerBackdrop?,
     shape: Shape,
     role: GlassRole,
+    dockTransparencyScale: Float,
 ): Modifier {
     val tintAlpha = when (role) {
-        GlassRole.Dock -> GlassMappings.dockTintAlpha(config.dockTransparency)
+        GlassRole.Dock -> GlassMappings.dockTintAlpha((config.dockTransparency * dockTransparencyScale).roundToInt()) *
+            GlassTokens.DOCK_TINT_ALPHA_SCALE
         GlassRole.Panel -> GlassMappings.panelTintAlpha(config.glassClarity)
     }
     val tintColor = when (role) {
@@ -87,7 +91,7 @@ private fun buildAuralisGlass(
     }
     val outline = GlassMappings.outlineAlpha(config.outlinesEnabled) > 0f
 
-    // --- Fallback (Step 5): no backdrop / API < 31. A solid translucent tint + optional hairline;
+    // --- Fallback (): no backdrop / API < 31. A solid translucent tint + optional hairline;
     //     never transparent, never sharp content behind. ---
     if (backdrop == null || !config.isGlassCapable) {
         return Modifier

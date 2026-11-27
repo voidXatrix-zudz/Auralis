@@ -5,12 +5,12 @@ import com.auralis.app.ui.theme.GlassTokens
 import kotlin.math.pow
 
 /**
- * STEP 2.5 - the pure mapping functions every glass surface routes through. They are deliberately
+ * the pure mapping functions every glass surface routes through. They are deliberately
  * free of Android/Compose state so they can be unit-tested on the JVM, and they are the ONLY place a
  * transparency/clarity value turns into an alpha, a blur radius or an effect scale.
  *
  * Fixed constants (blur dp, lens dp, saturation, rim alphas, resolution scales) live in
- * [GlassTokens] - see STEP 2.4 - so no blur/alpha/outline literal exists anywhere else.
+ * [GlassTokens] - see so no blur/alpha/outline literal exists anywhere else.
  */
 object GlassMappings {
 
@@ -52,7 +52,7 @@ object GlassMappings {
     /**
      * The effect-resolution scale for a tier (1.0 = full). The vendored backdrop 1.0.0 has no
      * `backdropScale` parameter, so this is applied through the layer block / documented as
-     * full-resolution where the API cannot consume it (see AGENT_NOTES).
+     * full-resolution where the API cannot consume it .
      */
     fun effectScale(tier: VisualPerformanceTier): Float = when (tier) {
         VisualPerformanceTier.HIGH -> GlassTokens.EFFECT_RESOLUTION_HIGH

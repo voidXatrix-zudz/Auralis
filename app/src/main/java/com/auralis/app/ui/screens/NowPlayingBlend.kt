@@ -1323,7 +1323,14 @@ private fun BlendTimeline(
                 Spacer(Modifier.width(6.dp))
             }
             if (centerLabel == null) {
-                Text(qualityText, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    qualityText,
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(role = Role.Button, onClick = onCenterLabelClick),
+                )
             } else {
                 val labelColor = Color.White.copy(alpha = 0.7f)
                 val labelStyle = LocalTextStyle.current.copy(

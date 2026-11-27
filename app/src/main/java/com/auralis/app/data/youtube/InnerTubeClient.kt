@@ -65,7 +65,7 @@ data class RadioPage(val songs: List<YtSong>, val continuation: String?)
  * Tiny keyless InnerTube client for YouTube Music search.
  *
  * WEB_REMIX is the same public web client the music.youtube.com site uses, so no API key,
- * OAuth token or account is involved. Only the first result page is requested (Stage 1).
+ * OAuth token or account is involved. Only the first result page is requested .
  */
 class InnerTubeClient(
     private val http: OkHttpClient,
@@ -339,7 +339,7 @@ class InnerTubeClient(
     }
 
     /**
-     * The artist page header image (Part L), used when an artist card carries a browse id but no
+     * The artist page header image, used when an artist card carries a browse id but no
      * thumbnail. Reads the immersive/visual header renderer's largest thumbnail.
      */
     suspend fun artistImage(browseId: String): String? = withContext(Dispatchers.IO) {
@@ -488,6 +488,7 @@ class InnerTubeClient(
         return when {
             fallback is YouTubeLoadResult.Success && fallback.value.isNotEmpty() -> fallback
             primary is YouTubeLoadResult.Failure -> primary
+            fallback is YouTubeLoadResult.Failure -> fallback
             else -> primary
         }
     }
@@ -506,10 +507,15 @@ class InnerTubeClient(
             var root: JsonObject? = browseRoot(browseId, affectsSession)
             var token: String? = firstContinuation(root)
             var pages = 0
+            val seenTokens = HashSet<String>()
             while (root != null && pages < MAX_PLAYLIST_PAGES) {
                 collectPlaylistsDeep(root, out)
                 pages++
                 if (out.size >= playlistCap || token == null) break
+                if (!seenTokens.add(token)) {
+                    AppLog.w(TAG, "Library playlists stopped on a repeated continuation token")
+                    break
+                }
                 root = browseContinuation(token, affectsSession)
                 token = firstContinuation(root)
             }

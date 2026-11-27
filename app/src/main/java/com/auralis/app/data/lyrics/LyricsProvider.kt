@@ -90,7 +90,7 @@ enum class ProviderAvailability {
     NOT_AVAILABLE,
 }
 
-/** A provider plus a human description, used by the Settings list (Part H). */
+/** A provider plus a human description, used by the Settings list. */
 data class LyricsProviderInfo(
     val id: String,
     val label: String,

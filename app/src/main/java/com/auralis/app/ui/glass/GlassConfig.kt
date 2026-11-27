@@ -7,7 +7,7 @@ import com.auralis.app.domain.model.PerformanceMode
 import com.auralis.app.ui.performance.VisualPerformanceTier
 
 /**
- * STEP 2 - the SINGLE source of truth for every glass surface.
+ * the SINGLE source of truth for every glass surface.
  *
  * Nothing below the app root may read DataStore, a preference int, or a hardcoded blur/alpha/outline
  * value: every glass surface reads this one immutable object through [LocalGlassConfig]. Blur and the
@@ -41,8 +41,8 @@ data class GlassConfig(
         get() = sdkInt >= Build.VERSION_CODES.TIRAMISU && tier != VisualPerformanceTier.LOW
 
     companion object {
-        /** STEP 8.2 defaults: transparency 35, clarity 60, outlines on. */
-        const val DEFAULT_DOCK_TRANSPARENCY = 35
+        /** Defaults: dock transparency 10 (~6% tint), clarity 60, outlines on. */
+        const val DEFAULT_DOCK_TRANSPARENCY = 10
         const val DEFAULT_GLASS_CLARITY = 60
         const val DEFAULT_OUTLINES_ENABLED = true
     }
@@ -53,3 +53,6 @@ data class GlassConfig(
  * configuration change recomposes only the composables that actually read it.
  */
 val LocalGlassConfig = compositionLocalOf { GlassConfig() }
+
+/** Scroll-morph multiplier for dock tint: 0 is fully expanded, 1 is collapsed. */
+val LocalDockTransparencyScale = compositionLocalOf { 1f }

@@ -42,7 +42,7 @@ object StreamResolverStatus {
     @Volatile var youTubeJs: String = "not started"
 }
 
-/** Which of the three stream resolvers produced (or is being asked for) a URL (Part M). */
+/** Which of the three stream resolvers produced (or is being asked for) a URL. */
 enum class ResolverKind(val label: String) {
     NEWPIPE("NewPipeExtractor"),
     INNERTUBE("InnerTube"),
@@ -157,7 +157,7 @@ class StreamResolver(
     private val inFlightLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** User's "Stream source" choice (Part H), kept in sync from DataStore. */
+    /** User's "Stream source" choice, kept in sync from DataStore. */
     @Volatile private var sourceMode: StreamSourceMode = StreamSourceMode.AUTO
 
     /** Whether YouTube.js may take part in the AUTO race. */
@@ -564,7 +564,9 @@ class StreamResolver(
             mimeType = format?.mimeType,
             codec = chosen.codec,
             extension = format?.suffix,
-            bitrate = chosen.averageBitrate.takeIf { it > 0 },
+            // NewPipe's averageBitrate is in kbps (the stream selector compares it directly with
+            // StreamQuality.approxKbps); ResolvedStream stores bitrate in bits per second.
+            bitrate = chosen.averageBitrate.takeIf { it > 0 }?.let { it * 1_000 },
             resolver = ResolverKind.NEWPIPE,
         )
     }

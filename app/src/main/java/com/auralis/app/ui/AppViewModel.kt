@@ -19,6 +19,7 @@ import com.auralis.app.data.db.YouTubeSyncOpEntity
 import com.auralis.app.data.db.toDomain
 import com.auralis.app.data.db.toYouTubeLikeEntity
 import com.auralis.app.data.db.toYouTubeRecentEntity
+import com.auralis.app.data.lyrics.shouldUpgradeLyrics
 import com.auralis.app.data.metadata.TagData
 import com.auralis.app.data.settings.CheckpointTrack
 import com.auralis.app.data.settings.PlaybackCheckpointCodec
@@ -223,7 +224,7 @@ data class HomeUiState(
     val collectionLoading: Boolean = false,
     val collectionSeedVideoId: String? = null,
     val collectionMore: Boolean = false,
-    /** Artist-page header (Part L): set only when the opened card is a YouTube artist. */
+    /** Artist-page header: set only when the opened card is a YouTube artist. */
     val collectionArtistBrowseId: String? = null,
     val collectionArtistImageUrl: String? = null,
 )
@@ -294,7 +295,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val performanceMode = performanceController.mode
     val performanceReason = performanceController.reason
     /**
-     * STEP 2: the ONE glass config. Combines the stored transparency/clarity/outlines with the
+     * the ONE glass config. Combines the stored transparency/clarity/outlines with the
      * resolved performance tier; collected once in AuralisRoot and provided via LocalGlassConfig.
      */
     private val glassConfigRepository = GlassConfigRepository(
@@ -306,7 +307,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val glassConfig = glassConfigRepository.config
     val glassConfigPreview = glassConfigRepository.preview
 
-    /** STEP 7: the Appearance controls write glass through this repository only. */
+    /** the Appearance controls write glass through this repository only. */
     fun setDockTransparency(value: Int) = glassConfigRepository.setDockTransparency(value)
     fun setGlassClarity(value: Int) = glassConfigRepository.setGlassClarity(value)
     fun previewDockTransparency(value: Int) = glassConfigRepository.previewDockTransparency(value)
@@ -328,7 +329,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val lyricsLoading = _lyricsLoading.asStateFlow()
     private val _lyricsProviderRowStates = MutableStateFlow<Map<String, LyricsProviderRowState>>(emptyMap())
     val lyricsProviderRowStates = _lyricsProviderRowStates.asStateFlow()
-    /** Per-song lyrics timing offset in ms (Part J), applied on top of the global offset. */
+    /** Per-song lyrics timing offset in ms, applied on top of the global offset. */
     private val _lyricsOffsetMs = MutableStateFlow(0)
     val lyricsOffsetMs = _lyricsOffsetMs.asStateFlow()
     private val _messages = Channel<String>(Channel.BUFFERED)
@@ -501,6 +502,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val youTubeTestRunning = _youTubeTestRunning.asStateFlow()
     /** Serialises account → playlists → liked songs → Home so they never race each other. */
     private var youtubeSyncJob: Job? = null
+    private var youtubeSyncGeneration = 0L
     /**
      * False until the persisted settings have actually been read. The Library uses this to avoid
      * showing the "nothing here yet" hero before it knows whether YouTube Music is connected.
@@ -551,7 +553,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private var refillKey: String? = null
     private var radioSeedingTrackId: String? = null
     private val prefetchedStreamIds = mutableSetOf<String>()
-    /** Track ids we have already tried to upgrade to real album art (Part J). */
+    /** Track ids we have already tried to upgrade to real album art. */
     private val artworkResolved = mutableSetOf<String>()
     private var tapStartedAt = 0L
     private var tapTrackId: String? = null
@@ -850,6 +852,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
 
+        // Keep the next queue entries warm whenever the queue/current item changes. Stream, metadata
+        // and square artwork preparation run off the playback path; none delays the current song.
+        viewModelScope.launch {
+            container.playback.state
+                .map { state -> state.upNextIds.filterNot { it == state.trackId }.take(REMOTE_PREFETCH_COUNT) }
+                .distinctUntilChanged()
+                .collect { ids ->
+                    val upcoming = ids.mapNotNull { id ->
+                        _remoteTracks.value[id] ?: tracks.value.firstOrNull { it.id == id }
+                    }
+                    prefetchRemoteTracks(upcoming)
+                }
+        }
+
         // ONE search pipeline: 300 ms debounce + flatMapLatest cancels the previous query as soon
         // as the user types again. The repository's LRU makes a repeated prefix instant.
         viewModelScope.launch {
@@ -986,7 +1002,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 .collect { (currentId, nextId) ->
                     currentId?.let(::prefetchRemoteStream)
                     nextId?.let(::prefetchRemoteStream)
-                    // Upgrade a YouTube video thumbnail to real square album art (Part J).
+                    // Upgrade a YouTube video thumbnail to real square album art.
                     currentId?.let(::ensureArtwork)
                     nextId?.let(::ensureArtwork)
                 }
@@ -1296,7 +1312,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    // ---- Stage 1B: YouTube Music integration -------------------------------------------------
+    // ---- YouTube Music integration -------------------------------------------------
 
     fun setYouTubeIntegration(enabled: Boolean) {
         updateSettings { it.copy(youtubeIntegration = enabled) }
@@ -1326,7 +1342,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      *  3. `VLLM` liked songs (+ continuations),
      *  4. Home and history.
      *
-     * A 401/403 in step 1 stops the sequence: the client has already verified the expiry against
+     * A 401/403 in stops the sequence: the client has already verified the expiry against
      * the account menu, so the UI shows the "log in again" state instead of retrying.
      */
     fun syncYouTubeAccount(includeHome: Boolean = true, force: Boolean = false) {
@@ -1339,14 +1355,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      * below fires from the DataStore flow, one tick before [settings] reflects `youtubeIntegration`.
      */
     private fun startYouTubeSync(includeHome: Boolean, force: Boolean) {
-        if (youtubeSyncJob?.isActive == true) return
+        if (youtubeSyncJob?.isActive == true) {
+            if (!force) return
+            youtubeSyncJob?.cancel()
+        }
+        val generation = ++youtubeSyncGeneration
         youtubeSyncJob = viewModelScope.launch {
             // Paint the last known playlists from Room before any network work starts, so a
             // reopened app shows the library immediately instead of an empty screen.
             hydrateCachedPlaylists()
+            if (generation != youtubeSyncGeneration) return@launch
             _youtubeLibraryLoading.value = true
             try {
                 if (!youTubeSignedIn()) {
+                    if (generation != youtubeSyncGeneration) return@launch
                     _youtubePlaylists.value = emptyList()
                     // An expired session is still a failure to explain, not an empty library.
                     _youtubeLibraryError.value = if (container.youtubeAuth.snapshot()?.expired == true) {
@@ -1358,9 +1380,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     return@launch
                 }
                 // 1) Account menu: resolves the name and proves the cookie still works.
-                when (val account = container.youtube.accountMenu()) {
+                val account = container.youtube.accountMenu()
+                if (generation != youtubeSyncGeneration) return@launch
+                when (account) {
                     is YouTubeLoadResult.Success -> {
-                        if (account.value.first.isNotBlank()) {
+                        if (account.value.first.isNotBlank() || account.value.second.isNotBlank()) {
                             container.youtubeAuth.updateProfile(account.value.first, account.value.second)
                         }
                     }
@@ -1375,7 +1399,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     }
                 }
                 // 2) The real playlist list.
-                when (val playlists = container.youtube.likedPlaylists(force)) {
+                val playlists = container.youtube.likedPlaylists(force)
+                if (generation != youtubeSyncGeneration) return@launch
+                when (playlists) {
                     is YouTubeLoadResult.Success -> {
                         _youtubePlaylists.value = playlists.value
                         _youtubeLibraryError.value = null
@@ -1388,10 +1414,18 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 if (!youTubeSignedIn()) return@launch
                 // 3) Liked songs, quietly (no "Synced N liked songs" toast on every launch).
                 syncLikedSongs(notify = false)
+                if (generation != youtubeSyncGeneration) return@launch
                 // 4) Home and history only after the library data has landed.
                 if (includeHome) loadHome(force = true)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                if (generation == youtubeSyncGeneration) {
+                    _youtubeLibraryError.value = "Couldn't refresh YouTube Music"
+                    AppLog.w("YouTube", "Account sync failed", error)
+                }
             } finally {
-                _youtubeLibraryLoading.value = false
+                if (generation == youtubeSyncGeneration) _youtubeLibraryLoading.value = false
             }
         }
     }
@@ -1717,7 +1751,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             }
             val shelvesResult = shelvesJob.await()
             // Recents fallback comes from the merged mirror first (it now includes plays from other
-            // devices via STEP 8); the fetched history page is only a first-run fallback.
+            // devices via ); the fetched history page is only a first-run fallback.
             var history = mergedHistory.value
                 .filter { it.videoId != null }
                 .map { it.track }
@@ -2552,6 +2586,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val activeSignIn = youtubeSignInStartedAt != 0L
         youtubeSignInStartedAt = 0L
         val delegated = session.delegatedSessionId.trim()
+        _youtubePlaylists.value = emptyList()
+        _youtubeLibraryError.value = null
         container.youtubeAuth.save(
             YouTubeAuth(
                 cookie = session.cookie,
@@ -2570,6 +2606,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 lastRefreshedAt = System.currentTimeMillis(),
             ),
         )
+        container.liveSync.onYouTubeAccountChanged()
         container.youtubeAuth.clearHealFailure()
         YouTubeSessionLog.record(
             "login",
@@ -2582,7 +2619,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         container.playbackReporting.reset()
         container.youtube.invalidateHome()
         // Ordered, not parallel: account menu verifies the new cookie before anything else runs.
-        syncYouTubeAccount(includeHome = true)
+        startYouTubeSync(includeHome = true, force = true)
         if (activeSignIn) _messages.trySend("Signed in to YouTube Music")
         // Any playlist edits made while signed out/failed are now retryable.
         flushYouTubeSync()
@@ -2590,8 +2627,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     fun signOutYouTube() {
         youtubeSyncJob?.cancel()
+        youtubeSyncGeneration++
         container.playbackReporting.reset()
         container.youtubeAuth.clear(SessionClearRules.DISCONNECT)
+        container.liveSync.onYouTubeAccountChanged()
         // The explicit Disconnect is one of only two moments the browser cookies are removed.
         clearYouTubeWebSessionCookies()
         YouTubeSessionLog.record("session", "disconnect caller=${SessionClearRules.DISCONNECT}")
@@ -2695,8 +2734,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         prefetchRemoteTracks(start.queue.drop(start.index + 1).take(REMOTE_PREFETCH_COUNT))
         viewModelScope.launch {
             try {
-                track.remoteId?.let { container.youtube.resolveStream(it) }
+                // Fill metadata/art independently of stream resolution, so art and lyrics can be
+                // ready while the first audio URL is still being resolved.
                 backfillTrackMetadata(track)
+                ensureArtwork(track.id)
+                track.remoteId?.let { container.youtube.resolveStream(it) }
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (error: Throwable) {
@@ -2708,9 +2750,17 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Warms the resolver for the next few queue entries so Next is instant. */
+    /** Warms stream, missing metadata, and artwork for the next few queue entries. */
     private fun prefetchRemoteTracks(tracks: List<Track>) {
-        tracks.forEach { prefetchRemoteStream(it.id) }
+        val allowNetworkPrefetch = com.auralis.app.data.network.NetworkQuality
+            .allowPrefetch(container.appContext, settings.value)
+        tracks.filter { it.isRemote }.forEach { track ->
+            prefetchRemoteStream(track.id)
+            if (allowNetworkPrefetch) {
+                backfillTrackMetadata(track)
+                ensureArtwork(track.id)
+            }
+        }
     }
 
     /**
@@ -3110,7 +3160,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * Resolves a circular artist photo (Part L). [knownUrl] is used directly when the caller already
+     * Resolves a circular artist photo. [knownUrl] is used directly when the caller already
      * has one; otherwise the browse id or a close Deezer name match is looked up off the main thread.
      * Results (and 7-day negatives) are cached in Room so lists never block while scrolling.
      */
@@ -3201,7 +3251,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         )
     }
 
-    /** Plays a playlist in a random order (Part R ⋮ menu). */
+    /** Plays a playlist in a random order. */
     fun shufflePlaylist(playlistId: Long) {
         val ordered = playlistItems(playlistId).map { it.track }
         if (ordered.isEmpty()) return
@@ -3389,7 +3439,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         container.playback.syncContext(tracks)
     }
 
-    // ---- YouTube Music account sync (Part E) ------------------------------------------------
+    // ---- YouTube Music account sync ------------------------------------------------
 
     /**
      * The single source of truth for "this device holds a usable YouTube Music login". True only when
@@ -3727,7 +3777,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 // are queried in parallel; each intermediate winner is shown as it arrives.
                 container.lyrics.load(track, onUpdate = { partial ->
                     if (loadedLyricsTrackId == track.id) {
-                        _lyrics.value = partial
+                        // Upgrade-only: word > line > unsynced, and never over lyrics the user saved.
+                        val current = _lyrics.value
+                        if (current == null || (current.source != LyricsSource.USER && shouldUpgradeLyrics(current, partial))) {
+                            _lyrics.value = partial
+                        }
                         _lyricsLoading.value = false
                     }
                 })
@@ -3738,13 +3792,18 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 null
             }
             if (loadedLyricsTrackId == track.id) {
-                _lyrics.value = result
+                val current = _lyrics.value
+                if (current == null || (result != null && current.source != LyricsSource.USER &&
+                        result.sync.ordinal >= current.sync.ordinal)
+                ) {
+                    _lyrics.value = result
+                }
                 _lyricsLoading.value = false
             }
         }
     }
 
-    /** Nudges this song's lyrics timing by [deltaMs] (clamped to ±5 s) and persists it. Part J. */
+    /** Nudges this song's lyrics timing by [deltaMs] (clamped to ±5 s) and persists it.  */
     fun adjustTrackLyricsOffset(track: Track, deltaMs: Int) {
         val next = (_lyricsOffsetMs.value + deltaMs).coerceIn(-MAX_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
         _lyricsOffsetMs.value = next
@@ -3754,7 +3813,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Clears this song's lyrics timing offset back to zero. Part J. */
+    /** Clears this song's lyrics timing offset back to zero.  */
     fun resetTrackLyricsOffset(track: Track) {
         _lyricsOffsetMs.value = 0
         viewModelScope.launch {
@@ -3941,7 +4000,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    // ---- Online metadata (Part G) ----------------------------------------------------------
+    // ---- Online metadata ----------------------------------------------------------
 
     private val _metadataCandidates = MutableStateFlow<List<com.auralis.app.data.metadata.MetadataCandidate>>(emptyList())
     val metadataCandidates = _metadataCandidates.asStateFlow()
@@ -4424,7 +4483,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         const val MIN_RADIO_AHEAD = 3
         const val PREFETCH_MEMORY_LIMIT = 200
         const val ARTWORK_MEMORY_LIMIT = 200
-        /** Per-song lyrics timing offset ceiling (Part J). */
+        /** Per-song lyrics timing offset ceiling. */
         const val MAX_LYRICS_OFFSET_MS = 5_000
         /** Recent searches shown on the empty Search page. */
         const val SEARCH_HISTORY_LIMIT = 20

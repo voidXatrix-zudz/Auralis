@@ -370,7 +370,7 @@ data class ProviderCacheEntity(
 )
 
 /**
- * Cached circular artist photo (Part L). [key] is "yt:<browseId>" when known, else
+ * Cached circular artist photo. [key] is "yt:<browseId>" when known, else
  * "name:<normalised artist>". A row with a blank [url] is a 7-day negative marker so we do not
  * re-query on every frame while scrolling.
  */

@@ -30,7 +30,7 @@ typealias SearchResult = YtSong
  * Normalizes YouTube and Google User Content artwork URLs:
  * - Forces https
  * - Handles "//" prefixes
- * - Sets the requested square size for googleusercontent URLs (largest by default, Part J)
+ * - Sets the requested square size for googleusercontent URLs (largest by default, )
  *
  * [sizePx] defaults to the largest square YouTube Music serves; pass [ARTWORK_FALLBACK_PX] for the
  * smaller variant used when the large one fails to load.

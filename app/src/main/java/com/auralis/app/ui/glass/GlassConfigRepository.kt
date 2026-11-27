@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * STEP 2.2 - the one writer/reader of the glass preference values.
+ * the one writer/reader of the glass preference values.
  *
  * It reuses the existing DataStore-backed [SettingsRepository] (no SharedPreferences, no second
  * copy) and combines the three stored glass values with the RESOLVED performance tier into ONE
@@ -43,7 +43,7 @@ class GlassConfigRepository(
     val config: StateFlow<GlassConfig> =
         combine(settings, tier) { stored, resolvedTier -> stored.toGlassConfig(resolvedTier) }
             .distinctUntilChanged()
-            // STEP 10.1: ONE Logs line per GlassConfig change, so the in-app Logs screen shows
+            // ONE Logs line per GlassConfig change, so the in-app Logs screen shows
             // exactly what the renderer was told without an attached debugger.
             .onEach { config ->
                 AppLog.i(

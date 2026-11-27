@@ -1,6 +1,6 @@
 package com.auralis.app.domain.model
 
-/** Which resolver stack the player prefers for YouTube streams (Part H/M). */
+/** Which resolver stack the player prefers for YouTube streams. */
 enum class StreamSourceMode { AUTO, NEWPIPE, INNERTUBE, YOUTUBEJS }
 
 /**
