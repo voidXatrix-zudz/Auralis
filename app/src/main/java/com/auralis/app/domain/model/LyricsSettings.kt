@@ -28,6 +28,24 @@ enum class LyricsProviderChoice(
     KUGOU("kugou", "KuGou", "Extensive Asian & global catalog", false),
     LOCAL("local", "Local File", "Embedded tags or companion .lrc / .ttml", true);
 
+    /**
+     * Provider id used by the online lyrics aggregator, or null when the choice only expresses
+     * "no preference" ([AUTO]) or a non-network source ([LOCAL]). The ids are the same strings
+     * [com.auralis.app.data.lyrics.LyricsProviderCatalog] exposes.
+     */
+    val catalogId: String?
+        get() = when (this) {
+            AUTO, LOCAL -> null
+            LRC_RED -> "LrcRed"
+            BINI -> "BiniLyrics"
+            MUSIXMATCH -> "Musixmatch"
+            UNISON -> "Unison"
+            LRCLIB -> "LRCLIB"
+            BETTER_LYRICS -> "BetterLyrics"
+            LYRICS_PLUS -> "LyricsPlus"
+            KUGOU -> "KuGou"
+        }
+
     companion object {
         fun fromId(id: String?): LyricsProviderChoice {
             return entries.find { it.id.equals(id, ignoreCase = true) } ?: AUTO

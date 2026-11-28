@@ -431,6 +431,8 @@ fun WordByWordKaraokeText(
     bounceFactor: Float = 1.0f,
     selectedForCard: Boolean = false,
     selectionMode: Boolean = false,
+    /** Romanized/translated line drawn under the original in [com.auralis.app.domain.model.LyricsDisplayMode.DUAL_LINE]. */
+    secondaryText: String? = null,
 ) {
     val distance = abs(index - activeIndex)
     val isActive = distance == 0
@@ -593,6 +595,19 @@ fun WordByWordKaraokeText(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+        }
+
+        if (!selectionMode && !secondaryText.isNullOrBlank()) {
+            Text(
+                text = secondaryText,
+                fontFamily = lyricsFontFamily,
+                fontSize = (fontSize.value * 0.56f).sp,
+                fontWeight = if (isBold) FontWeight.SemiBold else FontWeight.Normal,
+                color = inactiveColor.copy(alpha = 0.85f),
+                lineHeight = (fontSize.value * 0.70f).sp,
+                letterSpacing = 0.sp,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            )
         }
     }
 }

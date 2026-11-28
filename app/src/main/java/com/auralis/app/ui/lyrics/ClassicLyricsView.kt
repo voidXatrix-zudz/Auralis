@@ -85,6 +85,9 @@ fun ClassicLyricsView(
     val activeFontFamily = remember(lyricsSettings.fontChoice, fontResolver) {
         fontResolver(lyricsSettings.fontChoice)
     }
+    val displayMode = remember(lyricsSettings.lyricsDisplayMode, lyricsSettings.romanizeForeignLyrics) {
+        LyricsPresentation.effectiveMode(lyricsSettings)
+    }
 
     CompositionLocalProvider(LocalLyricsFontFamily provides activeFontFamily) {
         val synced = lyrics?.synced
@@ -99,6 +102,9 @@ fun ClassicLyricsView(
                 }
             }
             !synced.isNullOrEmpty() -> {
+                val presented = remember(synced, displayMode) {
+                    LyricsPresentation.present(synced, displayMode)
+                }
                 val listState = rememberLazyListState()
                 val coroutineScope = rememberCoroutineScope()
                 val livePosition by rememberLyricsPosition(
@@ -149,9 +155,10 @@ fun ClassicLyricsView(
                             modifier = Modifier.fillMaxSize(),
                         ) {
                             itemsIndexed(
-                                items = synced,
-                                key = { index, line -> "${line.timeMs}_$index" },
-                            ) { index, line ->
+                                items = presented,
+                                key = { index, item -> "${item.line.timeMs}_$index" },
+                            ) { index, item ->
+                                val line = item.line
                                 WordByWordKaraokeText(
                                     line = line,
                                     index = index,
@@ -167,9 +174,10 @@ fun ClassicLyricsView(
                                     glowColor = glowColor,
                                     isBold = lyricsSettings.isBold,
                                     bounceFactor = lyricsSettings.bounce,
+                                    secondaryText = item.secondaryText,
                                 )
 
-                                val nextLine = synced.getOrNull(index + 1)
+                                val nextLine = presented.getOrNull(index + 1)?.line
                                 val lineEnd = line.endMs ?: nextLine?.timeMs
                                 val gapDuration = if (nextLine != null && lineEnd != null) {
                                     nextLine.timeMs - lineEnd
@@ -218,7 +226,7 @@ fun ClassicLyricsView(
                         .padding(horizontal = 24.dp, vertical = 20.dp),
                 ) {
                     Text(
-                        text = lyrics!!.plain!!,
+                        text = LyricsPresentation.presentPlain(lyrics!!.plain!!, displayMode),
                         fontFamily = activeFontFamily,
                         fontSize = (lyricSizeSp * lyricsSettings.fontSizeScale * 0.78f).coerceIn(14f, 44f).sp,
                         fontWeight = if (lyricsSettings.isBold) FontWeight.Bold else FontWeight.Medium,

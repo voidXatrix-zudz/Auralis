@@ -199,9 +199,12 @@ class LyricsRepository(
         val enabled = current?.lyricsProvidersEnabled ?: AppSettings().lyricsProvidersEnabled
         val providerMap = buildProviders(current)
         loadProviderHealth(providerMap.keys)
+        // An explicit per-track choice wins; otherwise the global preferred provider in Lyrics
+        // settings decides which source is tried first. Both only reorder the search, so a provider
+        // that returns nothing still falls through to the rest of the enabled list.
         val preferredProvider = runCatching {
             providerCacheDao?.get(KIND_CHOICE, track.id, CHOICE_PROVIDER)?.payload
-        }.getOrNull()
+        }.getOrNull() ?: current?.lyricsSettings?.preferredProvider?.catalogId
         // Query all sources; the aggregator ranks word timing above line timing above plain text.
         val requestedOrder = (current?.lyricsProviderOrder ?: AppSettings.DEFAULT_LYRICS_PROVIDER_ORDER)
             .filter { it in enabled }
@@ -464,6 +467,14 @@ class LyricsRepository(
     /** Clears only the negative ("none found") markers so a settings change re-queries everything. */
     suspend fun clearNegativeCache() = withContext(Dispatchers.IO) {
         runCatching { providerCacheDao?.clearNegative() }
+    }
+
+    /**
+     * Drops every manual per-track provider choice so the global preferred provider in Lyrics
+     * settings takes effect. Called when that global preference changes.
+     */
+    suspend fun clearSelectedProviders() = withContext(Dispatchers.IO) {
+        runCatching { providerCacheDao?.clearKind(KIND_CHOICE) }
     }
 
     suspend fun import(track: Track, uri: Uri): Lyrics = withContext(Dispatchers.IO) {

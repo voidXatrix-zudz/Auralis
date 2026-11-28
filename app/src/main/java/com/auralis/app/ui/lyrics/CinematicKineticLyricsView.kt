@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -14,6 +15,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -41,12 +43,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auralis.app.domain.model.LrcWord
 import com.auralis.app.domain.model.Lyrics
+import com.auralis.app.domain.model.LyricsDisplayMode
 import com.auralis.app.domain.model.LyricsGlowPalette
 import com.auralis.app.domain.model.LyricsSettings
+import com.auralis.app.ui.performance.LocalPerformanceProfile
 import com.auralis.app.ui.screens.ArtPalette
 import kotlin.math.PI
 import kotlin.math.cos
@@ -141,6 +147,12 @@ fun CinematicKineticLyricsView(
     isLandscape: Boolean = false,
 ) {
     val syncedLines = lyrics?.synced.orEmpty()
+    val displayMode = remember(settings.lyricsDisplayMode, settings.romanizeForeignLyrics) {
+        LyricsPresentation.effectiveMode(settings)
+    }
+    val displayLines = remember(syncedLines, displayMode) {
+        LyricsPresentation.cinematicLines(lyrics, displayMode)
+    }
     if (isLoading && syncedLines.isEmpty()) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -211,7 +223,7 @@ fun CinematicKineticLyricsView(
     val chosenFontFamily = remember(settings.fontChoice, fontResolver) { fontResolver(settings.fontChoice) }
 
     LaunchedEffect(
-        syncedLines,
+        displayLines,
         layoutSeed,
         settings.lrSwing,
         settings.verticalSpacing,
@@ -237,9 +249,9 @@ fun CinematicKineticLyricsView(
         var lastAlign = -1
         var streak = 0
 
-        for (i in syncedLines.indices) {
-            val curLine = syncedLines[i]
-            val prevLine = if (i > 0) syncedLines[i - 1] else null
+        for (i in displayLines.indices) {
+            val curLine = displayLines[i]
+            val prevLine = if (i > 0) displayLines[i - 1] else null
 
             if (prevLine != null) {
                 val prevEndMs = prevLine.endMs ?: (prevLine.timeMs + 3000L)
@@ -283,8 +295,8 @@ fun CinematicKineticLyricsView(
                     val curEndMs = curLine.endMs
                     val lineDur = if (curEndMs != null && curEndMs > lineStart) {
                         curEndMs - lineStart
-                    } else if (i < syncedLines.size - 1 && syncedLines[i + 1].timeMs > lineStart) {
-                        (syncedLines[i + 1].timeMs - lineStart).coerceIn(1200L, 7000L)
+                    } else if (i < displayLines.size - 1 && displayLines[i + 1].timeMs > lineStart) {
+                        (displayLines[i + 1].timeMs - lineStart).coerceIn(1200L, 7000L)
                     } else {
                         3500L
                     }
@@ -440,14 +452,25 @@ fun CinematicKineticLyricsView(
     var smoothPlaybackMs by remember { mutableFloatStateOf(0f) }
     var lastRawPositionMs by remember { mutableLongStateOf(-1L) }
     val scratchDiamondPath = remember { Path() }
+    val performance = LocalPerformanceProfile.current
+    // LOW tier drops the cinematic clock to ~30 fps; the glass material is untouched.
+    val frameIntervalNanos = if (performance.isLow) 33_000_000L else 0L
 
-    LaunchedEffect(Unit) {
+    // The clock only runs while playing. Paused, it settles one frame and stops, so a paused
+    // player costs no per-frame camera/starfield work.
+    LaunchedEffect(currentIsPlaying) {
         var prevNanos = 0L
+        var lastEmitNanos = 0L
+        var firstFrame = true
         while (true) {
             withFrameNanos { nowNanos ->
                 if (prevNanos == 0L) prevNanos = nowNanos
                 val dt = min(0.05f, ((nowNanos - prevNanos) / 1_000_000_000f))
                 prevNanos = nowNanos
+                if (frameIntervalNanos > 0L && nowNanos - lastEmitNanos < frameIntervalNanos) {
+                    return@withFrameNanos
+                }
+                lastEmitNanos = nowNanos
 
                 val rawMs = currentPositionProvider()
                 // positionProvider is already frame-interpolated at display refresh rate;
@@ -472,7 +495,8 @@ fun CinematicKineticLyricsView(
                     focusY = activeInst.cy
                     baseZoom = 0.92f
                 } else if (allWords.isNotEmpty()) {
-                    val activeIdx = allWords.indexOfFirst { nowMs in it.startMs..it.endMs }
+                    val candidate = activeWordIndex(allWords, nowMs)
+                    val activeIdx = if (candidate >= 0 && nowMs <= allWords[candidate].endMs) candidate else -1
                     val activeWord = if (activeIdx >= 0) {
                         allWords[activeIdx]
                     } else {
@@ -526,6 +550,11 @@ fun CinematicKineticLyricsView(
                 camZoom = (f * camZoom + dt * camVz + hhoo * targetZoom) * detInv
                 camVz = (camVz + hoo * (targetZoom - camZoom)) * detInv
             }
+            if (firstFrame) {
+                firstFrame = false
+                // Paused: one settle frame has been drawn, so stop the clock entirely.
+                if (!currentIsPlaying) return@LaunchedEffect
+            }
         }
     }
 
@@ -575,6 +604,9 @@ fun CinematicKineticLyricsView(
 
             // 2. Animated multi-color palette radial glows across the middle of the screen
             val pal = settings.palette
+        // LOW tier removes secondary glow and thins the starfield; the lyrics themselves stay.
+        val glowFactor = if (performance.glowEnabled) settings.glowIntensity else 0f
+        val starDensity = settings.sparkleDensity * if (performance.ambientMotionEnabled) 1f else 0.35f
             val drift1X = w * (0.28f + 0.16f * cos(tSec * 0.25f))
             val drift1Y = h * (0.34f + 0.12f * sin(tSec * 0.30f))
             drawCircle(
@@ -611,7 +643,7 @@ fun CinematicKineticLyricsView(
             )
 
             // 3. 3-Layer Parallax Floating Starfield / Sparkles
-            val starCount = (stars.size * settings.sparkleDensity.coerceIn(0f, 1f)).toInt()
+            val starCount = (stars.size * starDensity.coerceIn(0f, 1f)).toInt()
             if (starCount > 0) {
                 val activeInst = layoutBlocks.any {
                     it is KineticBlock.InstrumentalBlock && nowMs >= it.startMs && nowMs <= it.endMs
@@ -687,6 +719,31 @@ fun CinematicKineticLyricsView(
                         }
                     }
                 }
+            }
+        }
+
+        // Dual-line in the cinematic engine: the romanized words stay the moving hero, and the
+        // original line is pinned above the controls so both are readable.
+        if (displayMode == LyricsDisplayMode.DUAL_LINE) {
+            val activeLineIndex by remember(syncedLines) {
+                derivedStateOf { findActiveLyricIndex(syncedLines, currentPlaybackMs) }
+            }
+            val originalText = syncedLines.getOrNull(activeLineIndex)?.text
+            if (!originalText.isNullOrBlank()) {
+                Text(
+                    text = originalText,
+                    color = Color(settings.baseColor.colorArgb).copy(alpha = 0.62f),
+                    fontFamily = chosenFontFamily,
+                    fontSize = 14.sp,
+                    fontWeight = if (settings.isBold) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp, vertical = 150.dp),
+                )
             }
         }
     }
@@ -838,4 +895,21 @@ private fun DrawScope.drawWordSinglePass(
             }
         }
     }
+}
+
+/** Last word whose start is at or before [nowMs]; O(log N) for the sorted word list. */
+private fun activeWordIndex(words: List<KineticWordNode>, nowMs: Long): Int {
+    var low = 0
+    var high = words.size - 1
+    var result = -1
+    while (low <= high) {
+        val mid = (low + high) ushr 1
+        if (words[mid].startMs <= nowMs) {
+            result = mid
+            low = mid + 1
+        } else {
+            high = mid - 1
+        }
+    }
+    return result
 }

@@ -1144,7 +1144,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun back() { _nav.update { it.pop() } }
     fun updateSettings(transform: (AppSettings) -> AppSettings) { viewModelScope.launch { runCatching { container.settings.update(transform) }.onFailure { report("Couldn't save settings", it) } } }
     fun updateLyricsSettings(transform: (LyricsSettings) -> LyricsSettings) {
+        val before = settings.value.lyricsSettings
+        val after = transform(before)
         updateSettings { current -> current.copy(lyricsSettings = transform(current.lyricsSettings)) }
+        // Only a provider change invalidates lookup state; sliders and fonts must stay cheap.
+        if (after.preferredProvider != before.preferredProvider) {
+            viewModelScope.launch { runCatching { container.lyrics.clearSelectedProviders() } }
+            onLyricsSettingsChanged()
+        }
     }
 
     // ---- Clerk authentication -----------------------------------------------------------------

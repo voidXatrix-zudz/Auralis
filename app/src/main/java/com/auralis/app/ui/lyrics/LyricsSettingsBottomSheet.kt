@@ -456,12 +456,18 @@ fun LyricsSettingsBottomSheet(
 
                 Spacer(Modifier.height(10.dp))
 
+                val romanizeSupported = android.os.Build.VERSION.SDK_INT >= 29
                 SheetToggleRow(
                     title = "Romanize Foreign Lyrics",
-                    subtitle = "Transliterate Korean, Japanese, Chinese, Hindi, Cyrillic",
-                    checked = settings.romanizeForeignLyrics,
+                    subtitle = if (romanizeSupported) {
+                        "Transliterate Korean, Japanese, Chinese, Hindi, Cyrillic"
+                    } else {
+                        "Requires Android 10 (API 29) or higher"
+                    },
+                    checked = settings.romanizeForeignLyrics && romanizeSupported,
                     accent = accent,
-                    onCheckedChange = { onUpdateSettings(settings.copy(romanizeForeignLyrics = it)) },
+                    enabled = romanizeSupported,
+                    onCheckedChange = { if (romanizeSupported) onUpdateSettings(settings.copy(romanizeForeignLyrics = it)) },
                 )
 
                 Spacer(Modifier.height(14.dp))
@@ -581,6 +587,7 @@ private fun SheetToggleRow(
     subtitle: String,
     checked: Boolean,
     accent: Color,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -588,17 +595,18 @@ private fun SheetToggleRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Color.White.copy(alpha = 0.06f))
-            .clickable { onCheckedChange(!checked) }
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-            Text(text = title, fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = Color.White)
+            Text(text = title, fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = if (enabled) 1f else 0.5f))
             Text(text = subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.50f))
         }
         Switch(
             checked = checked,
+            enabled = enabled,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
