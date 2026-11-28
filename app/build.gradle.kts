@@ -48,6 +48,7 @@ android {
 
         // Blank when no key was supplied; ClerkAuthRepository skips auth in that case.
         buildConfigField("String", "CLERK_PUBLISHABLE_KEY", "\"$clerkPublishableKey\"")
+        buildConfigField("String", "SYNC_WORKER_URL", "\"https://auralis-sync-worker.auralis-sync-dp-2026.workers.dev\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

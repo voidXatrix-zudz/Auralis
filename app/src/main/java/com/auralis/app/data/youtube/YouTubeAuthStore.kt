@@ -186,6 +186,28 @@ class YouTubeAuthStore(context: Context) {
 
     fun snapshot(): YouTubeAuth? = _auth.value
 
+    fun ownerId(): String? = prefs.getString(KEY_OWNER_ID, null)
+
+    fun bindOwner(ownerId: String) { prefs.edit().putString(KEY_OWNER_ID, ownerId).apply() }
+
+    fun lastUploadedHash(): String? = prefs.getString(KEY_UPLOAD_HASH, null)
+
+    fun lastUploadAttemptAt(): Long = prefs.getLong(KEY_UPLOAD_ATTEMPT, 0L)
+
+    fun recordUploadAttempt(at: Long) { prefs.edit().putLong(KEY_UPLOAD_ATTEMPT, at).apply() }
+
+    fun recordUploaded(hash: String) {
+        prefs.edit().putString(KEY_UPLOAD_HASH, hash).putLong(KEY_UPLOAD_ATTEMPT, System.currentTimeMillis()).apply()
+    }
+
+    fun pendingDeleteOwnerHash(): String? = prefs.getString(KEY_PENDING_DELETE, null)
+
+    fun setPendingDeleteOwnerHash(hash: String?) {
+        prefs.edit().apply {
+            if (hash == null) remove(KEY_PENDING_DELETE) else putString(KEY_PENDING_DELETE, hash)
+        }.apply()
+    }
+
     /** True when the encrypted blob exists on disk (even if it cannot be decrypted). */
     fun hasStoredBlob(): Boolean = prefs.getString(KEY_BLOB, null)?.isNotBlank() == true
 
@@ -227,10 +249,7 @@ class YouTubeAuthStore(context: Context) {
     }
 
     /**
-     * Erases the session. Only the explicit Disconnect button may call this; every other label is
-     * ignored and logged, so Clerk sign-out, the switch, app start, "Use a different account" (which
-     * only expires browser cookies) and failed requests can never wipe a session the next launch
-     * could have healed.
+     * Erases the session only for an explicit disconnect or Clerk identity boundary.
      */
     fun clear(caller: String) {
         if (!SessionClearRules.mayClear(caller)) {
@@ -240,6 +259,7 @@ class YouTubeAuthStore(context: Context) {
         _auth.value = null
         _readError.value = null
         _hasBlob.value = false
+        prefs.edit().remove(KEY_OWNER_ID).remove(KEY_UPLOAD_HASH).remove(KEY_UPLOAD_ATTEMPT).apply()
         writer.execute {
             runCatching { prefs.edit().remove(KEY_BLOB).commit() }
         }
@@ -339,6 +359,10 @@ class YouTubeAuthStore(context: Context) {
         const val PREFS = "yt_auth_secure"
         const val KEY_BLOB = "session"
         const val KEY_HEAL_FAILED_AT = "heal_failed_at"
+        const val KEY_OWNER_ID = "clerk_owner_id"
+        const val KEY_UPLOAD_HASH = "uploaded_hash"
+        const val KEY_UPLOAD_ATTEMPT = "upload_attempt_at"
+        const val KEY_PENDING_DELETE = "pending_delete_owner_hash"
         const val KEY_ALIAS = "auralis.yt.auth"
         const val KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

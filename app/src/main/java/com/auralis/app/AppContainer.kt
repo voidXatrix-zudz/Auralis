@@ -207,6 +207,12 @@ class AppContainer(context: Context) {
             performance,
         )
     }
+    val syncClient by lazy { com.auralis.app.data.sync.SyncClient(auth = clerkAuth, client = youtubeHttp) }
+    val youtubeConnectionSync by lazy {
+        com.auralis.app.data.sync.YouTubeConnectionSync(
+            appContext, applicationScope, clerkAuth, youtubeAuth, syncClient, liveSync,
+        )
+    }
     /** Spotify (Exportify) CSV imports: background matching into local playlists. */
     val spotifyImport by lazy { com.auralis.app.data.spotify.SpotifyImportManager(appContext) }
     /** Battery Saver + thermal source for Automatic performance. App-lifetime, no polling. */

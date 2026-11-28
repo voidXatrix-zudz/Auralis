@@ -60,6 +60,7 @@ class AuralisApp : Application() {
         runStep("spotifyGraph") { com.auralis.app.data.spotify.SpotifyGraph.container = container }
         // Hand the graph to the live-sync worker so a background pass can reach Room and the account.
         runStep("liveSyncGraph") { com.auralis.app.data.youtube.LiveSyncGraph.container = container }
+        runStep("youtubeConnectionSync.start") { container.youtubeConnectionSync.start() }
         // Establish the InnerTube HTTP/2 connection while the first screen is still drawing so the
         // first user search does not pay the TCP/TLS handshake.
         runStep("youtube.warmUp") { container.youtube.warmUp() }

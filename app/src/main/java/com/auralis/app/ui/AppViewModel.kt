@@ -421,6 +421,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      * never leave the login screen spinning forever.
      */
     @Volatile private var clerkSignInStartedAt = 0L
+    @Volatile private var clerkSignInToastPending = false
     /**
      * Uptime of the last explicit YouTube sign-in tap, or 0 when none is pending. Only the login
      * dialog sets it, so a restored/silent session can never produce a "Signed in" message.
@@ -735,8 +736,17 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         // Clerk hand-off: the first time a Clerk (Google) user signs in, turn the YouTube Music
         // integration on and offer a one-time "Connect YouTube Music" prompt carrying their email.
         viewModelScope.launch {
-            _auth.map { it.signedIn }.distinctUntilChanged().collect { signedIn ->
-                if (signedIn) maybeOfferYouTubeConnect()
+            _auth.map { it.account?.userId }.distinctUntilChanged().collect { userId ->
+                if (userId != null) {
+                    val hasYouTubeLogin = container.youtubeConnectionSync.restoreForUser(userId)
+                    if (_auth.value.account?.userId == userId && !hasYouTubeLogin) {
+                        maybeOfferYouTubeConnect()
+                    }
+                    if (clerkSignInToastPending && _auth.value.account?.userId == userId) {
+                        clerkSignInToastPending = false
+                        if (!hasYouTubeLogin) _messages.trySend("Signed in")
+                    }
+                }
             }
         }
 
@@ -1075,7 +1085,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                             clerkInitTimeoutJob?.cancel()
                             container.clerkAuth.clearSignInMarker()
                             AppLog.i(TAG_CLERK, "Session active: leaving the sign-in gate")
-                            if (activeSignIn) _messages.trySend("Signed in")
+                            if (activeSignIn) clerkSignInToastPending = true
                         }
                     }
             }
@@ -2588,6 +2598,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val delegated = session.delegatedSessionId.trim()
         _youtubePlaylists.value = emptyList()
         _youtubeLibraryError.value = null
+        val ownerId = _auth.value.account?.userId
+        if (ownerId != null) container.youtubeAuth.bindOwner(ownerId)
         container.youtubeAuth.save(
             YouTubeAuth(
                 cookie = session.cookie,
@@ -2606,6 +2618,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 lastRefreshedAt = System.currentTimeMillis(),
             ),
         )
+        container.youtubeConnectionSync.onYouTubeLogin(ownerId)
         container.liveSync.onYouTubeAccountChanged()
         container.youtubeAuth.clearHealFailure()
         YouTubeSessionLog.record(
@@ -2626,10 +2639,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun signOutYouTube() {
+        val ownerId = _auth.value.account?.userId
         youtubeSyncJob?.cancel()
         youtubeSyncGeneration++
         container.playbackReporting.reset()
         container.youtubeAuth.clear(SessionClearRules.DISCONNECT)
+        container.youtubeConnectionSync.disconnect(ownerId)
         container.liveSync.onYouTubeAccountChanged()
         // The explicit Disconnect is one of only two moments the browser cookies are removed.
         clearYouTubeWebSessionCookies()

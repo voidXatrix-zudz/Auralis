@@ -172,6 +172,26 @@ class ClerkAuthRepository(context: Context) {
     val initializationError: Flow<Throwable?>
         get() = if (configured) Clerk.initializationError else flowOf(null)
 
+    fun currentUserId(): String? = if (isReady()) runCatching { Clerk.user?.id }.getOrNull() else null
+
+    /** Gets a new Clerk session JWT for a single API request. */
+    suspend fun freshSessionToken(expectedUserId: String? = null): String? {
+        if (!configured || !isReady()) return null
+        if (expectedUserId != null && currentUserId() != expectedUserId) return null
+        return try {
+            when (val result = Clerk.auth.getToken()) {
+                is ClerkResult.Success -> result.value.takeIf {
+                    expectedUserId == null || currentUserId() == expectedUserId
+                }
+                is ClerkResult.Failure -> null
+            }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            AppLog.w(TAG, "Session token unavailable")
+            null
+        }
+    }
+
     /**
      * Completes a Clerk deep-link callback that reached the Activity. The SDK's own receiver
      * normally handles this; this is a defensive second path when the app is relaunched by the

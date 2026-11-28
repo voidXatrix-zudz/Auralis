@@ -49,13 +49,12 @@ class SessionBlobLoader(
 }
 
 /**
- * Which callers may ever erase the stored YouTube session. Only the explicit Disconnect button may
- * do so. Everything else — Clerk sign-out, "Use a different account" (which only expires browser
- * cookies), the integration switch, app start, a failed request — must keep the blob so the next
- * launch can self-heal or the current account can stay usable if the chooser is cancelled.
+ * Which callers may erase the stored YouTube session.
  */
 object SessionClearRules {
     const val DISCONNECT = "Disconnect button"
+    const val CLERK_SIGN_OUT = "Clerk sign-out"
+    const val USER_MISMATCH = "Clerk user mismatch"
 
-    fun mayClear(caller: String): Boolean = caller == DISCONNECT
+    fun mayClear(caller: String): Boolean = caller in setOf(DISCONNECT, CLERK_SIGN_OUT, USER_MISMATCH)
 }
