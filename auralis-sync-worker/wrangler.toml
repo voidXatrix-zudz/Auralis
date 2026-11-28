@@ -10,6 +10,3 @@ binding = "DB"
 database_name = "auralis-sync"
 database_id = "3436b81e-3ea9-43cb-8a87-a599ff21eace"
 migrations_dir = "migrations"
-
-
-
