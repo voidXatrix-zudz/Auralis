@@ -25,7 +25,6 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +45,7 @@ import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.glass.GlassYouTubePlaylistScreen
+import com.auralis.app.ui.glass.GlassMenu
 import com.auralis.app.ui.theme.LocalThemeStyle
 
 /**
@@ -208,7 +208,7 @@ private fun YouTubePlaylistRow(
             IconButton(onClick = { menu = true }) {
                 Icon(Icons.Rounded.MoreVert, "More options", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            GlassMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Play next") }, onClick = { menu = false; onPlayNext() })
                 DropdownMenuItem(text = { Text("Add to queue") }, onClick = { menu = false; onQueue() })
             }

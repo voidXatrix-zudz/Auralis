@@ -3,6 +3,7 @@ package com.auralis.app.ui.screens
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassLibraryScreen
+import com.auralis.app.ui.glass.GlassMenu
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -343,7 +344,7 @@ fun LibraryScreen(
                 ) {
                     Icon(Icons.Rounded.Add, "Add", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                 }
-                DropdownMenu(plusOpen, { plusOpen = false }) {
+                GlassMenu(plusOpen, { plusOpen = false }) {
                     DropdownMenuItem(text = { Text("New playlist") }, leadingIcon = { Icon(Icons.Rounded.Add, null) }, onClick = { plusOpen = false; newName = ""; creating = true })
                     DropdownMenuItem(text = { Text("Import Spotify CSV") }, leadingIcon = { Icon(Icons.Rounded.Download, null) }, onClick = { plusOpen = false; onImportSpotify() })
                     DropdownMenuItem(text = { Text("History") }, leadingIcon = { Icon(Icons.Rounded.MusicNote, null) }, onClick = { plusOpen = false; onOpenHistory() })
@@ -380,7 +381,7 @@ fun LibraryScreen(
                     Text(sort.label)
                     Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(20.dp))
                 }
-                DropdownMenu(sortOpen, { sortOpen = false }) {
+                GlassMenu(sortOpen, { sortOpen = false }) {
                     LibrarySortOption.entries.forEach { option ->
                         DropdownMenuItem(
                             text = { Text(option.label) },
@@ -719,7 +720,7 @@ private fun PlaylistMenu(
     var expanded by remember(row.key) { mutableStateOf(false) }
     Box {
         IconButton(onClick = { expanded = true }) { Icon(Icons.Rounded.MoreVert, "More actions for ${row.name}") }
-        DropdownMenu(expanded, { expanded = false }) {
+        GlassMenu(expanded, { expanded = false }) {
             DropdownMenuItem(text = { Text("Play") }, leadingIcon = { Icon(Icons.Rounded.QueueMusic, null) }, onClick = { expanded = false; onPlay() })
             if (row.localPlaylistId != null) {
                 DropdownMenuItem(text = { Text("Shuffle") }, leadingIcon = { Icon(Icons.Rounded.Shuffle, null) }, onClick = { expanded = false; onShuffle() })

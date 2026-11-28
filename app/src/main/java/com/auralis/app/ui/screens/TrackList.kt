@@ -3,6 +3,7 @@ package com.auralis.app.ui.screens
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassTrackRows
+import com.auralis.app.ui.glass.GlassMenu
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -54,7 +55,7 @@ import com.auralis.app.ui.components.LocalDownloadActions
         IconButton(onClick={onFavorite(track)}) { Icon(if(track.id in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,contentDescription=if(track.id in favorites) "Remove favorite" else "Add favorite",tint=if(track.id in favorites) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
         Box {
             IconButton(onClick={expanded=true}) { Icon(Icons.Rounded.MoreVert,"More actions for ${track.title}") }
-            DropdownMenu(expanded,{expanded=false}) {
+            GlassMenu(expanded,{expanded=false}) {
                 DropdownMenuItem(text={Text("Play next")},onClick={onPlayNext(track);expanded=false})
                 DropdownMenuItem(text={Text(if(track.id in favorites) "Unlike" else "Like")},onClick={onFavorite(track);expanded=false})
                 if (track.isRemote) {
