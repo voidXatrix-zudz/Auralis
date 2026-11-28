@@ -43,11 +43,12 @@ enum class GlassRole { Dock, Panel }
  *
  * Capability fallbacks ():
  *  - no backdrop (Normal theme, API < 31) -> a plain translucent tint + optional hairline;
+ *  - [lens] = false (thin bars such as slider tracks) -> blur + rim, never the lens;
  *  - API 31-32 -> blur + rim, no lens; API 33+ & tier != Low -> blur + colour + lens + rim;
  *  - Low tier -> blur (16dp) + rim, no lens. The content behind stays blurred at every tier.
  */
 @Composable
-fun Modifier.auralisGlass(shape: Shape, role: GlassRole): Modifier {
+fun Modifier.auralisGlass(shape: Shape, role: GlassRole, lens: Boolean = true): Modifier {
     // read the transient drag value HERE, in the surface's own recompose scope, so a
     // slider tick rebuilds the dock / mini-player / Search circle on the same frame as the
     // Appearance preview. Reading only [LocalGlassConfig] left those surfaces stale: the local is
@@ -67,8 +68,8 @@ fun Modifier.auralisGlass(shape: Shape, role: GlassRole): Modifier {
         warnedMissingBackdrop = true
         AppLog.w("Glass", "A glass surface rendered without a recorded backdrop; drew the tint fallback.")
     }
-    val glass = remember(config, backdrop, shape, role, dockTransparencyScale) {
-        buildAuralisGlass(config, backdrop, shape, role, dockTransparencyScale)
+    val glass = remember(config, backdrop, shape, role, dockTransparencyScale, lens) {
+        buildAuralisGlass(config, backdrop, shape, role, dockTransparencyScale, lens)
     }
     return this.then(glass)
 }
@@ -79,6 +80,7 @@ private fun buildAuralisGlass(
     shape: Shape,
     role: GlassRole,
     dockTransparencyScale: Float,
+    lens: Boolean,
 ): Modifier {
     val tintAlpha = when (role) {
         GlassRole.Dock -> GlassMappings.dockTintAlpha((config.dockTransparency * dockTransparencyScale).roundToInt()) *
@@ -120,7 +122,7 @@ private fun buildAuralisGlass(
             effects = {
                 colorControls(saturation = GlassTokens.SATURATION)
                 if (blurDp > 0f) blur(radius = blurDp * density)
-                if (config.hasLens && shape is CornerBasedShape) {
+                if (lens && config.hasLens && shape is CornerBasedShape) {
                     lens(
                         refractionHeight = GlassTokens.LENS_HEIGHT_DP * density,
                         refractionAmount = GlassTokens.LENS_AMOUNT_DP * density,
