@@ -1,0 +1,15 @@
+name = "auralis-sync-worker"
+main = "src/index.ts"
+compatibility_date = "2026-11-28"
+
+[vars]
+CLERK_ISSUER = "https://fleet-akita-9551.clerk.accounts.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "auralis-sync"
+database_id = "3436b81e-3ea9-43cb-8a87-a599ff21eace"
+migrations_dir = "migrations"
+
+
+

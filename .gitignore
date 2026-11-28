@@ -24,3 +24,6 @@ keystore.properties
 # Third-party reference source (read-only, never part of this project)
 reference/
 ../reference/
+
+.agent/
+/auralis-sync-worker/node_modules/
