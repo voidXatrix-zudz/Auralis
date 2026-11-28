@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -98,6 +99,12 @@ fun GlassMenu(
         DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, modifier = modifier) {
             content()
         }
+        return
+    }
+
+    val portal = LocalGlassPortal.current
+    if (portal != null && portal.hostView === LocalView.current) {
+        GlassPortalMenu(portal, expanded, onDismissRequest, maxHeight, content)
         return
     }
 
@@ -201,6 +208,21 @@ fun GlassMaterialAlertDialog(
         return
     }
 
+    val portal = LocalGlassPortal.current
+    if (portal != null && portal.hostView === LocalView.current) {
+        GlassPortalDialog(
+            portal = portal,
+            onDismissRequest = onDismissRequest,
+            dismissOnOutsideTap = properties?.dismissOnClickOutside ?: true,
+            dismissOnBack = properties?.dismissOnBackPress ?: true,
+        ) {
+            Column(modifier.padding(24.dp)) {
+                GlassDialogBody(icon, title, text, confirmButton, dismissButton)
+            }
+        }
+        return
+    }
+
     val shape = RoundedCornerShape(GlassTokens.RadiusCard)
     Dialog(
         onDismissRequest = onDismissRequest,
@@ -231,37 +253,48 @@ fun GlassMaterialAlertDialog(
                     .glassWindowSurface(shape)
                     .padding(24.dp),
             ) {
-                if (icon != null) {
-                    Box(Modifier.padding(bottom = 12.dp)) { icon() }
-                }
-                if (title != null) {
-                    CompositionLocalProvider(
-                        LocalContentColor provides GlassTokens.Cream,
-                        LocalTextStyle provides MaterialTheme.typography.headlineSmall,
-                    ) { title() }
-                }
-                if (text != null) {
-                    CompositionLocalProvider(
-                        LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
-                        LocalTextStyle provides MaterialTheme.typography.bodyMedium,
-                    ) {
-                        Box(
-                            Modifier.padding(
-                                top = if (title != null) 8.dp else 0.dp,
-                                bottom = 20.dp,
-                            ),
-                        ) { text() }
-                    }
-                }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    dismissButton?.invoke()
-                    confirmButton()
-                }
+                GlassDialogBody(icon, title, text, confirmButton, dismissButton)
             }
         }
+    }
+}
+
+@Composable
+private fun ColumnScope.GlassDialogBody(
+    icon: (@Composable () -> Unit)?,
+    title: (@Composable () -> Unit)?,
+    text: (@Composable () -> Unit)?,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: (@Composable () -> Unit)?,
+) {
+    if (icon != null) {
+        Box(Modifier.padding(bottom = 12.dp)) { icon() }
+    }
+    if (title != null) {
+        CompositionLocalProvider(
+            LocalContentColor provides GlassTokens.Cream,
+            LocalTextStyle provides MaterialTheme.typography.headlineSmall,
+        ) { title() }
+    }
+    if (text != null) {
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
+            LocalTextStyle provides MaterialTheme.typography.bodyMedium,
+        ) {
+            Box(
+                Modifier.padding(
+                    top = if (title != null) 8.dp else 0.dp,
+                    bottom = 20.dp,
+                ),
+            ) { text() }
+        }
+    }
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        dismissButton?.invoke()
+        confirmButton()
     }
 }

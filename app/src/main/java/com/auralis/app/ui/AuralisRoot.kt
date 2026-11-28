@@ -15,6 +15,9 @@ import com.auralis.app.ui.glass.LocalGlassBlurAllowed
 import com.auralis.app.ui.glass.GlassOverlayScrim
 import com.auralis.app.ui.glass.GlassOverlayState
 import com.auralis.app.ui.glass.LocalGlassOverlay
+import com.auralis.app.ui.glass.GlassPortalHost
+import com.auralis.app.ui.glass.GlassPortalState
+import com.auralis.app.ui.glass.LocalGlassPortal
 import com.auralis.app.ui.glass.GlassConfig
 import com.auralis.app.ui.glass.GlassConfigPreview
 import com.auralis.app.ui.glass.GlassDragState
@@ -348,6 +351,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
     }
     // One shared counter for open glass menus; the root draws their dim layer.
     val glassOverlay = remember { GlassOverlayState() }
+    val glassPortal = remember { GlassPortalState() }
     val dockStyle = if (settings.themeStyle == ThemeStyle.GLASSMORPHIC) DockStyle.GLASS else DockStyle.SOLID
 
     // Destination transitions keep the outgoing screen composed until the incoming screen has
@@ -525,6 +529,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             LocalContentColor provides MaterialTheme.colorScheme.onBackground,
             LocalGlassDrag provides glassDrag,
             LocalGlassOverlay provides glassOverlay,
+            LocalGlassPortal provides if (glassLayerEnabled) glassPortal else null,
             LocalAppBackdrop provides if (glassLayerEnabled) appBackdrop else null,
             LocalPerformanceProfile provides effectiveProfile,
             LocalPerformanceMode provides performanceMode,
@@ -1066,6 +1071,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
             // A menu popup is its own window, so the dim behind it has to be drawn here, above
             // every screen. It never consumes touches: the popup owns outside-tap dismissal.
             GlassOverlayScrim()
+            GlassPortalHost(glassPortal)
         }
         }
         }
