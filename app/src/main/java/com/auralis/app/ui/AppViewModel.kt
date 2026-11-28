@@ -3233,7 +3233,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             runCatching { container.playbackSnapshot.clear() }.onFailure { report("Couldn't clear the playback checkpoint", it) }
         }
     }
-    /** Unified playlist entries: on-device tracks and streamed YouTube songs, in order. */
+    /**
+     * Unified playlist entries: on-device tracks and streamed YouTube songs, newest-added first and
+     * oldest last. The playlist page, Play all, Shuffle and the live queue all use this one order.
+     */
     fun playlistItems(playlistId: Long): List<PlaylistItem> {
         val byId = tracks.value.associateBy { it.id }
         val local = playlistEntries.value.filter { it.playlistId == playlistId }
@@ -3242,7 +3245,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val remote = playlistYtEntries.value.filter { it.playlistId == playlistId }
             .sortedBy { it.position }
             .map { entry -> PlaylistItem(entry.entryId, true, entry.toDomain(), entry.position) }
-        return (local + remote).sortedBy { it.position }
+        return (local + remote).newestFirst()
     }
 
     fun enqueuePlaylist(playlistId: Long) {
@@ -3351,7 +3354,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 // without restarting the current track.
                 syncActivePlaylistQueue(
                     playlistId,
-                    (playlistItems(playlistId).map { it.track } + track).distinctBy { it.id },
+                    (listOf(track) + playlistItems(playlistId).map { it.track }).distinctBy { it.id },
                 )
             }.onFailure { report("Couldn't add song to playlist", it) }
             // Only streamed songs exist on YouTube; local-only songs are skipped.
@@ -3426,7 +3429,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             if (item.remote) syncPlaylistRemove(playlistId, item)
         }
     }
-    /** Moves one entry by [delta] slots (+1 down, -1 up) and rewrites both tables' positions. */
+    /**
+     * Moves one entry by [delta] slots (+1 down, -1 up) and rewrites both tables' positions. The top
+     * row gets the highest position, so new songs added later still land above it.
+     */
     fun movePlaylistItem(playlistId: Long, item: PlaylistItem, delta: Int) {
         val current = playlistItems(playlistId)
         val index = current.indexOfFirst { it.entryId == item.entryId && it.remote == item.remote }
@@ -3435,7 +3441,8 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         val reordered = current.toMutableList().apply { add(target, removeAt(index)) }
         viewModelScope.launch { runCatching {
             val dao = container.database.playlistDao()
-            reordered.forEachIndexed { position, entry ->
+            reordered.forEachIndexed { index, entry ->
+                val position = positionForDisplayIndex(index, reordered.size)
                 if (entry.remote) dao.setYtPosition(entry.entryId, position) else dao.setPosition(entry.entryId, position)
             }
             syncActivePlaylistQueue(playlistId, reordered.map { it.track })

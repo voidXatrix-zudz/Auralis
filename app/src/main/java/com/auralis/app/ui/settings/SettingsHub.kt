@@ -58,7 +58,8 @@ import androidx.compose.ui.unit.sp
 import com.auralis.app.domain.model.AppSettings
 import com.auralis.app.domain.model.MusicSource
 import com.auralis.app.domain.model.ThemeStyle
-import com.auralis.app.ui.glass.GlassIconButton
+import com.auralis.app.ui.glass.SettingsLiquidGlass
+import com.auralis.app.ui.glass.playerGlass
 import com.auralis.app.ui.glass.GlassMaterialAlertDialog
 import com.auralis.app.ui.glass.GlassPanel
 import com.auralis.app.ui.glass.GlassSearchField
@@ -280,6 +281,32 @@ internal fun <T> ChoiceDialog(
     )
 }
 
+/**
+ * The back chevron every Settings page draws. In Glass it is the dock's circle material: the
+ * page's [SettingsLiquidGlass] layer is what it blurs and refracts. Normal keeps the stock button.
+ */
+@Composable
+internal fun SettingsBackButton(onBack: () -> Unit) {
+    if (glass()) {
+        Box(
+            Modifier
+                .size(48.dp)
+                .playerGlass(CircleShape)
+                .clickable(role = Role.Button, onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = "Back",
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    } else {
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+    }
+}
+
 // Collapsing page chrome.
 
 @Composable
@@ -303,11 +330,7 @@ internal fun SettingsPage(
     val bottomInset = if (isGlass) LocalDockBottomInset.current else 0.dp
     val titleRow: @Composable () -> Unit = {
         Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (isGlass) {
-                GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
-            } else {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-            }
+            SettingsBackButton(onBack)
             Text(
                 title,
                 style = if (collapsed) MaterialTheme.typography.titleLarge else MaterialTheme.typography.displaySmall,
@@ -377,6 +400,41 @@ fun SettingsHubScreen(
     accountImageUrl: String?,
     onClerkSignOut: () -> Unit,
 ) {
+    // Settings records its own backdrop layer (see SettingsLiquidGlass), so the cards, the back
+    // button and the search pill below get the same liquid glass as the dock.
+    SettingsLiquidGlass(settings.playerBackground) {
+        SettingsHubContent(
+            settings = settings,
+            sources = sources,
+            actions = actions,
+            onNavigate = onNavigate,
+            onBack = onBack,
+            onAddFolder = onAddFolder,
+            onRemoveSource = onRemoveSource,
+            clerkSignedIn = clerkSignedIn,
+            clerkName = clerkName,
+            clerkEmail = clerkEmail,
+            accountImageUrl = accountImageUrl,
+            onClerkSignOut = onClerkSignOut,
+        )
+    }
+}
+
+@Composable
+private fun SettingsHubContent(
+    settings: AppSettings,
+    sources: List<MusicSource>,
+    actions: SettingsActions,
+    onNavigate: (Destination) -> Unit,
+    onBack: () -> Unit,
+    onAddFolder: () -> Unit,
+    onRemoveSource: (MusicSource) -> Unit,
+    clerkSignedIn: Boolean,
+    clerkName: String,
+    clerkEmail: String,
+    accountImageUrl: String?,
+    onClerkSignOut: () -> Unit,
+) {
     val isGlass = glass()
     var query by remember { mutableStateOf("") }
     var normalSearchOpen by remember { mutableStateOf(false) }
@@ -425,11 +483,7 @@ fun SettingsHubScreen(
     ) {
         item {
             Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (isGlass) {
-                    GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
-                } else {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-                }
+                SettingsBackButton(onBack)
                 Text(
                     "Settings",
                     style = if (collapsed) MaterialTheme.typography.titleLarge else MaterialTheme.typography.displaySmall,
@@ -456,6 +510,7 @@ fun SettingsHubScreen(
                     placeholder = "Search settings",
                     leading = { Icon(Icons.Rounded.Search, null) },
                     modifier = Modifier.fillMaxWidth(),
+                    liquid = true,
                 )
             }
         } else if (normalSearchOpen) {

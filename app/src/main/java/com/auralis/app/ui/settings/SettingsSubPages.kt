@@ -122,6 +122,7 @@ import com.auralis.app.glass.backdrop.backdrops.LayerBackdrop
 import com.auralis.app.glass.backdrop.backdrops.layerBackdrop
 import com.auralis.app.glass.backdrop.backdrops.rememberLayerBackdrop
 import com.auralis.app.ui.glass.LocalAppBackdrop
+import com.auralis.app.ui.glass.SettingsLiquidGlass
 import com.auralis.app.ui.glass.LocalGlassConfig
 import com.auralis.app.ui.glass.LocalGlassSettings
 import com.auralis.app.ui.glass.OpaqueLayerOnDraw
@@ -159,16 +160,20 @@ fun SettingsSubScreen(
     actions: SettingsActions,
     onBack: () -> Unit,
 ) {
-    when (destination) {
-        Destination.SettingsPlayback -> PlaybackSettingsPage(settings, actions, onBack)
-        Destination.SettingsMetadataLyrics -> MetadataLyricsSettingsPage(settings, actions, onBack)
-        Destination.SettingsDownloads -> DownloadsSettingsPage(settings, actions, onBack)
-        Destination.SettingsYouTubeMusic -> YouTubeMusicSettingsPage(settings, actions, onBack)
-        Destination.SettingsAppearance -> AppearanceSettingsPage(settings, actions, onBack)
-        Destination.SettingsPerformance -> PerformanceSettingsPage(settings, actions, onBack)
-        Destination.SettingsStorage -> StorageSettingsPage(settings, sources, actions, onBack)
-        Destination.SettingsAbout -> AboutSettingsPage(actions, onBack)
-        else -> PlaybackSettingsPage(settings, actions, onBack)
+    // One settings-local backdrop for every sub-page: each page's cards, rows and back button
+    // blur and refract it through the same material as the dock (see SettingsLiquidGlass).
+    SettingsLiquidGlass(settings.playerBackground) {
+        when (destination) {
+            Destination.SettingsPlayback -> PlaybackSettingsPage(settings, actions, onBack)
+            Destination.SettingsMetadataLyrics -> MetadataLyricsSettingsPage(settings, actions, onBack)
+            Destination.SettingsDownloads -> DownloadsSettingsPage(settings, actions, onBack)
+            Destination.SettingsYouTubeMusic -> YouTubeMusicSettingsPage(settings, actions, onBack)
+            Destination.SettingsAppearance -> AppearanceSettingsPage(settings, actions, onBack)
+            Destination.SettingsPerformance -> PerformanceSettingsPage(settings, actions, onBack)
+            Destination.SettingsStorage -> StorageSettingsPage(settings, sources, actions, onBack)
+            Destination.SettingsAbout -> AboutSettingsPage(actions, onBack)
+            else -> PlaybackSettingsPage(settings, actions, onBack)
+        }
     }
 }
 

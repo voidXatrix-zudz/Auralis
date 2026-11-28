@@ -37,6 +37,7 @@ Last full read: 2026-11-28. No code changed. Nothing built, installed or run.
 8. There are **two parallel mapping objects**: `GlassMappings` (`auralisGlass`; `dockTintAlpha = 0.02 + 0.98t^1.4`, `panelTintAlpha = 0.92 - 0.80c`) and `GlassMapping` (`LiquidGlass`/`GlassKit`/windows; `dockFill` cream→`DOCK_SOLID`, `surfaceFillAlpha 0.40→0.04`). This duplication is fragile.
 9. Performance tier never turns glass blur off; it removes secondary effects (refraction/sheen/glow/background blur). Automatic may step down one tier with a 30 s hysteresis.
 10. `AuralisRoot` attaches the recorded layer only when `themeStyle == GLASSMORPHIC && glassConfig.isGlassCapable`; dock siblings stay outside the recorded layer to avoid self-sampling; Now Playing records into the same layer with `LocalAppBackdrop = null`.
+11. Settings hub and sub-pages use `SettingsLiquidGlass` with a Settings-local backdrop that records only the player background or ambient cream glows; page content samples that sibling layer.
 
 ### Lyrics pipeline (10 lines)
 
@@ -98,12 +99,14 @@ Honourable mention: **Room schema/migrations v11** — every entity/DAO change n
 - Read support: `PerformanceResolver.kt`, `PerformanceProfile.kt`, `DownloadManager.kt`, `BackupRepository.kt` (export/restore contract), `AppLog.kt`, `MusicScanner.kt` structure, `StreamResolver.kt` fully, `YouTubeRepository`/`InnerTubeClient`/`LiveSyncManager` structure, tests/assets/res inventory.
 - Created `docs/AGENT_BRIEF.md`. No production code changed; nothing built or run.
 - Applied `auralis-player-glass-controls.patch` (`git apply`, clean; tree is all CRLF). Changed `ui/glass/AuralisGlass.kt` (added `lens: Boolean = true` to `auralisGlass`/`buildAuralisGlass` + remember keys, gated the lens effect), created `ui/glass/PlayerGlass.kt` (`Modifier.playerGlass`), edited `ui/screens/NowPlayingBlend.kt` (own recorded background layer + `LocalAppBackdrop` provider in the portrait branch, `playerGlass` on star/more circle, queue pill, selected bottom icon and slider track, slider defaults `Color.Unspecified`/white 80%, bottom-icon tints 0.80/0.96, `PlayerMoreMenu` provides `LocalAppBackdrop = null`). Proofread sections 2–6; no build/adb/emulator run.
+- Applied `auralis-settings-liquid-glass.patch` after a clean `git apply --check`. Added `ui/glass/SettingsGlass.kt`; wrapped the Settings hub and sub-pages with the Settings-local background layer, switched shared Settings back buttons to dock-circle glass, and made the hub search pill opt into liquid glass. Reviewed imports and confirmed the recorded subtree contains only the player background image or ambient cream glows; no build or device checks run.
 
 - Built the debug APK on request: `gradlew.bat assembleDebug` with JDK 21 (`C:\Program Files\Eclipse Adoptium\jdk-21.0.13.9-hotspot`; system Java is 25, which this Gradle/AGP combo should not use). `BUILD SUCCESSFUL in 49s`, 0 errors. Artifact: `app/build/outputs/apk/debug/app-debug.apk` (37,272,349 bytes; SHA-256 `2C815D92…F7349D`), copied to `C:\Users\Dipanjan\Desktop\AURALIS-debug-1.5.1.apk`. Non-fatal D8 warnings about Kotlin metadata (R8 8.13 vs Kotlin 2.4.21). Not installed or run.
 
 ## NEXT
 
 - Await the owner's on-device result for the Now Playing glass controls. If asked to adjust: re-read this brief + `PlayerGlass.kt`/`AuralisGlass.kt`/the portrait branch of `NowPlayingBlend.kt`, then make the smallest clean change. Do not touch landscape/`GlassNowPlaying`, the dock, `GlassTokens`, `AuralisRoot`, the vendored backdrop, or the player sheets/dialogs.
+- Await on-device review of Settings liquid glass on Android 13+, API 31/32 and Normal/older-device fallback. Do not build or use adb unless explicitly asked.
 
 ## OPEN QUESTIONS
 

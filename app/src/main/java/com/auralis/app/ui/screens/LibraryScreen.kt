@@ -1,5 +1,7 @@
 package com.auralis.app.ui.screens
 
+import com.auralis.app.ui.PlaylistItem
+import com.auralis.app.ui.newestFirst
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.ui.theme.LocalThemeStyle
 import com.auralis.app.ui.glass.GlassLibraryScreen
@@ -114,14 +116,14 @@ fun buildLibraryPlaylists(
     val ownerName = accountName?.takeIf { it.isNotBlank() } ?: "You"
 
     val locals = playlists.mapNotNull { playlist ->
-        val ordered = ArrayList<Pair<Int, Track>>()
+        val ordered = ArrayList<PlaylistItem>()
         playlistEntries.asSequence().filter { it.playlistId == playlist.id }.forEach { entry ->
-            trackById[entry.trackId]?.let { ordered += entry.position to it }
+            trackById[entry.trackId]?.let { ordered += PlaylistItem(entry.entryId, false, it, entry.position) }
         }
         playlistYtEntries.asSequence().filter { it.playlistId == playlist.id }.forEach { entry ->
-            ordered += entry.position to entry.toDomain()
+            ordered += PlaylistItem(entry.entryId, true, entry.toDomain(), entry.position)
         }
-        val songs = ordered.sortedBy { it.first }.map { it.second }
+        val songs = ordered.newestFirst().map { it.track }
         if (songs.isEmpty()) return@mapNotNull null
         val kind = if (playlist.id in spotifyPlaylistIds) LibraryPlaylistKind.SPOTIFY else LibraryPlaylistKind.LOCAL
         LibraryPlaylistRow(

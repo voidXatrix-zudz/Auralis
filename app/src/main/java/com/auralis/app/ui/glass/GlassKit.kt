@@ -395,11 +395,17 @@ fun GlassSearchField(
     modifier: Modifier = Modifier,
     leading: @Composable (() -> Unit)? = null,
     onSearch: (() -> Unit)? = null,
+    /**
+     * Opt-in liquid pill: when a backdrop is available (Settings provides one) the field is drawn
+     * with the dock material instead of a flat cream fill. Without a backdrop it is unchanged.
+     */
+    liquid: Boolean = false,
 ) {
     // Fill and hairline follow Glass clarity; no nested Haze effect inside text fields.
     val settings = LocalGlassSettings.current
     val fill = maxOf(GlassMapping.surfaceFillAlpha(settings.glassClarity), GlassMapping.NESTED_MIN_FILL)
     val hairline = GlassMapping.borderAlpha(settings.glassClarity)
+    val liquidActive = liquid && LocalAppBackdrop.current != null
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -417,15 +423,15 @@ fun GlassSearchField(
             onSearch = { onSearch?.invoke() },
         ),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = GlassTokens.Cream.copy(alpha = (fill + 0.04f).coerceAtMost(0.44f)),
-            unfocusedContainerColor = GlassTokens.Cream.copy(alpha = fill),
-            focusedBorderColor = GlassTokens.Cream.copy(alpha = (hairline + 0.04f).coerceAtMost(0.30f)),
-            unfocusedBorderColor = GlassTokens.Cream.copy(alpha = hairline),
+            focusedContainerColor = if (liquidActive) Color.Transparent else GlassTokens.Cream.copy(alpha = (fill + 0.04f).coerceAtMost(0.44f)),
+            unfocusedContainerColor = if (liquidActive) Color.Transparent else GlassTokens.Cream.copy(alpha = fill),
+            focusedBorderColor = if (liquidActive) GlassTokens.Cream.copy(alpha = 0.30f) else GlassTokens.Cream.copy(alpha = (hairline + 0.04f).coerceAtMost(0.30f)),
+            unfocusedBorderColor = if (liquidActive) Color.Transparent else GlassTokens.Cream.copy(alpha = hairline),
             cursorColor = GlassTokens.Cream,
             focusedTextColor = GlassTokens.Cream,
             unfocusedTextColor = GlassTokens.Cream,
         ),
-        modifier = modifier,
+        modifier = if (liquidActive) modifier.auralisGlass(CircleShape, GlassRole.Dock) else modifier,
     )
 }
 
