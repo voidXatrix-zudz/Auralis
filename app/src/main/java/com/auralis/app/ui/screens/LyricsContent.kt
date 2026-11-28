@@ -778,6 +778,7 @@ private fun InstrumentalGap(visible: Boolean, accent: Color, animated: Boolean) 
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun EmptyLyricsState(
     accent: Color,
@@ -806,7 +807,13 @@ private fun EmptyLyricsState(
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
+            // FlowRow: on a narrow card the Retry button wraps to its own line instead of being
+            // squeezed into a one-letter-wide column beside "Try another source".
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 6.dp),
+            ) {
                 Button(onClick = onTryAnother, shape = CircleShape) {
                     Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(18.dp))
                     Text("Try another source", Modifier.padding(start = 6.dp))

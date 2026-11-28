@@ -806,13 +806,10 @@ class PlaybackService : MediaLibraryService() {
             }
             val previous = previousMediaItemIndex
             val lastContext = lastContextIndex(this)
-            // With shuffle/repeat the previous item is the real played history. A repeat-all wrap
-            // that lands in the autoplay tail is clamped back to the last context song.
-            val target = when {
-                previous < 0 -> null
-                lastContext >= 0 && previous > lastContext -> lastContext
-                else -> previous
-            }
+            // With shuffle/repeat the previous item is the real played history. Only a repeat-all
+            // WRAP into the autoplay tail is clamped back to the last context song (see
+            // previousSkipTarget); stepping back inside the tail goes to the song just heard.
+            val target = previousSkipTarget(previous, currentMediaItemIndex, lastContext)
             beginUserSkip()
             seekTo(target ?: currentMediaItemIndex.coerceAtLeast(0), 0L)
         }

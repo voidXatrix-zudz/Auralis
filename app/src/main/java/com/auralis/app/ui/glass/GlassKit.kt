@@ -3,7 +3,9 @@ package com.auralis.app.ui.glass
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -64,6 +66,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.auralis.app.domain.model.Track
 import com.auralis.app.ui.components.ArtworkImage
+import com.auralis.app.ui.motion.pressScale
 import com.auralis.app.ui.theme.GlassTokens
 import kotlin.random.Random
 
@@ -82,8 +85,10 @@ fun GlassPanel(
     val glass = LocalDockGlassStyle.current
     // Cards share the dock material pipeline at Medium strength.
     val elevation = 10.dp * glass.shadowScale
+    val pressSource = remember { MutableInteractionSource() }
     Box(
         modifier
+            .then(if (onClick != null) Modifier.pressScale(pressSource, 0.975f) else Modifier)
             .then(
                 if (elevation > 0.dp) Modifier.shadow(
                     elevation = elevation,
@@ -98,7 +103,13 @@ fun GlassPanel(
                 kind = GlassKind.Surface,
                 shape = shape,
             )
-            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(interactionSource = pressSource, indication = LocalIndication.current, role = Role.Button, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            ),
         content = content,
     )
 }
@@ -241,13 +252,20 @@ fun GlassIconButton(
     enabled: Boolean = true,
     /** Small accent dot, used by the Settings icon when a release update is available. */
     badge: Boolean = false,
+    /**
+     * True when the button sits directly on the page backdrop (a header control): it then uses the
+     * real backdrop glass (blur, lens, rim). Leave false inside a glass card, which is already frosted.
+     */
+    blur: Boolean = false,
 ) {
+    val pressSource = remember { MutableInteractionSource() }
     Box(
         modifier
             .size(size)
+            .pressScale(pressSource, 0.90f)
             .clip(CircleShape)
-            .glassTint(CircleShape)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+            .then(if (blur) Modifier.glassSurface(GlassKind.Surface, CircleShape) else Modifier.glassTint(CircleShape))
+            .clickable(interactionSource = pressSource, indication = LocalIndication.current, enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = description, tint = if (enabled) tint else tint.copy(alpha = 0.38f), modifier = Modifier.size(size * 0.46f))
@@ -322,13 +340,15 @@ fun GlassChip(
  */
 @Composable
 fun GlassPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, enabled: Boolean = true) {
+    val pressSource = remember { MutableInteractionSource() }
     Row(
         modifier
             .heightIn(min = 48.dp)
+            .pressScale(pressSource, 0.95f)
             .shadow(8.dp, CircleShape, clip = false, ambientColor = Color.Black.copy(alpha = 0.30f), spotColor = Color.Black.copy(alpha = 0.40f))
             .clip(CircleShape)
             .background(if (enabled) GlassTokens.Cream else GlassTokens.Cream20)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .clickable(interactionSource = pressSource, indication = LocalIndication.current, enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -345,13 +365,15 @@ fun GlassPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = M
 
 /** Outlined translucent pill button with specular glass edge. */
 @Composable
-fun GlassGhostButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, enabled: Boolean = true) {
+fun GlassGhostButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, enabled: Boolean = true, blur: Boolean = false) {
+    val pressSource = remember { MutableInteractionSource() }
     Row(
         modifier
             .heightIn(min = 48.dp)
+            .pressScale(pressSource, 0.95f)
             .clip(CircleShape)
-            .glassTint(CircleShape)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .then(if (blur) Modifier.glassSurface(GlassKind.Surface, CircleShape) else Modifier.glassTint(CircleShape))
+            .clickable(interactionSource = pressSource, indication = LocalIndication.current, enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

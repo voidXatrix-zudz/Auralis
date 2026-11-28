@@ -13,7 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,12 +30,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.auralis.app.domain.model.PlayerBackground
 import com.auralis.app.domain.model.ThemeStyle
 import com.auralis.app.domain.model.Track
 import com.auralis.app.data.youtube.needsMetadataFill
 import com.auralis.app.ui.HistoryEntry
 import com.auralis.app.ui.components.ArtworkImage
 import com.auralis.app.ui.glass.GlassHistoryScreen
+import com.auralis.app.ui.glass.SettingsLiquidGlass
 import com.auralis.app.ui.metadata.MetadataFillEffect
 import com.auralis.app.ui.metadata.MetadataSkeleton
 import com.auralis.app.ui.metadata.displayTitle
@@ -50,7 +56,9 @@ fun HistoryScreen(
     settledMetadata: Set<String> = emptySet(),
     onMetadataVisible: (List<Track>) -> Unit = {},
     onMetadataHidden: (List<String>) -> Unit = {},
+    playerBackground: PlayerBackground = PlayerBackground.NONE,
     modifier: Modifier = Modifier,
+    onBack: () -> Unit = {},
 ) {
     // Retries follow the rows that are actually on this screen and stop when it is left or the app
     // is backgrounded, so no polling continues for a song the user can no longer see.
@@ -59,16 +67,27 @@ fun HistoryScreen(
     }
     MetadataFillEffect(pendingMetadata, onMetadataVisible, onMetadataHidden)
     if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC) {
-        GlassHistoryScreen(entries, currentId, onPlay, onClear, settledMetadata, modifier)
+        // Same self-recorded liquid-glass layer Settings uses, so the rows blur/refract a real
+        // backdrop (and the chosen player wallpaper) instead of a flat black canvas.
+        SettingsLiquidGlass(playerBackground, modifier) {
+            GlassHistoryScreen(entries, currentId, onPlay, onClear, settledMetadata, onBack = onBack)
+        }
         return
     }
     var confirmingClear by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("History", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "Back",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            Text("History", Modifier.weight(1f).padding(start = 4.dp), style = MaterialTheme.typography.headlineSmall)
             TextButton(onClick = { confirmingClear = true }, enabled = entries.isNotEmpty()) {
                 Text("Clear history")
             }

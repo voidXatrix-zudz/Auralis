@@ -7,6 +7,11 @@ import com.auralis.app.ui.theme.AuralisTheme
 import com.auralis.app.ui.theme.LyricsFontPreloader
 import com.auralis.app.ui.components.AuralisBackdrop
 import com.auralis.app.ui.glass.GlassTopBar
+import com.auralis.app.ui.glass.GlassPageLayer
+import com.auralis.app.ui.motion.auralisPageTransition
+import com.auralis.app.ui.motion.PlayerSheet
+import com.auralis.app.ui.motion.recedeBehindPlayer
+import com.auralis.app.ui.motion.rememberPlayerSheetState
 import com.auralis.app.ui.glass.GlassAlertDialog
 import com.auralis.app.ui.glass.GlassAvatarButton
 import com.auralis.app.ui.glass.GlassBlurPolicy
@@ -54,17 +59,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.tween
 import com.auralis.app.ui.theme.AuralisMotion
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -548,73 +542,12 @@ fun AuralisRoot(viewModel: AppViewModel) {
                 onVisible = viewModel::requestMetadata,
                 onHidden = viewModel::releaseMetadata,
             )
-            if (nowPlayingOpen && currentTrack != null) {
-                // The player is recorded into this backdrop. Its own glass surfaces must not sample
-                // the layer they are recording; the dock remains outside and can sample it safely.
-                CompositionLocalProvider(LocalAppBackdrop provides null) {
-                NowPlayingScreen(
-                    track = currentTrack,
-                    queue = queuedTracks,
-                    upNext = upNextTracks,
-                    availableTracks = tracks,
-                    favorites = mergedFavorites,
-                    playback = displayPlayback,
-                    settings = settings,
-                    lyrics = viewModel.lyrics.collectAsStateWithLifecycle().value,
-                    lyricsLoading = viewModel.lyricsLoading.collectAsStateWithLifecycle().value,
-                    lyricsProviderRowStates = viewModel.lyricsProviderRowStates.collectAsStateWithLifecycle().value,
-                    lyricsAutoScroll = settings.lyricsAutoScroll,
-                    lyricSizeSp = settings.lyricSizeSp,
-                    lyricsOffsetMs = settings.lyricsOffsetMs + viewModel.lyricsOffsetMs.collectAsStateWithLifecycle().value,
-                    onLoadLyrics = viewModel::loadLyrics,
-                    onImportLyrics = viewModel::importLyrics,
-                    onSaveLyrics = viewModel::saveLyrics,
-                    onTryAnotherLyricsSource = viewModel::tryAnotherLyricsSource,
-                    onFetchLyricsFromProvider = viewModel::fetchLyricsFromProvider,
-                    onCancelLyricsProviderFetch = viewModel::cancelLyricsProviderFetch,
-                    onRetryLyrics = viewModel::retryLyrics,
-                    onAdjustLyricsOffset = { delta -> currentTrack?.let { viewModel.adjustTrackLyricsOffset(it, delta) } },
-                    onResetLyricsOffset = { currentTrack?.let { viewModel.resetTrackLyricsOffset(it) } },
-                    onBack = { nowPlayingOpen = false },
-                    onPlayPause = { if (showingRestored) viewModel.resumeRestored() else viewModel.togglePlayback() },
-                    onPrevious = { if (showingRestored) viewModel.resumeRestored(-1) else viewModel.previous() },
-                    onNext = { if (showingRestored) viewModel.resumeRestored(1) else viewModel.next() },
-                    onSeek = { if (showingRestored) viewModel.seekRestored(it) else viewModel.seekTo(it) },
-                    onSeekBy = { if (showingRestored) viewModel.seekRestoredBy(it) else viewModel.seekBy(it) },
-                    doubleTapSeekSeconds = settings.doubleTapSeekSeconds,
-                    gesturesEnabled = settings.gestureSeekEnabled,
-                    onShuffle = { if (showingRestored) viewModel.toggleRestoredShuffle() else viewModel.toggleShuffle() },
-                    onRepeat = { if (showingRestored) viewModel.cycleRestoredRepeat() else viewModel.cycleRepeat() },
-                    onFavorite = likeTrack,
-                    onAddToQueue = viewModel::enqueue,
-                    onRemoveFromQueue = { viewModel.removeQueueItem(it.id) },
-                    onMoveQueueItem = { track, index -> viewModel.moveQueueItem(track.id, index) },
-                    onPlayQueueItem = { viewModel.playQueueItem(it.id) },
-                    onClearQueue = viewModel::clearQueue,
-                    onStartSleepTimer = viewModel::startSleepTimer,
-                    onCancelSleepTimer = viewModel::cancelSleepTimer,
-                    playlists = playlists,
-                    youtubePlaylists = youtubePlaylists,
-                    onAddToPlaylist = viewModel::addToPlaylist,
-                    onAddToAccountPlaylist = viewModel::addToAccountPlaylist,
-                    onRefreshPlaylists = viewModel::refreshYouTubeLibrary,
-                    onOpenEqualizer = { nowPlayingOpen = false; viewModel.push(Destination.Equalizer) },
-                    onOpenWrapped = { nowPlayingOpen = false; viewModel.push(Destination.Wrapped) },
-                    onOpenBackup = { nowPlayingOpen = false; viewModel.push(Destination.Backup) },
-                    onEditMetadata = { nowPlayingOpen = false; viewModel.push(Destination.MetadataEditor(currentTrack.id)) },
-                    onOpenAudioAnalysis = { id -> nowPlayingOpen = false; viewModel.push(Destination.AudioAnalysis(id)) },
-                    // the full player records its own content into the SAME layer as the
-                    // pages (only one of the two composes), so its own glass samples the player
-                    // background instead of falling back to a flat tint.
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .then(
-                            if (glassLayerEnabled) Modifier.layerBackdrop(appBackdrop) else Modifier,
-                        ),
-                )
-                } // end CompositionLocalProvider(LocalAppBackdrop = null)
-            } else {
-                Box(Modifier.fillMaxSize().nestedScroll(dockScroll)) {
+            // Open/close progress for the player sheet (0 = collapsed into the mini-player, 1 = open).
+            val playerSheet = rememberPlayerSheetState(
+                open = nowPlayingOpen && currentTrack != null,
+                reduceMotion = transitionScale == 0f,
+            )
+                Box(Modifier.fillMaxSize().recedeBehindPlayer(playerSheet).nestedScroll(dockScroll)) {
                     // the wallpaper and every page are recorded into ONE layer carrying an
                     // opaque canvas . It is attached to the page container only; the dock,
                     // mini-player and Search circle are drawn above it as siblings , so
@@ -656,7 +589,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                         ) {
                             // The Settings hub and every Settings sub-page own their own title row
                             // with a back chevron, so the shared TopBar must not draw a second one.
-                            val ownsHeader = nav.top?.isSettingsDestination == true
+                            val ownsHeader = nav.top?.isSettingsDestination == true || nav.top == Destination.History
                             if (!ownsHeader && !(nav.top == null && nav.tab == Tab.HOME)) {
                                 TopBar(
                                     // The back affordance follows the requested destination; the
@@ -668,50 +601,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                             }
                             AnimatedContent(
                                 targetState = nav,
-                                transitionSpec = {
-                                    // Fade-through: the outgoing screen fades out (and shrinks a
-                                    // hair) first, then the incoming screen fades in. Running the
-                                    // two fades in sequence means the old page is fully gone before
-                                    // the new one paints, so translucent glass never ghosts it and
-                                    // the black canvas carries the hand-off with no white flash.
-                                    if (transitionScale == 0f) {
-                                        EnterTransition.None togetherWith ExitTransition.None
-                                    } else if (targetState.top == Destination.About) {
-                                        // The About page is a lightweight reading screen. Start it
-                                        // immediately instead of waiting for the outgoing Settings
-                                        // page's fade-through, which felt like the tap had stalled.
-                                        fadeIn(
-                                            tween((180 * transitionScale).toInt().coerceAtLeast(1), easing = AuralisMotion.Creamy),
-                                        ) togetherWith fadeOut(
-                                            tween((120 * transitionScale).toInt().coerceAtLeast(1), easing = AuralisMotion.Creamy),
-                                        )
-                                    } else {
-                                        // Creamy fade-through, now with a gentle rise: the outgoing
-                                        // screen sinks and dissolves first (so translucent glass never
-                                        // ghosts it), then the incoming screen floats up into place. The
-                                        // long ease-out curve is what makes the hand-off feel soft.
-                                        val outMs = (140 * transitionScale).toInt()
-                                        val inMs = (320 * transitionScale).toInt()
-                                        (fadeIn(
-                                            tween(inMs, delayMillis = outMs, easing = AuralisMotion.Creamy),
-                                        ) + slideInVertically(
-                                            animationSpec = tween(inMs, delayMillis = outMs, easing = AuralisMotion.Creamy),
-                                            initialOffsetY = { (it * 0.045f).toInt() },
-                                        ) + scaleIn(
-                                            tween(inMs, delayMillis = outMs, easing = AuralisMotion.Creamy),
-                                            initialScale = 0.972f,
-                                        )) togetherWith
-                                            (fadeOut(tween(outMs, easing = AuralisMotion.Creamy)) +
-                                                slideOutVertically(
-                                                    animationSpec = tween(outMs, easing = AuralisMotion.Creamy),
-                                                    targetOffsetY = { (-it * 0.025f).toInt() },
-                                                ) +
-                                                scaleOut(
-                                                    tween(outMs, easing = AuralisMotion.Creamy),
-                                                    targetScale = 0.985f,
-                                                ))
-                                    }.using(SizeTransform(clip = false))
-                                },
+                                transitionSpec = { auralisPageTransition(initialState, targetState, transitionScale) },
                                 contentKey = { it },
                                 // Glass draws edge-to-edge under the dock (lists reserve the inset);
                                 // Normal keeps its opaque, padded-below-dock layout.
@@ -720,6 +610,10 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                     .then(if (dockStyle == DockStyle.GLASS) Modifier else Modifier.dockBottomSpace(dockScroll, currentTrack != null)),
                                 label = "screen",
                             ) { state ->
+                                GlassPageLayer(
+                                    playerBackground = settings.playerBackground,
+                                    enabled = state.top?.isSettingsDestination != true && state.top != Destination.History,
+                                ) {
                                 when (state.top) {
                                         Destination.Settings -> SettingsHubScreen(
                                             settings = settings,
@@ -765,6 +659,8 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             settledMetadata = metadataSettled,
                                             onMetadataVisible = viewModel::requestMetadata,
                                             onMetadataHidden = viewModel::releaseMetadata,
+                                            playerBackground = settings.playerBackground,
+                                            onBack = viewModel::back,
                                         )
                                         Destination.Logs -> LogsDiagnosticsScreen(
                                 settings,
@@ -963,6 +859,7 @@ fun AuralisRoot(viewModel: AppViewModel) {
                                             )
                                         }
                                     }
+                                }
                             }
                         }
                         } // end CompositionLocalProvider(LocalAppBackdrop = null)
@@ -1011,7 +908,74 @@ fun AuralisRoot(viewModel: AppViewModel) {
                         artworkUri = playbackState.artworkUri,
                     )
                 }
+
+            if (playerSheet.isVisible && currentTrack != null) {
+                PlayerSheet(state = playerSheet, onDragDismiss = { nowPlayingOpen = false }) {
+                // The player is recorded into this backdrop. Its own glass surfaces must not sample
+                // the layer they are recording; the dock remains outside and can sample it safely.
+                CompositionLocalProvider(LocalAppBackdrop provides null) {
+                NowPlayingScreen(
+                    track = currentTrack,
+                    queue = queuedTracks,
+                    upNext = upNextTracks,
+                    availableTracks = tracks,
+                    favorites = mergedFavorites,
+                    playback = displayPlayback,
+                    settings = settings,
+                    lyrics = viewModel.lyrics.collectAsStateWithLifecycle().value,
+                    lyricsLoading = viewModel.lyricsLoading.collectAsStateWithLifecycle().value,
+                    lyricsProviderRowStates = viewModel.lyricsProviderRowStates.collectAsStateWithLifecycle().value,
+                    lyricsAutoScroll = settings.lyricsAutoScroll,
+                    lyricSizeSp = settings.lyricSizeSp,
+                    lyricsOffsetMs = settings.lyricsOffsetMs + viewModel.lyricsOffsetMs.collectAsStateWithLifecycle().value,
+                    onLoadLyrics = viewModel::loadLyrics,
+                    onImportLyrics = viewModel::importLyrics,
+                    onSaveLyrics = viewModel::saveLyrics,
+                    onTryAnotherLyricsSource = viewModel::tryAnotherLyricsSource,
+                    onFetchLyricsFromProvider = viewModel::fetchLyricsFromProvider,
+                    onCancelLyricsProviderFetch = viewModel::cancelLyricsProviderFetch,
+                    onRetryLyrics = viewModel::retryLyrics,
+                    onAdjustLyricsOffset = { delta -> currentTrack?.let { viewModel.adjustTrackLyricsOffset(it, delta) } },
+                    onResetLyricsOffset = { currentTrack?.let { viewModel.resetTrackLyricsOffset(it) } },
+                    onBack = { nowPlayingOpen = false },
+                    onPlayPause = { if (showingRestored) viewModel.resumeRestored() else viewModel.togglePlayback() },
+                    onPrevious = { if (showingRestored) viewModel.resumeRestored(-1) else viewModel.previous() },
+                    onNext = { if (showingRestored) viewModel.resumeRestored(1) else viewModel.next() },
+                    onSeek = { if (showingRestored) viewModel.seekRestored(it) else viewModel.seekTo(it) },
+                    onSeekBy = { if (showingRestored) viewModel.seekRestoredBy(it) else viewModel.seekBy(it) },
+                    doubleTapSeekSeconds = settings.doubleTapSeekSeconds,
+                    gesturesEnabled = settings.gestureSeekEnabled,
+                    onShuffle = { if (showingRestored) viewModel.toggleRestoredShuffle() else viewModel.toggleShuffle() },
+                    onRepeat = { if (showingRestored) viewModel.cycleRestoredRepeat() else viewModel.cycleRepeat() },
+                    onFavorite = likeTrack,
+                    onAddToQueue = viewModel::enqueue,
+                    onRemoveFromQueue = { viewModel.removeQueueItem(it.id) },
+                    onMoveQueueItem = { track, index -> viewModel.moveQueueItem(track.id, index) },
+                    onPlayQueueItem = { viewModel.playQueueItem(it.id) },
+                    onClearQueue = viewModel::clearQueue,
+                    onStartSleepTimer = viewModel::startSleepTimer,
+                    onCancelSleepTimer = viewModel::cancelSleepTimer,
+                    playlists = playlists,
+                    youtubePlaylists = youtubePlaylists,
+                    onAddToPlaylist = viewModel::addToPlaylist,
+                    onAddToAccountPlaylist = viewModel::addToAccountPlaylist,
+                    onRefreshPlaylists = viewModel::refreshYouTubeLibrary,
+                    onOpenEqualizer = { nowPlayingOpen = false; viewModel.push(Destination.Equalizer) },
+                    onOpenWrapped = { nowPlayingOpen = false; viewModel.push(Destination.Wrapped) },
+                    onOpenBackup = { nowPlayingOpen = false; viewModel.push(Destination.Backup) },
+                    onEditMetadata = { nowPlayingOpen = false; viewModel.push(Destination.MetadataEditor(currentTrack.id)) },
+                    onOpenAudioAnalysis = { id -> nowPlayingOpen = false; viewModel.push(Destination.AudioAnalysis(id)) },
+                    // the full player records its own content into the SAME layer as the
+                    // pages (only one of the two composes), so its own glass samples the player
+                    // background instead of falling back to a flat tint.
+                    // Not recorded into the app layer any more: the pages stay composed behind the
+                    // sheet (and keep their scroll position), and own that layer alone.
+                    modifier = Modifier.fillMaxSize(),
+                )
+                } // end CompositionLocalProvider(LocalAppBackdrop = null)
+                }
             }
+
 
             if (nowPlayingOpen) {
                 SnackbarHost(

@@ -12,18 +12,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.auralis.app.data.youtube.needsMetadataFill
@@ -31,10 +36,15 @@ import com.auralis.app.ui.HistoryEntry
 import com.auralis.app.ui.components.LocalDockBottomInset
 import com.auralis.app.ui.metadata.MetadataSkeleton
 import com.auralis.app.ui.metadata.displayTitle
+import com.auralis.app.ui.motion.staggeredEntrance
 import com.auralis.app.ui.screens.timeAgo
 import com.auralis.app.ui.theme.GlassTokens
 
-/** Glassmorphic History screen: frosted rows matching the Library/Home styling. */
+/**
+ * Glassmorphic History screen: frosted rows matching the Library/Home styling.
+ *
+ * This screen owns its header and lets rows dissolve softly as they scroll under it.
+ */
 @Composable
 fun GlassHistoryScreen(
     entries: List<HistoryEntry>,
@@ -43,34 +53,54 @@ fun GlassHistoryScreen(
     onClear: () -> Unit,
     settledMetadata: Set<String>,
     modifier: Modifier = Modifier,
+    onBack: () -> Unit = {},
 ) {
     var confirmingClear by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val fadePx = with(LocalDensity.current) { 20.dp.toPx() }
+    var introDone by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(1_000); introDone = true }
     Column(modifier.fillMaxSize()) {
+        Box(
+            Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 16.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            GlassIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, blur = true)
+        }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             GlassHeader("History", Modifier.weight(1f), "${entries.size} songs")
-            GlassGhostButton("Clear history", { confirmingClear = true }, enabled = entries.isNotEmpty())
+            GlassGhostButton("Clear history", { confirmingClear = true }, enabled = entries.isNotEmpty(), blur = true)
         }
         Spacer(Modifier.height(8.dp))
         if (entries.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-                Text(
-                    "Songs you listen to for 10 seconds or more appear here",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = GlassTokens.SilverMuted,
+            Box(
+                Modifier.weight(1f).fillMaxWidth().padding(bottom = LocalDockBottomInset.current),
+                contentAlignment = Alignment.Center,
+            ) {
+                GlassEmptyState(
+                    title = "No history yet",
+                    body = "Songs you listen to for 10 seconds or more appear here",
                 )
             }
         } else {
             LazyColumn(
-                Modifier.weight(1f),
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .fadeTopEdge(20.dp) {
+                        if (listState.firstVisibleItemIndex > 0) 1f
+                        else (listState.firstVisibleItemScrollOffset / fadePx)
+                    },
+                state = listState,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + LocalDockBottomInset.current),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(entries, key = { "${it.track.id}:${it.playedAt}" }) { entry ->
+                itemsIndexed(entries, key = { _, item -> "${item.track.id}:${item.playedAt}" }) { index, entry ->
                     GlassPanel(
-                        Modifier.fillMaxWidth(),
+                        Modifier.fillMaxWidth().animateItem().staggeredEntrance(index, enabled = !introDone),
                         RoundedCornerShape(GlassTokens.RadiusMd),
                         onClick = { onPlay(entry) },
                     ) {

@@ -4,15 +4,19 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
@@ -27,11 +31,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -173,6 +179,71 @@ fun GlassSheet(
     ) {
         DialogBackdropBlur()
         content()
+    }
+}
+
+/**
+ * A bottom sheet with the full liquid-glass material (blur, tint, lens, rim) of the dock and menus.
+ *
+ * A [GlassSheet] is a dialog window and can only fake glass with a window blur. When the glass
+ * portal is available (Glassmorphic theme on a capable device) this sheet is composed by the portal
+ * host instead, in the activity window above the recorded content, so it samples the same backdrop
+ * as the dock. It dismisses on a tap outside, on back, or by dragging the handle down. Everywhere
+ * else it simply delegates to [GlassSheet], so Normal and older devices are unchanged.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GlassLiquidSheet(
+    onDismissRequest: () -> Unit,
+    sheetState: SheetState,
+    modifier: Modifier = Modifier,
+    containerColor: Color = BottomSheetDefaults.ContainerColor,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val portal = LocalGlassPortal.current
+    if (LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC && portal != null && portal.hostView === LocalView.current) {
+        GlassPortalSheet(portal, onDismissRequest) {
+            GlassSheetHandle(onDismissRequest)
+            content()
+        }
+        return
+    }
+    GlassSheet(
+        onDismissRequest = onDismissRequest,
+        sheetState = sheetState,
+        modifier = modifier,
+        containerColor = containerColor,
+        content = content,
+    )
+}
+
+@Composable
+private fun GlassSheetHandle(onDismiss: () -> Unit) {
+    val dismiss by rememberUpdatedState(onDismiss)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .pointerInput(Unit) {
+                var drag = 0f
+                detectVerticalDragGestures(
+                    onDragStart = { drag = 0f },
+                    onDragEnd = { if (drag > 48.dp.toPx()) dismiss() },
+                    onDragCancel = { drag = 0f },
+                ) { change, amount ->
+                    change.consume()
+                    drag += amount
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .width(36.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(GlassTokens.Cream.copy(alpha = 0.35f)),
+        )
     }
 }
 

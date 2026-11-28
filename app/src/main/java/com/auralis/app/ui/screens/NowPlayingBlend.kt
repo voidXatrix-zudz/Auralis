@@ -190,7 +190,7 @@ import com.auralis.app.ui.components.qualityBadgeContent
 import com.auralis.app.ui.components.rememberBluetoothAudioOutputName
 import com.auralis.app.ui.glass.GlassMaterialAlertDialog
 import com.auralis.app.ui.glass.GlassMenu
-import com.auralis.app.ui.glass.GlassSheet
+import com.auralis.app.ui.glass.GlassLiquidSheet
 import com.auralis.app.ui.glass.LocalAppBackdrop
 import com.auralis.app.ui.glass.LocalGlassConfig
 import com.auralis.app.ui.glass.OpaqueLayerOnDraw
@@ -2439,7 +2439,9 @@ private fun AudioOutputSheet(
     val isBluetooth = bluetoothOutputName != null || isBluetoothType(route.type)
     val outputTitle = if (isBluetooth) (bluetoothOutputName ?: route.productName ?: deviceName) else deviceName
 
-    GlassSheet(
+    // Glass: composed by the portal host so it gets the dock's KYANT0 liquid-glass material;
+    // Normal / non-capable devices fall back to the stock sheet exactly as before.
+    GlassLiquidSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,

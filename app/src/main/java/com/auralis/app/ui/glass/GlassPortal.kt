@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -88,6 +89,8 @@ val LocalGlassPortal = staticCompositionLocalOf<GlassPortalState?> { null }
 internal sealed interface GlassPortalPlacement {
     class Anchored(val bounds: State<Rect>) : GlassPortalPlacement
     object Centered : GlassPortalPlacement
+    /** A floating glass sheet pinned to the bottom edge (above the navigation bar). */
+    object Bottom : GlassPortalPlacement
 }
 
 internal class GlassPortalEntry(
@@ -123,7 +126,12 @@ private fun PortalLayer(entry: GlassPortalEntry, origin: Offset) {
     LaunchedEffect(Unit) { reveal.animateTo(1f, tween(durationMillis = 170)) }
 
     val centered = entry.placement === GlassPortalPlacement.Centered
-    val scrim = if (centered) GlassMapping.DIALOG_SCRIM else GlassMapping.MENU_BACKDROP_SCRIM
+    val bottom = entry.placement === GlassPortalPlacement.Bottom
+    val scrim = when {
+        bottom -> GlassMapping.SHEET_SCRIM
+        centered -> GlassMapping.DIALOG_SCRIM
+        else -> GlassMapping.MENU_BACKDROP_SCRIM
+    }
     val margin = with(density) { (if (centered) 28.dp else 12.dp).roundToPx() }
     val gap = with(density) { 4.dp.roundToPx() }
     val maxHeight = with(density) { entry.maxHeight.roundToPx() }
@@ -138,8 +146,10 @@ private fun PortalLayer(entry: GlassPortalEntry, origin: Offset) {
             },
     ) {
         Layout(
-            content = { PortalSurface(entry, shape, reveal, centered) },
-            modifier = Modifier.fillMaxSize(),
+            content = { PortalSurface(entry, shape, reveal, centered, bottom) },
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (bottom) Modifier.navigationBarsPadding() else Modifier),
         ) { measurables, constraints ->
             val availableWidth = (constraints.maxWidth - 2 * margin).coerceAtLeast(0)
             val availableHeight = (constraints.maxHeight - 2 * margin).coerceAtLeast(0)
@@ -168,6 +178,10 @@ private fun PortalLayer(entry: GlassPortalEntry, origin: Offset) {
                     x = (constraints.maxWidth - width) / 2
                     y = (constraints.maxHeight - height) / 2
                 }
+                GlassPortalPlacement.Bottom -> {
+                    x = (constraints.maxWidth - width) / 2
+                    y = (constraints.maxHeight - height - margin).coerceAtLeast(0)
+                }
             }
             layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(x, y) }
         }
@@ -180,21 +194,28 @@ private fun PortalSurface(
     shape: RoundedCornerShape,
     reveal: Animatable<Float, *>,
     centered: Boolean,
+    bottom: Boolean,
 ) {
     val scroll = rememberScrollState()
     Column(
         Modifier
             .graphicsLayer {
                 val scale = 0.94f + 0.06f * reveal.value
-                scaleX = scale
-                scaleY = scale
-                transformOrigin = TransformOrigin(0.5f, 0f)
+                if (bottom) {
+                    // A sheet rises from the bottom edge instead of popping from the top.
+                    translationY = (1f - reveal.value) * 56.dp.toPx()
+                    alpha = reveal.value
+                } else {
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0.5f, 0f)
+                }
             }
-            .then(if (centered) Modifier.widthIn(max = 560.dp).fillMaxWidth() else Modifier.widthIn(min = 188.dp, max = 300.dp).width(IntrinsicSize.Max))
+            .then(if (centered || bottom) Modifier.widthIn(max = 560.dp).fillMaxWidth() else Modifier.widthIn(min = 188.dp, max = 300.dp).width(IntrinsicSize.Max))
             .auralisGlass(shape, GlassRole.Panel)
             .pointerInput(Unit) { detectTapGestures { } }
             .verticalScroll(scroll)
-            .then(if (centered) Modifier else Modifier.padding(horizontal = 4.dp, vertical = 6.dp)),
+            .then(if (centered || bottom) Modifier else Modifier.padding(horizontal = 4.dp, vertical = 6.dp)),
     ) {
         entry.content(this)
     }
@@ -234,6 +255,33 @@ internal fun GlassPortalMenu(
                 ),
             )
         }
+        onDispose { portal.remove(slotKey) }
+    }
+}
+
+/** Bottom sheet drawn by the portal host, so it samples the app's recorded KYANT0 backdrop. */
+@Composable
+internal fun GlassPortalSheet(
+    portal: GlassPortalState,
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val dismiss by rememberUpdatedState(onDismissRequest)
+    val body by rememberUpdatedState(content)
+    val slotKey = remember { Any() }
+
+    DisposableEffect(Unit) {
+        portal.show(
+            slotKey,
+            GlassPortalEntry(
+                placement = GlassPortalPlacement.Bottom,
+                dismissOnOutsideTap = true,
+                dismissOnBack = true,
+                maxHeight = 640.dp,
+                onDismiss = { dismiss() },
+                content = { body() },
+            ),
+        )
         onDispose { portal.remove(slotKey) }
     }
 }

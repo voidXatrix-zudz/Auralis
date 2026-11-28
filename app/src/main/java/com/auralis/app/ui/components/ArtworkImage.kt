@@ -1,7 +1,7 @@
 package com.auralis.app.ui.components
 
 import android.net.Uri
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,10 +21,10 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -95,10 +96,14 @@ fun ArtworkImage(
         val fromTrack = track?.artworkUrl?.takeIf { it.isNotBlank() }?.let(::localOrRemoteArt)
             ?: track?.artKey?.takeIf { it.matches(ArtworkKeyPattern) }
                 ?.let { key -> File(context.filesDir, "artwork/$key.jpg").takeIf(File::isFile) }
-        val primary = fromPlayback ?: fromTrack
+        // The track's OWN art wins. The playback URI can still describe the previous item for a
+        // moment after a skip (PlaybackController falls back to the last published artworkUri), and
+        // letting it lead painted the old song's cover again before the new one arrived. It stays
+        // in the list as a fallback.
+        val primary = fromTrack ?: fromPlayback
         buildList {
             if (primary != null) add(primary)
-            if (fromTrack != null) add(fromTrack)
+            if (fromPlayback != null) add(fromPlayback)
             if (primary is String) {
                 val smaller = ArtworkResolver.smallerVariant(primary)
                 if (smaller != primary) add(smaller)
@@ -118,11 +123,16 @@ fun ArtworkImage(
     var lastPainted by remember { mutableStateOf<Pair<Any?, ImageRequest>?>(null) }
     var painted by remember(effectiveImage) { mutableStateOf(false) }
     val fadeMs = if (profile.artworkCrossfade) 150 else 0
-    val fade by animateFloatAsState(
-        targetValue = if (painted || fadeMs == 0) 1f else 0f,
-        animationSpec = tween(durationMillis = fadeMs),
-        label = "artworkFade",
-    )
+    // One Animatable per image, born at 0: a new track never animates the previous alpha DOWN (that
+    // is what dragged the grey album glyph over the old cover on every skip). It only fades UP, once
+    // the new bitmap has actually painted.
+    val fade = remember(effectiveImage) { Animatable(if (fadeMs == 0) 1f else 0f) }
+    LaunchedEffect(effectiveImage, painted, fadeMs) {
+        if (painted || fadeMs == 0) fade.animateTo(1f, tween(durationMillis = fadeMs)) else fade.snapTo(0f)
+    }
+    // The themed glyph is only for a cold start. While a previous cover is on screen it must stay
+    // hidden, otherwise it flashes over the cover between two songs.
+    val showGlyph = !neutralPlaceholder && lastPainted == null
 
     BoxWithConstraints(
         modifier.clip(shape).background(
@@ -160,6 +170,9 @@ fun ArtworkImage(
                             if (attempt < candidates.lastIndex) {
                                 attempt++
                             } else {
+                                // Nothing loaded for this song: drop the previous song's cover
+                                // instead of leaving it up as if it belonged to this one.
+                                lastPainted = null
                                 settledCallback()
                             }
                         }
@@ -170,7 +183,7 @@ fun ArtworkImage(
 
         val albumPainter = rememberVectorPainter(Icons.Rounded.Album)
 
-        if (!neutralPlaceholder) {
+        if (showGlyph) {
             Icon(
                 Icons.Rounded.Album,
                 contentDescription = null,
@@ -193,9 +206,9 @@ fun ArtworkImage(
             AsyncImage(
                 model = request,
                 contentDescription = track?.title?.let { "Album artwork for $it" } ?: "Album artwork",
-                placeholder = if (neutralPlaceholder) null else albumPainter,
-                error = if (neutralPlaceholder) null else albumPainter,
-                fallback = if (neutralPlaceholder) null else albumPainter,
+                placeholder = if (showGlyph) albumPainter else null,
+                error = if (showGlyph) albumPainter else null,
+                fallback = if (showGlyph) albumPainter else null,
                 onSuccess = {
                     painted = true
                     lastPainted = effectiveImage to request
@@ -203,7 +216,7 @@ fun ArtworkImage(
                 },
                 modifier = Modifier
                     .fillMaxSize()
-                    .alpha(if (fadeMs == 0) 1f else fade),
+                    .graphicsLayer { alpha = fade.value },
                 contentScale = ContentScale.Crop,
             )
         }

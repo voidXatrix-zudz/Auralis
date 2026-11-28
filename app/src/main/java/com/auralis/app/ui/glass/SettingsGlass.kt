@@ -59,12 +59,18 @@ import kotlin.math.roundToInt
 fun SettingsLiquidGlass(
     playerBackground: PlayerBackground,
     modifier: Modifier = Modifier,
+    /**
+     * Faint cream glows recorded when no wallpaper is chosen. Settings keeps them; other pages turn
+     * them off ([GlassPageLayer]) because the layer starts below the status bar and the glow would
+     * end in a visible seam there.
+     */
+    glows: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val capable = LocalThemeStyle.current == ThemeStyle.GLASSMORPHIC && LocalGlassConfig.current.isGlassCapable
     val backdrop = rememberLayerBackdrop(onDraw = OpaqueLayerOnDraw)
     Box(modifier.fillMaxSize()) {
-        if (capable) SettingsAmbient(backdrop, playerBackground)
+        if (capable) SettingsAmbient(backdrop, playerBackground, glows)
         CompositionLocalProvider(LocalAppBackdrop provides if (capable) backdrop else null) {
             content()
         }
@@ -85,7 +91,7 @@ private data class AmbientFrame(val origin: IntOffset = IntOffset.Zero, val root
  * give the glass something to catch.
  */
 @Composable
-private fun SettingsAmbient(backdrop: LayerBackdrop, playerBackground: PlayerBackground) {
+private fun SettingsAmbient(backdrop: LayerBackdrop, playerBackground: PlayerBackground, glows: Boolean) {
     var frame by remember { mutableStateOf(AmbientFrame()) }
     Box(
         Modifier
@@ -115,7 +121,7 @@ private fun SettingsAmbient(backdrop: LayerBackdrop, playerBackground: PlayerBac
             ) {
                 PlayerBackgroundImage(playerBackground)
             }
-        } else if (AMBIENT_GLOWS_ENABLED) {
+        } else if (glows && AMBIENT_GLOWS_ENABLED) {
             Box(Modifier.fillMaxSize().drawBehind { drawAmbientGlows() })
         }
     }
