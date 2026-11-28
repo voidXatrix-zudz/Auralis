@@ -53,6 +53,7 @@ class YouTubeConnectionSync(
                 .collect { (ready, user) ->
                     if (!ready) return@collect
                     if (user == null) {
+                        restoreMutex.withLock { restoreResults.clear() }
                         if (store.ownerId() != null || store.snapshot() != null) clearForClerkSignOut()
                     } else {
                         restoreForUser(user.id)
@@ -68,8 +69,9 @@ class YouTubeConnectionSync(
 
     suspend fun restoreForUser(userId: String): Boolean = restoreMutex.withLock {
         restoreResults[userId]?.let { return@withLock it }
-        restoreResults[userId] = restoreForUserOnce(userId)
-        restoreResults.getValue(userId)
+        val restored = restoreForUserOnce(userId)
+        if (restored) restoreResults[userId] = true
+        restored
     }
 
     private suspend fun restoreForUserOnce(userId: String): Boolean {
